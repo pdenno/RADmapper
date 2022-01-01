@@ -68,7 +68,7 @@
 (defn detagify
   "Argument in content from clojure.data.xml/parse. Return a map where
     (1) :tag is :schema/type,
-    (2) :content, if present, is a simple value or recursively detagified. 
+    (2) :content, if present, is a simple value or recursively detagified.
     (3) :attrs, if present, are :xml/attrs.
    The result is that
      (a) returns a string or a map that if it has :xml/content, it is a string or a vector.
@@ -83,7 +83,7 @@
         (seq? obj) (if (and (== (count obj) 1) (-> obj first string?))
                      (first obj)
                      (mapv detagify obj))
-        (string? obj) obj ; It looks like nothing will be number? Need schema to fix things. 
+        (string? obj) obj ; It looks like nothing will be number? Need schema to fix things.
         :else (throw (ex-info "Unknown type in detagify" {:obj obj}))))
 
 (defn read-xml
