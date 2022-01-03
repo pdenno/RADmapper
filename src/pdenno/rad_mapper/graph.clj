@@ -1,8 +1,8 @@
 (ns pdenno.rad-mapper.graph
   (:require
-   [pdenno.owl-db-tools.core     :as owl]
-   [datahike.api          :as d]
-   [datahike.pull-api     :as dp]))
+   [pdenno.owl-db-tools.core :as owl]
+   [datahike.api             :as d]
+   [datahike.pull-api        :as dp]))
 
 (def info-cfg {:store {:backend :mem :id "test"} :keep-history? false :schema-flexibility :write})
 (def info-sources {"info"  {:uri "http://www.ontologydesignpatterns.org/ont/dlp/InformationObjects.owl"}})

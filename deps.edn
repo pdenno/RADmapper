@@ -2,6 +2,7 @@
 
  :deps    {com.cemerick/url               {:mvn/version "0.1.1"}
            com.github.pdenno/owl-db-tools {:mvn/version "1.0.26"}
+           com.wsscode/pathom3            {:mvn/version "2021.12.10-alpha"}
            dk.ative/docjure               {:mvn/version "1.16.0"} ; spreadsheets
            org.clojure/clojure            {:mvn/version "1.10.3"}
            org.clojure/data.zip           {:mvn/version "1.0.0"}
