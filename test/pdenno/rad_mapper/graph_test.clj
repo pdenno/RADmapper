@@ -1,8 +1,8 @@
- (ns pdenno.rad-mapper.graph-test
+(ns pdenno.rad-mapper.graph-test
    (:require
     ;[com.wsscode.pathom3.cache :as p.cache]
-    ;[com.wsscode.pathom3.connect.built-in.resolvers :as pbir]
-    ;[com.wsscode.pathom3.connect.built-in.plugins :as pbip]
+    [com.wsscode.pathom3.connect.built-in.resolvers :as pbir]
+    [com.wsscode.pathom3.connect.built-in.plugins :as pbip]
     ;[com.wsscode.pathom3.connect.foreign :as pcf]
     [com.wsscode.pathom3.connect.indexes :as pci]
     [com.wsscode.pathom3.connect.operation :as pco]
@@ -18,6 +18,7 @@
     ;[com.wsscode.pathom3.plugin :as p.plugin]
     [pdenno.rad-mapper.graph   :as gr]
     [pdenno.owl-db-tools.core  :as owl]
+    [edn-query-language.core :as eql] ; Nice for experimentation
     [datahike.api              :as d]
     [datahike.pull-api         :as dp]))
 
@@ -45,7 +46,8 @@
 (def big-cfg {:store {:backend :file :path "/tmp/datahike-owl-db"}
               :keep-history? false
               :schema-flexibility :write})
-(def big-atm nil)
+
+(def big-atm (d/connect big-cfg))
 
 (defn make-big-db [cfg]
   (when (d/database-exists? cfg) (d/delete-database cfg))
@@ -57,40 +59,66 @@
                      :rebuild? true
                      :check-sites ["http://ontologydesignpatterns.org/wiki/Main_Page"]))))
 
+(def conn @big-atm)
 ;;;============================== Experimentation with Pathom3 and Learning =============================
-(alter-var-root (var big-atm) (fn [_] (d/connect big-cfg)))
+;;; (resource-by-db-id {:db/id 629}) ; ==> The whole :info/mapped-to entity. Not currently used.
+(pco/defresolver resource-by-db-id [{:db/keys [id]}]
+  {:app/resource (dp/pull conn '[*] id)})
 
-(pco/defresolver resource-subclass-of [{:resource/keys [id]}]
-  {:rdfs/subClassOf (get (owl/pull-resource id @big-atm) :rdfs/subClassOf)})
+;;; (uri-to-db-id {:resource/rdf-uri :info/mapped-to}) ; ==> #:db{:id 629} Not currently used.
+(pco/defresolver uri-to-db-id [{:resource/keys [rdf-uri]}]
+  {::pco/output [:db/id]}
+  (dp/pull conn [:db/id] [:resource/id rdf-uri]))
 
-;;; For the real implementation, this is cheating. Instead:
-;;;   (1) Pull in the code in pull-resource that does this, and
-;;;   (2) See if you can generate that code by learning from the data.  <====================
-(pco/defresolver resource-type [{:resource/keys [id]}]
-  {:rdf/type (get (owl/pull-resource id @big-atm) :rdf/type)})
+;;; (resource-by-uri {:resource/rdf-uri :info/mapped-to}) ; ==> The whole :info/mapped-to entity.
+(pco/defresolver resource-by-uri [{:resource/keys [rdf-uri]}]
+  {:resource/body (dp/pull conn '[*] [:resource/id rdf-uri])}) ; lookup (ident style) of pull.
 
-(def indexes
-  (pci/register [resource-subclass-of resource-type]))
+;;; I conclude that I can't do what I want without PARAMETERS!
+;;; (p.eql/process index [{[:resource/rdf-uri :info/mapped-to] ['(:resource/attr {:attr/name :rdfs/domain})]}])
+;;; (p.eql/process index [{[:resource/rdf-uri :info/mapped-to] ['(:resource/attr {:attr/name :rdfs/comment})]}])
+(pco/defresolver resource-attr  [env {:resource/keys [body]}]
+  {::pco/output [{:resource/attr [:attr/body :attr/name]}]} ; attr/name will be provided as a PARAMETER.
+  {:resource/attr
+   (letfn [(subobj [x]
+             (cond (and (map? x) (contains? x :resource/id)) (:resource/id x),          ; It is a whole resource, return ref.
+                   (and (map? x) (contains? x :db/id) (== (count x) 1))                 ; It is an object ref...
+                   (or (and (map? x)
+                            (contains? x :db/id)
+                            (d/q `[:find ?id . :where [~(:db/id x) :resource/id ?id]] conn)) ; ...return keyword if it is a resource...
+                       (subobj (dp/pull conn '[*] (:db/id x)))),                             ; ...otherwise it is some other structure.
+                   (map? x) (reduce-kv (fn [m k v] (assoc m k (subobj v))) {} x),
+                   (vector? x) (mapv subobj x),
+                   :else x))]
+     (when-let [attr (get (pco/params env) :attr/name)] ; Retrieve parameter.
+       {:attr/body (subobj (get body attr))}))})
 
-(def smart-map (psm/smart-map indexes {:resource/id :dol/perdurant}))
+(def index (pci/register [resource-by-uri resource-attr]))
 
-(:resource/id smart-map)       ; ==> :dol/perdurant
-(:rdfs/subClassOf smart-map)   ; ==> ....Good!
-(:rdf/type smart-map)          ; ==> :owl/Class
+#_(pco/defresolver object-property-domain [{:resource/keys [id]}]
+  {:rdfs/domain
+   (when-let [domain-obj (-> (dp/pull conn [:rdfs/domain] id) :rdfs/domain first :db/id)] ; LEARN!
+      (println "domain-ob" domain-obj)
+      (:resource/id (dp/pull conn [:resource/id] domain-obj)))})
+
+#_(def indexes ; sometimes called env.
+  (pci/register [object-property-domain
+                 resource-db-id
+                 resource-subclass-of
+                 resource-type ]))
+
+#_(def smart-map (psm/smart-map indexes {:resource/id :dol/perdurant}))
+
+#_(:resource/id smart-map)       ; ==> :dol/perdurant
+#_(:rdfs/subClassOf smart-map)   ; ==> ....Good!
+#_(:rdf/type smart-map)          ; ==> :owl/Class
 
 ;;; Another way to do it: p.eql/process
 ;;; The body could here could be much more, as it is with the cold? example
-(pco/defresolver subclass-of? [{:rdfs/keys [subClassOf]}]
+#_(pco/defresolver subclass-of? [{:rdfs/keys [subClassOf]}]
   {:subclass-of? subClassOf})
 
-(def indexes2
-  (pci/register [resource-subclass-of subclass-of?]))
-
-(p.eql/process
-  indexes2
-  {:resource/id :dol/spatio-temporal-particular #_:dol/perdurant}
-  [:subclass-of?])  ; ==> ....Good! (both of them).
-
+;;;=================================================================================================
 ;;; (db-keys @big-atm) ==> [:source/long-name :source/short-name :resource/id]
 (defn db-keys [conn]
   (d/q '[:find [?id ...] :where
@@ -108,7 +136,7 @@
 ;;; (tryme :rdf/type @big-atm)
 (defn tryme [focus-attr conn]
   )
-  
+
 
 ;;;====================================================================================== NYI
 (def foo (owl/pull-resource :dol/spatio-temporal-particular @big-atm))
@@ -127,4 +155,3 @@
                  (= k1 :owl/comment) +1
                  (= k2 :owl/comment) +1)))
          m))
-         

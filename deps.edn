@@ -1,8 +1,9 @@
 {:paths   ["src"]
 
  :deps    {com.cemerick/url               {:mvn/version "0.1.1"}
-           com.github.pdenno/owl-db-tools {:mvn/version "1.0.26"}
-           com.wsscode/pathom3            {:mvn/version "2021.12.10-alpha"}
+           com.github.pdenno/owl-db-tools {:mvn/version "1.0.31"}
+           com.taoensso/timbre            {:mvn/version "5.1.2"}
+           com.wsscode/pathom3            {:mvn/version "2022.01.09-alpha"}
            dk.ative/docjure               {:mvn/version "1.16.0"} ; spreadsheets
            org.clojure/clojure            {:mvn/version "1.10.3"}
            org.clojure/data.zip           {:mvn/version "1.0.0"}
@@ -10,29 +11,23 @@
            org.clojure/data.xml           {:mvn/version "0.2.0-alpha6"}}
 
  :aliases {:test {:extra-paths ["test"]
-                   :extra-deps  {lambdaisland/kaocha {:mvn/version "1.60.972"}}}
+                   :extra-deps  {lambdaisland/kaocha {:mvn/version "1.60.977"}}}
 
-            #_#_:build {:deps {io.github.clojure/tools.build {:git/tag "v0.7.4" :git/sha "ac442da"}}
-                    :ns-default build} ; Left here as an example.
+           :jar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
+                 :exec-fn hf.depstar/jar
+                 :exec-args {:jar "RADmapper-1.0.29.jar"
+                             :sync-pom true
+                             :version "1.0.29"
+                             :group-id "com.github.pdenno"
+                             :artifact-id "RADmapper"}}
 
-            ;; clj -X:jar ; clj -X:install ; clj -X:deploy
-            ;; env CLOJARS_USERNAME=pdenno CLOJARS_PASSWORD=CLOJARS_b2b8... clj -X:deploy
-            :jar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
-                  :exec-fn hf.depstar/jar
-                  :exec-args {:jar "RADmapper-1.0.26.jar"
-                              :sync-pom true
-                              :version "1.0.26"
-                              :group-id "com.github.pdenno"
-                              :artifact-id "RADmapper"}}
-
-            :install {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}
-                      :exec-fn deps-deploy.deps-deploy/deploy
-                      :exec-args {:installer :local
-                                  :artifact "RADmapper-1.0.26.jar"}}
-
-            :deploy {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}
+           :install {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}
                      :exec-fn deps-deploy.deps-deploy/deploy
-                     :exec-args {:installer :remote
-                                 :sign-releases? true
-                                 :sign-key-id "A301..."  ;<=====================
-                                 :artifact "RADmapper-1.0.26.jar"}}}}
+                     :exec-args {:installer :local
+                                 :artifact "RADmapper-1.0.29.jar"}}
+
+           :deploy {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}
+                    :exec-fn deps-deploy.deps-deploy/deploy
+                    :exec-args {:installer :remote
+                                :sign-releases? true
+                                :artifact "RADmapper-1.0.29.jar"}}}}
