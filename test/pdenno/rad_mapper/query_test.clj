@@ -75,28 +75,39 @@
   (let [all-objs (->> (mapv #(res/pull-resource % owl/*conn*)
                             (:ontology/context
                              (owl-db '[(:ontology/context {:filter-by {:attr :resource/namespace :val "dol"}})])))
-                      ;; Clean them up: domain and range are just singletons here.
+                      ;; Clean them up: domain and range are just singletons here. :rdfs/subClassOf is heterogeneous
                       (mapv #(if (:rdfs/domain %) (update % :rdfs/domain first) %))
-                      (mapv #(if (:rdfs/range  %) (update % :rdfs/range  first) %)))
+                      (mapv #(if (:rdfs/range  %) (update % :rdfs/range  first) %))
+                      (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass)))
         used-class? (->> all-objs (filter :rdfs/domain) (map :rdfs/domain) set)] ; Things used as domain are also used as range.
     (into (filterv #(used-class? (:resource/iri %)) all-objs)
           (filterv #(= :owl/ObjectProperty (:rdf/type %)) all-objs))))
 
-
-
-
 ;;; We have to learn the DB schema and resolve db/id in the DH queries.
-  '(:where [?class :rdf/type            :owl/Class]
-           [?class :resource/iri        ?class-iri]
-           [?class :resource/namespace  ?ns]
-           [?class :resource/name       ?class-name]
-           [?rel   :rdf/type            :owl/ObjectType]
-           [?rel   :rdfs/domain         ?class-iri]
-           [?rel   :rdfs/range          ?rel-range]
-           [?rel   :resource/name       ?rel-name]
+  #_(:query [?class :rdf/type            :owl/Class]
+            [?class :resource/iri        ?class-iri]
+            [?class :resource/namespace  ?class-ns]
+            [?class :resource/name       ?class-name]
+            [?rel   :rdf/type            :owl/ObjectProperty]
+            [?rel   :rdfs/domain         ?class-iri]
+            [?rel   :rdfs/range          ?rel-range]
+            [?rel   :resource/name       ?rel-name]
      :enforce
      {:table/name     ?class-name,
       :table/schema   {:schema/name  ?ns},
       :table/columns  {:column/name  ?rel-name,
                        :column/type  ?rel-range,
                        :column/table ?table-ent}} :as ?table-ent)
+(defn tryme [conn]
+  (d/q '[:find ?class ?class-iri ?class-ns ?class-name ?rel ?rel-name ?rel-range
+         :keys class class-iri class-ns class-name rel rel-name rel-range
+         :where
+         [?class :rdf/type            :owl/Class]
+         [?class :resource/iri        ?class-iri]
+         [?class :resource/namespace  ?class-ns]
+         [?class :resource/name       ?class-name]
+         [?rel   :rdfs/domain         ?class-iri]
+         [?rel   :rdf/type            :owl/ObjectProperty]
+         [?rel   :rdfs/range          ?rel-range]
+         [?rel   :resource/name       ?rel-name]]
+       conn))
