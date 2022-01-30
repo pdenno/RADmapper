@@ -7,16 +7,16 @@
    [clojure.set    :as sets]
    [clojure.spec.alpha :as s]))
 
-;;; The 'defparse' parsing functions pass around complete state. 
+;;; The 'defparse' parsing functions pass around complete state.
 ;;; The 'parse state' (AKA pstate) is a map with keys:
 ;;;   :result  - the parse structure from the most recent call to (parse :<some-rule-tag> pstate)
 ;;;   :tokens  - tokenized content that needs to be parsed into :model. First on this vector is also :tkn.
 ;;;   :stack   - a stack of tags indicating where in the grammar it is parsing (used for debugging)
-;;;   :tkn     - current token, not yet consumed. It is also the first token on :tokens. 
+;;;   :tkn     - current token, not yet consumed. It is also the first token on :tokens.
 ;;;   :line    - line in which token appears.
-;;;   :col     - column where token starts. 
+;;;   :col     - column where token starts.
 ;;;   :local   - temporarily stored parse content used later to form a complete grammar element.
-;;;              It is a vector (stack) of maps. On entry, defparse pushes a new empty map on it; 
+;;;              It is a vector (stack) of maps. On entry, defparse pushes a new empty map on it;
 ;;;              on exit, it pops it. Macros store and recall push onto the top map of the stack.
 ;;;              For example use, see :ptag/MapSpec and parse-list-terminated.
 
@@ -61,9 +61,11 @@
                    "$each" bi/$each, "$keys" bi/$keys, "$spread" bi/$spread})
 (def datetime-fns '{"$fromMillis" bi/$fromMillis, "$millis" bi/$millis, "$now" bi/$now, "$toMillis" bi/$toMillis})
 (def higher-fns   '{"$filter" bi/$filter, "$map" bi/$map, "$reduce" bi/$reduce, "$sift" bi/$sift, "$single" bi/$single})
-(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet})
+(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet "$query" bi/$query})
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns extended-fns))
+(def query-fn? #{"$query" "$queryFn"})
+
 (def keywords (sets/union keywords-basic (-> builtin-fns vals set))) ; ToDo necessary? Why not just let it be = keywords-basic?
 (def builtin-type #{:int :string})
 
@@ -75,19 +77,20 @@
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators path-operator))
 
-(def ^:private syntactic ; chars that are valid tokens in themselves. 
+(def ^:private syntactic ; chars that are valid tokens in themselves.
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \?})
 
-(def ^:private long-syntactic ; chars that COULD start a multi-character syntactic elements. 
-  #{\<, \>, \=, \., \:, \/, \'}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
+(def ^:private long-syntactic ; chars that COULD start a multi-character syntactic elements.
+  #{\<, \>, \=, \., \:, \/, \', \?}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
 (defrecord JaVar [var-name bound?])
+(defrecord JaQueryVar [qvar-name])
 (defrecord JaField [field-name])
 (defrecord JaEOLcomment [text])
 
-;;; (regex-from-string "/abc\\/.*/") 
-(defn regex-from-string 
-  "Argument starts a JS-like regex. 
+;;; (regex-from-string "/abc\\/.*/")
+(defn regex-from-string
+  "Argument starts a JS-like regex.
    Return a map containing the regex :tkn (java.util.regex.Pattern) and the :raw text"
   [st]
   (assert (str/starts-with? st "/"))
@@ -105,7 +108,7 @@
     {:raw raw :tkn (re-pattern (subs raw 1 (-> raw count dec)))}))
 
 (defn regex-or-divide
-  "Return as :tkn either a Clojure regex or a /. Uses a heuristic, 
+  "Return as :tkn either a Clojure regex or a /. Uses a heuristic,
    specifically does a closing '/' come before a space."
   [st]
   (let [s (subs st 1)
@@ -131,8 +134,27 @@
           :else (recur (rest chars)
                        (str raw (first chars))
                        (str res (first chars))))))
-          
-;;; ToDo multi-line comment (e.g. /* ... */ would go in here, sort of. 
+(defn query-var
+  "read a query var"
+  [st]
+  (let [s (-> st str/split-lines first)]
+    (if-let [[_ matched] (re-matches #"(\?[a-z,A-Z][a-z,A-Z,\-,0-9]*).*" s)]
+      {:raw matched :tkn (->JaQueryVar matched)}
+      (throw (ex-info "String does not start a legal query variable:" {:string s})))))
+
+(defrecord JaTripleRole [role-name])
+(defn triple-role
+  "read a triple role"
+  [st]
+  (let [s (-> st str/split-lines first)]
+    (if-let [[_ matched] (re-matches #"(\:[a-z,A-Z]+[a-z,A-Z,0-9,/]*).*" s)]
+      (if (or (> (-> (for [x matched :when (= x  \/)] x) count) 1)
+              (= \/ (nth matched (-> matched count dec))))
+        (throw (ex-info "String does not start a legal triple role:" {:string s}))
+        {:raw matched :tkn (->JaTripleRole matched)})
+      (throw (ex-info "String does not start a legal triple role:" {:string st})))))
+
+;;; ToDo multi-line comment (e.g. /* ... */ would go in here, sort of.
 (defn read-long-syntactic [st ws]
   (let [len (count st)
         c0  (nth st 0)
@@ -140,15 +162,17 @@
     (when-let [result (cond (and (= c0 \/) (= c1 \/)) {:raw "//" :tkn :eol-comment}
                             (= c0 \/) (regex-or-divide st)
                             (= c0 \') (single-quoted-string st)
+                            (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (query-var st),
+                            (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (triple-role st),
+                            (and (= c0 \:) (= c1 \=)) {:raw ":=" :tkn :binding}
                             (and (= c0 \<) (= c1 \=)) {:raw "<=" :tkn :<=}
                             (and (= c0 \>) (= c1 \=)) {:raw ">=" :tkn :>=}
                             (and (= c0 \=) (= c1 \=)) {:raw "==" :tkn :==}
-                            (and (= c0 \:) (= c1 \=)) {:raw ":=" :tkn :binding}
                             (and (= c0 \.) (= c1 \.)) {:raw ".." :tkn :range}
                             (and (= c0 \!) (= c1 \=)) {:raw "!=" :tkn :!=})]
       (assoc result :ws ws))))
 
-(defn position-break 
+(defn position-break
   "Return the first position in s containing a syntactic character, ws,
    or nil if it contains none."
   [s]
@@ -162,12 +186,12 @@
           (#{\space \tab \newline} c) n
           :else (recur (inc n)))))))
 
-(defn whitesp 
+(defn whitesp
   "Evaluates to whitespace at head of string or empty string if none."
   [s] ; https://stackoverflow.com/questions/15020669/clojure-multiline-regular-expression
   (if s (or (nth (re-matches #"(?s)(\s+).*$" s) 1) "") ""))
 
-;;; https://www.regular-expressions.info/modifiers.html (?s) allows  .* to match all characters including line breaks. 
+;;; https://www.regular-expressions.info/modifiers.html (?s) allows  .* to match all characters including line breaks.
 (defn token-from-string
   "Return a map with keys :ws, :raw and :tkn from the front of the argument string."
   [stream line]
@@ -178,7 +202,7 @@
     (or  (and (empty? s) {:ws ws :raw "" :tkn :eof})                    ; EOF
          (when-let [[_ cm] (re-matches #"(?s)(\/\/[^\n]*).*" s)]        ; EOL comment
            {:ws ws :raw cm :tkn (->JaEOLcomment cm)})
-         (and (long-syntactic c) (read-long-syntactic s ws))    ; /regex-pattern/ ++, <=, == etc. 
+         (and (long-syntactic c) (read-long-syntactic s ws))    ; /regex-pattern/ ++, <=, == etc.
          (and (syntactic c) {:ws ws :raw (str c) :tkn c})            ; literal syntactic char.
          (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]
            {:ws ws :raw num :tkn (read-string num)}),                   ; number
@@ -203,7 +227,7 @@
          line 1
          col 1]
     (let [lex (token-from-string s line) ; Returns a map with keys :ws :raw and :tkn.
-          new-lines (count (re-seq #"\n" (:ws lex))) ; :ws is in front of token. 
+          new-lines (count (re-seq #"\n" (:ws lex))) ; :ws is in front of token.
           col (if (> new-lines 0)
                 (- (count (:ws lex)) (str/last-index-of (:ws lex) "\n"))
                 (+ (count (:ws lex)) col))]
@@ -224,7 +248,7 @@
     (-> (nth (:tokens pstate) n) :tkn)))
 
 (defn match-tkn
-  "Return true if token matches test, which is a string, character, fn or regex."
+  "Return true if token matches test, which is a string, character, fn, or regex."
   [test tkn]
   (cond (= test tkn) true
         (map? test) (test tkn)
@@ -256,13 +280,13 @@
 
 (def balanced-map "What balances with the opening syntax?" { \{ \}, \( \), \[ \] :2d-array-open :2d-array-close})
 (def balanced-inv (sets/map-invert balanced-map))
-  
+
 (defn find-token
   "Return position if tkn is found within the item (before semicolon)."
   [tvec tkn & {:keys [stop-tokens stop-pos]}]
   (when (not-empty tvec)
     (let [stop-pos (or stop-pos (->> (map #(.indexOf tvec %) stop-tokens) (apply max)))
-          stop-pos (if (pos? stop-pos) stop-pos (count tvec)) ; In testing, might not have full item; not stop. 
+          stop-pos (if (pos? stop-pos) stop-pos (count tvec)) ; In testing, might not have full item; not stop.
           tkn-pos  (.indexOf tvec tkn)]
       (cond (== tkn-pos  -1) nil,
             (and (pos? stop-pos) (< stop-pos tkn-pos)) nil,
@@ -288,9 +312,9 @@
                      (inc pos)
                      (rest tvec)))))))
 
-(defn balanced? 
-  "Return true if, before position POS there is a closing syntax character for each 
-  argument TKN opening syntax character." 
+(defn balanced?
+  "Return true if, before position POS there is a closing syntax character for each
+  argument TKN opening syntax character."
   [tvec open-tkn pos]
   (let [close-tkn (get balanced-map open-tkn)]
     (== 0 (reduce (fn [cnt tkn]
@@ -318,7 +342,7 @@
              ~pstate))
        (throw (ex-info "Exceeded parse call-count (Bug in a defparse?)." {:pstate ~pstate})))))
 
-;;; Abbreviated for simple forms such as builtins. 
+;;; Abbreviated for simple forms such as builtins.
 (defmacro defparse-auto [tag test]
   `(defparse ~tag
      [pstate#]
@@ -327,14 +351,14 @@
          (eat-token pstate# ~test))))
 
 ;;; This is an abstraction to protect :result while something else is swapped in.
-;;; The 'from' is what key of ps to take from (defaults to :result). 
+;;; The 'from' is what key of ps to take from (defaults to :result).
 (defmacro store [ps key & [from]]
   `(let [ps# ~ps
          key# ~key]
      (assoc-in ps# [:local 0 key#]
                (~(or from :result) ps#))))
 
-;;; ...and this is for getting the value back. 
+;;; ...and this is for getting the value back.
 (defmacro recall [ps tag]
   `(let [ps# ~ps]
      (-> ~ps :local first ~tag)))
@@ -358,8 +382,8 @@
 
 (defn parse-string
   "Toplevel parsing function.
-  NB: This function is typically used for debugging with a literal string argument.
-  If the text is intended to have JS escape, \\, in it, it has to be escaped!"
+   NB: This function is typically used for debugging with a literal string argument.
+   If the text is intended to have JS escape, \\, in it, it has to be escaped!"
   ([str] (parse-string :ptag/CodeBlock str))
   ([tag str]
    (let [pstate (->> str tokenize make-pstate (parse tag))]
@@ -474,16 +498,18 @@
 (defparse-auto :ptag/builtin-op builtin-op)
 (defparse-auto :ptag/builtin-fn builtin-fns)
 
-(defn id?    [x] (instance? JaVar x))
+(defn id? [x] (instance? JaVar x))
+(defn query-var? [x] (instance? JaQueryVar x))
+(defn triple-role? [x] (instance? JaTripleRole x))
 (defn field? [x] (instance? JaField x))
 
 ;;;=============================== Grammar ===============================
 (s/def ::CodeBlock (s/keys :req-un [::body]))
 ;;; <code-block> ::= ( 'transform' <var> '{' <preamble> '}' )? ( '('  <global-params>* <obj>* ')' | <obj>* )
 (defrecord JaCodeBlock [name preamble bound-vars body])
-(defparse :ptag/CodeBlock ; top-level grammar element. 
+(defparse :ptag/CodeBlock ; top-level grammar element.
   [pstate]
-  (let [has-bindings? (atom nil)] ; <exp> wrapped in parentheses could just be a primary. 
+  (let [has-bindings? (atom nil)] ; <exp> wrapped in parentheses could just be a primary.
     (as-> pstate ?ps
       (if (= :transform (:tkn ?ps))
         (as-> ?ps ?ps1
@@ -615,12 +641,12 @@
 ;;; This should return a <call-exp> at the end of path.
 (defparse :ptag/map-call
   [pstate]
-  (parse :ptag/exp pstate)) 
+  (parse :ptag/exp pstate))
 
 (defparse :ptag/map-comprehension
   [pstate]
   (parse :ptag/list-comprehension pstate))
-      
+
 ;;;--------------------- exp ----------------------------------------------------------
 (defn literal? [tkn]
   (or (string? tkn)
@@ -688,7 +714,7 @@
   (let [tkn   (:tkn ps)
         tkn2  (look ps 1)
         operand-look (operand-exp? ps)
-        base-ps (cond (delimited-next? operand-look)                              ; <delimited-exp> 
+        base-ps (cond (delimited-next? operand-look)                              ; <delimited-exp>
                       (parse :ptag/delimited-exp ps :operand-info operand-look),
                       (and (not in-binary?) (binary-next? operand-look))           ; <binary-exp>
                       (parse :ptag/binary-exp ps :operand-info operand-look),
@@ -727,13 +753,13 @@
     (assoc ?ps :result (->JaBinOpExp (recall ?ps :exp1) (recall ?ps :op) (:result ?ps)))))
 
 ;;; ToDo This one needs some explaining!
-;;; <delimited-exp> ::= <operand-exp> ( ('.' <paren-delimited-exp>) | ('.' <curly-delimited-exp>) | <square-delimited-exp> ) 
+;;; <delimited-exp> ::= <operand-exp> ( ('.' <paren-delimited-exp>) | ('.' <curly-delimited-exp>) | <square-delimited-exp> )
 (defparse :ptag/delimited-exp
   [ps & {:keys [operand-info]}]
   (let [{:keys [operand-tag next-tkns]} operand-info]
     (as-> ps ?ps
-      (parse operand-tag ?ps) ; Parametric tag! 
-      (store ?ps :operand)    ; Note that this ISN'T THE WHOLE OPERAND...See rewriting. 
+      (parse operand-tag ?ps) ; Parametric tag!
+      (store ?ps :operand)    ; Note that this ISN'T THE WHOLE OPERAND...See rewriting.
       (cond (= [\. \(] next-tkns) (as-> ?ps ?ps1
                                     (eat-token ?ps1 \.)
                                     (parse :ptag/paren-delimited-exp ?ps1)),
@@ -801,7 +827,7 @@
   (as-> pstate ?ps
     (parse :ptag/string ?ps)
     (store ?ps :key)
-    (eat-token ?ps \:) 
+    (eat-token ?ps \:)
     (parse :ptag/exp ?ps)
     (assoc ?ps :result (->JaMapPair
                         (recall ?ps :key)
@@ -826,7 +852,7 @@
     (parse-list ?ps \[ \] \, :ptag/exp)
     (assoc ?ps :result (->JaArray (:result ?ps)))))
 
-;;; The JSONata range expression is a bit weird; it is not a binary op but a construct with [ and ]. 
+;;; The JSONata range expression is a bit weird; it is not a binary op but a construct with [ and ].
 ;;; <range-exp> ::= '[' <exp> '..' <exp> ']'
 (defrecord JaRangeExp [start stop])
 (defparse :ptag/range-exp
@@ -872,18 +898,57 @@
           :else (throw (ex-info "expected a literal string, number, 'true', 'false' regex, obj, range, or array."
                                 {:got tkn :pstate ps})))))
 
-;;; fn-call ::=  <$id> '(' [<exp> ','...]* ')'
+;;; fn-call ::=  <$id> '(' [<exp> ','...]* ')' | ('$query' | '$queryFn' '(' <query-triple>+ ')'
 (defrecord JaFnCall [fn-name args])
+(defrecord JaQuery  [fn-name args])
 (defparse :ptag/fn-call
   [ps]
+  (let [query? (-> ps :tkn :var-name query-fn?)]
+    (as-> ps ?ps
+      (store ?ps :fn-name :tkn)
+      (eat-token ?ps id?)
+      (eat-token ?ps \()
+      (if query?
+        (parse :ptag/triples ?ps)
+        (parse-list-terminated ?ps :term-fn #(= % \)) :sep-fn #(= % \,)))
+      (store ?ps :args)
+      (eat-token ?ps \))
+      (assoc ?ps :result
+             (if query?
+               (->JaQuery  (:var-name (recall ?ps :fn-name)) (recall ?ps :args))
+               (->JaFnCall (:var-name (recall ?ps :fn-name)) (recall ?ps :args)))))))
+
+;;; <triples> ::= <triple>+
+(defparse :ptag/triples
+  [ps]
+  (let [ps-one (parse :ptag/triple ps)]
+    (loop [result (vector (:result ps-one))
+           ps ps-one]
+      (if (not= \[ (:tkn ps))
+        (assoc ps :result result)
+        (let [ps (parse :ptag/triple ps)]
+          (recur (conj result (:result ps))
+                 ps))))))
+
+;;; <triple> :: '[' <QueryVar> <TripleRole> (<QueryVar> | <exp>) ']'
+(defrecord JaTriple[ent rel val-exp])
+(defparse :ptag/triple
+  [ps]
   (as-> ps ?ps
-    (store ?ps :fn-name :tkn)
-    (eat-token ?ps id?)
-    (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #(= % \)) :sep-fn #(= % \,))
-    (store ?ps :args)
-    (eat-token ?ps \))
-    (assoc ?ps :result (->JaFnCall (:var-name (recall ?ps :fn-name)) (recall ?ps :args)))))
+    (eat-token ?ps \[)
+    (store ?ps :ent :tkn)
+    (eat-token ?ps query-var?)
+    (store ?ps :role :tkn)
+    (eat-token ?ps triple-role?)
+    (if (query-var? (:tkn ?ps))
+      (as-> ?ps ?ps1
+          (store ?ps1 :third :tkn)
+          (eat-token ?ps1))
+      (as-> ?ps ?ps1
+          (parse :ptag/exp ?ps1)
+          (store ?ps1 :third)))
+    (eat-token ?ps \])
+    (assoc ?ps :result (->JaTriple (recall ?ps :ent) (recall ?ps :role) (recall ?ps :third)))))
 
 ;;; <fn-def> ::= 'function' '(' <$id> [',' <$id>]* ')' '{' <exp> '}'
 (defrecord JaFnDef [vars body])

@@ -1,10 +1,11 @@
 (ns pdenno.rad-mapper.query-test
-   (:require
-    [pdenno.rad-mapper.query       :as gq]
-    [pdenno.owl-db-tools.core      :as owl]
-    [pdenno.owl-db-tools.resolvers :as res]
-    [datahike.api                  :as d]
-    [datahike.pull-api             :as dp]))
+  (:require
+   [clojure.test :refer  [deftest is testing]]
+   [pdenno.rad-mapper.query       :as gq]
+   [pdenno.owl-db-tools.core      :as owl]
+   [pdenno.owl-db-tools.resolvers :as res]
+   [datahike.api                  :as d]
+   [datahike.pull-api             :as dp]))
 
 (def big-cfg {:store {:backend :file :path "/tmp/datahike-owl-db"}
               :keep-history? false
@@ -83,21 +84,31 @@
     (into (filterv #(used-class? (:resource/iri %)) all-objs)
           (filterv #(= :owl/ObjectProperty (:rdf/type %)) all-objs))))
 
-;;; We have to learn the DB schema and resolve db/id in the DH queries.
-  #_(:query [?class :rdf/type            :owl/Class]
-            [?class :resource/iri        ?class-iri]
-            [?class :resource/namespace  ?class-ns]
-            [?class :resource/name       ?class-name]
-            [?rel   :rdf/type            :owl/ObjectProperty]
-            [?rel   :rdfs/domain         ?class-iri]
-            [?rel   :rdfs/range          ?rel-range]
-            [?rel   :resource/name       ?rel-name]
-     :enforce
-     {:table/name     ?class-name,
-      :table/schema   {:schema/name  ?ns},
-      :table/columns  {:column/name  ?rel-name,
-                       :column/type  ?rel-range,
-                       :column/table ?table-ent}} :as ?table-ent)
+(def q1
+"$query( [?class rdf/type            'owl/Class']
+         [?class resource/iri        ?class-iri]
+         [?class resource/namespace  ?class-ns]
+         [?class resource/name       ?class-name]
+         [?rel   rdf/type            'owl/ObjectProperty']
+         [?rel   rdfs/domain         ?class-iri]
+         [?rel   rdfs/range          ?rel-range]
+         [?rel   resource/name       ?rel-name] )")
+
+(def t1
+"$transform(
+   $query( [?class rdf/type            'owl/Class']
+           [?class resource/iri        ?class-iri]
+           [?class resource/namespace  ?class-ns]
+           [?class resource/name       ?class-name]
+           [?rel   rdf/type            'owl/ObjectProperty']
+           [?rel   rdfs/domain         ?class-iri]
+           [?rel   rdfs/range          ?rel-range]
+           [?rel   resource/name       ?rel-name] )
+   $enforce( {'table/name'     ?class-name,
+              'table/schema'   {'schema/name'  ?ns},
+              'table/columns'  {'column/name'  ?rel-name,
+                               'column/type'  ?rel-range,
+                               'column/table' ?table-ent}} :as ?table-ent))")
 (defn tryme [conn]
   (d/q '[:find ?class ?class-iri ?class-ns ?class-name ?rel ?rel-name ?rel-range
          :keys class class-iri class-ns class-name rel rel-name rel-range
