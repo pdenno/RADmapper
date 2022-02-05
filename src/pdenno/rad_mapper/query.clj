@@ -1,10 +1,7 @@
 (ns pdenno.rad-mapper.query
   "query, query!, enforce and things related"
   (:require
-   [pdenno.owl-db-tools.core      :as owl] ; ToDo: Reference to "plug-ins" is probably temporary.
-   [pdenno.owl-db-tools.resolvers :as res]
    [datahike.api                  :as d]
-   [datahike.pull-api             :as dp]
    [taoensso.timbre               :as log]))
 
 ;;; ToDo: Get some more types in here, and in implementation generally.

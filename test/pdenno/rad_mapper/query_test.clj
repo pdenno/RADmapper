@@ -1,55 +1,13 @@
 (ns pdenno.rad-mapper.query-test
   (:require
    [clojure.test :refer  [deftest is testing]]
-   [pdenno.rad-mapper.query       :as gq]
-   [pdenno.owl-db-tools.core      :as owl]
-   [pdenno.owl-db-tools.resolvers :as res]
    [datahike.api                  :as d]
-   [datahike.pull-api             :as dp]))
-
-(def big-cfg {:store {:backend :file :path "/tmp/datahike-owl-db"}
-              :keep-history? false
-              :schema-flexibility :write})
-
-(def big-sources
-  {"cause"  {:uri "http://www.ontologydesignpatterns.org/ont/dlp/Causality.owl"  :ref-only? true},
-   "coll"   {:uri "http://www.ontologydesignpatterns.org/ont/dlp/Collections.owl"},
-   "colv"   {:uri "http://www.ontologydesignpatterns.org/ont/dlp/Collectives.owl"},
-   "common" {:uri "http://www.ontologydesignpatterns.org/ont/dlp/CommonSenseMapping.owl"},
-   "dlp"    {:uri "http://www.ontologydesignpatterns.org/ont/dlp/DLP_397.owl"},
-   "dol"    {:uri "http://www.ontologydesignpatterns.org/ont/dlp/DOLCE-Lite.owl"},
-   "edns"   {:uri "http://www.ontologydesignpatterns.org/ont/dlp/ExtendedDnS.owl"},
-   "fpar"   {:uri "http://www.ontologydesignpatterns.org/ont/dlp/FunctionalParticipation.owl"},
-   "info"   {:uri "http://www.ontologydesignpatterns.org/ont/dlp/InformationObjects.owl"},
-   "mod"    {:uri "http://www.ontologydesignpatterns.org/ont/dlp/ModalDescriptions.owl"},
-   "pla"    {:uri "http://www.ontologydesignpatterns.org/ont/dlp/Plans.owl"},
-   "sem"    {:uri "http://www.ontologydesignpatterns.org/ont/dlp/SemioticCommunicationTheory.owl" :ref-only? true},
-   "space"  {:uri "http://www.ontologydesignpatterns.org/ont/dlp/SpatialRelations.owl"},
-   "soc"    {:uri "http://www.ontologydesignpatterns.org/ont/dlp/SocialUnits.owl"},
-   "sys"    {:uri "http://www.ontologydesignpatterns.org/ont/dlp/Systems.owl"},
-   "time"   {:uri "http://www.ontologydesignpatterns.org/ont/dlp/TemporalRelations.owl"},
-
-   "model"  {:uri "http://modelmeth.nist.gov/modeling",   :access "data/modeling.ttl",   :format :turtle},
-   "ops"    {:uri "http://modelmeth.nist.gov/operations", :access "data/operations.ttl", :format :turtle}})
-
-(def big-atm (d/connect big-cfg))
-
-(defn make-big-db [cfg]
-  (when (d/database-exists? cfg) (d/delete-database cfg))
-  (alter-var-root (var big-atm)
-                  (fn [_]
-                    (owl/create-db!
-                     cfg
-                     big-sources
-                     :rebuild? true
-                     :check-sites ["http://ontologydesignpatterns.org/wiki/Main_Page"]))))
-
-(def conn @big-atm)
-(alter-var-root (var owl/*conn*) (fn [_] conn))
+   [pdenno.rad-mapper.builtins    :as bi]
+   [pdenno.rad-mapper.evaluate    :as ev]
+   [pdenno.rad-mapper.query       :as qu]
+   [pdenno.rad-mapper.rewrite     :as rew]))
 
 ;;;====================================================================================== NYI
-(def foo (res/pull-resource :dol/spatio-temporal-particular @big-atm))
-
 (def test-schema
     [{:schema  {:db/attrs   [{:schema/name    {:db/type  :db/string, :db/cardinality  :one}}],
                 :db/key     [:schema/name]}}
@@ -64,25 +22,81 @@
                              {:column/table {:db/type  :db/object, :db/cardinality  :one}}],
                 :db/key     [:column/table, :column/name]}}])
 
-(def owl-db
-  "Arrange to pull data from the database at big-atm"
-  (res/register-resolvers! owl/*conn*))
 
-(def diag (atom nil))
-
-;;; We are assuming that no database exists and we have this data to map.
+;;; ToDo: Dissoc is temporary; boxing.
 (def test-data
-  "Get maps of everything in the DOLCE (dol) namespace"
-  (let [all-objs (->> (mapv #(res/pull-resource % owl/*conn*)
-                            (:ontology/context
-                             (owl-db '[(:ontology/context {:filter-by {:attr :resource/namespace :val "dol"}})])))
-                      ;; Clean them up: domain and range are just singletons here. :rdfs/subClassOf is heterogeneous
-                      (mapv #(if (:rdfs/domain %) (update % :rdfs/domain first) %))
-                      (mapv #(if (:rdfs/range  %) (update % :rdfs/range  first) %))
-                      (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass)))
-        used-class? (->> all-objs (filter :rdfs/domain) (map :rdfs/domain) set)] ; Things used as domain are also used as range.
-    (into (filterv #(used-class? (:resource/iri %)) all-objs)
-          (filterv #(= :owl/ObjectProperty (:rdf/type %)) all-objs))))
+  "Get maps of everything in the DOLCE (dol) namespace. "
+  (->> "data/testing/dolce-1.edn"
+       slurp
+       read-string
+       (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass))))
+
+(deftest db-for-tests-1
+  (testing "Testing that basic db-for! (and its schema-making) work"
+    (let [conn (qu/db-for! test-data)
+          binding-set (d/q '[:find ?class ?class-iri ?class-ns ?class-name ?rel ?rel-name ?rel-range
+                             :keys class class-iri class-ns class-name rel rel-name rel-range
+                             :where
+                             [?class :rdf/type            :owl/Class]
+                             [?class :resource/iri        ?class-iri]
+                             [?class :resource/namespace  ?class-ns]
+                             [?class :resource/name       ?class-name]
+                             [?rel   :rdfs/domain         ?class-iri]
+                             [?rel   :rdf/type            :owl/ObjectProperty]
+                             [?rel   :rdfs/range          ?rel-range]
+                             [?rel   :resource/name       ?rel-name]]
+                           conn)]
+      (is (== 70 (count binding-set)))
+      (is (== 33 (->> binding-set (filter #(= :dol/particular (:class-iri %))) count))))))
+
+(deftest db-for-tests-2
+  (testing "Testing that basic db-for! (and its schema-making) work"
+    (let [conn (qu/db-for! test-data)
+          binding-set (d/q '[:find ?class ?class-iri
+                             :keys class class-iri
+                             :where
+                             [?class :rdf/type            :owl/Class]
+                             [?class :resource/iri        ?class-iri]]
+                           conn)]
+      (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+               :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
+               :dol/feature :dol/time-interval}
+             (->> binding-set (map :class-iri) set))))))
+
+(deftest query-basics
+  (testing "Testing $query parsing, rewriting and execution."
+    (is (= '(bi/$query '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])
+           (rew/rewrite* :ptag/exp
+            "$query( [?class :rdf/type     'owl/Class']
+                     [?class :resource/iri  ?class-iri])"
+            :rewrite? true)))
+    (is (= '(fn [] (let [$data (bi/$readFile "data/testing/dolce-2.edn"
+                                             (-> {} (assoc "type" "edn")))]
+                     (bi/access $data (bi/$query '[[?class :rdf/type "owl/Class"]
+                                                   [?class :resource/iri ?class-iri]]))))
+           (rew/rewrite* :ptag/CodeBlock
+            "( $data := $readFile('data/testing/dolce-2.edn', {'type' : 'edn'});
+               $data.$query([?class :rdf/type     'owl/Class']
+                            [?class :resource/iri  ?class-iri]) )"
+            :rewrite? true)))
+    #_(is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+             :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
+             :dol/feature :dol/time-interval}
+           (->> (ev/user-eval '(bi/$query test-data [[?class :rdf/type 'owl/Class'] [?class :resource/iri  ?class-iri]]))
+                (map :class-iri)
+                set)))
+    ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
+    (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+             :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
+             :dol/feature :dol/time-interval}
+           (->> (rew/rewrite* :ptag/CodeBlock ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
+                              "( $data := $readFile('data/testing/dolce-2.edn', {'type' : 'edn'});
+                                 $data.$query([?class :rdf/type     'owl/Class']
+                                              [?class :resource/iri  ?class-iri]) )"
+                              :execute? true)
+                (map :class-iri)
+                (map keyword)
+                set)))))
 
 (def q1
 "$query( [?class rdf/type            'owl/Class']
@@ -109,16 +123,22 @@
               'table/columns'  {'column/name'  ?rel-name,
                                'column/type'  ?rel-range,
                                'column/table' ?table-ent}} :as ?table-ent))")
-(defn tryme [conn]
-  (d/q '[:find ?class ?class-iri ?class-ns ?class-name ?rel ?rel-name ?rel-range
-         :keys class class-iri class-ns class-name rel rel-name rel-range
-         :where
-         [?class :rdf/type            :owl/Class]
-         [?class :resource/iri        ?class-iri]
-         [?class :resource/namespace  ?class-ns]
-         [?class :resource/name       ?class-name]
-         [?rel   :rdfs/domain         ?class-iri]
-         [?rel   :rdf/type            :owl/ObjectProperty]
-         [?rel   :rdfs/range          ?rel-range]
-         [?rel   :resource/name       ?rel-name]]
-       conn))
+
+(deftest enforce-basics
+  (testing "Testing that $enforce works"
+    (is true) #_(= :NYI  (rew/rewrite* :ptag/CodeBlock))
+#_#_#_"($schema =
+   [{'schema' : {'db/attrs'  : [{'schema/name'   : {'db/type' : 'string', 'db/cardinality' : 'one'}}],
+                 'db/key'    : ['schema/name']}}
+
+    {'table'  : {'db/attrs'  : [{'table/name'    : {'db/type' : 'string', 'db/cardinality' : 'one' },
+                                 'table/schema'  : {'db/type' : 'object', 'db/cardinality' : 'one',
+                                                    'db/in-line?' : true},
+                                 'table/columns' : {'db/type' : 'object', 'db/cardinality' : 'many'}}],
+                 'db/key'    : ['table/schema', 'table/name']}}
+
+    {'column' : {'db/attrs'  : [{'column/name'   : {'db/type' : 'string', 'db/cardinality' : 'one'}},
+                                {'column/type'   : {'db/type' : 'string', 'db/cardinality' : 'one'}},
+                                {'column/table'  : {'db/type' : 'object', 'db/cardinality' : 'one'}}],
+                 'db/key'    : ['column/table', 'column/name']}}]
+ )" :execute? true))

@@ -21,15 +21,15 @@
     (is (= {:next-tkns [\. \(], :operand-tag :ptag/field}
            (-> "a.(P * Q)" par/tokenize par/make-pstate par/operand-exp?)))
     ;; Another -nil +nil !
-    #_(is (= {:next-tkns [\[ {:field-name "x", :_type :JaField}], :operand-tag :ptag/field}
-           (-> "a[x < 5]" par/tokenize par/make-pstate par/operand-exp?)))
+    (is (= [[:next-tkns [\[ {:_type :JaField, :field-name "x"}]] [:operand-tag :ptag/field]]
+           (-> "a[x < 5]" par/tokenize par/make-pstate par/operand-exp? rew/map-simplify)))
     (is (= {:next-tkns [\. \{], :operand-tag :ptag/field}
            (-> "a.{'foo' : 5}" par/tokenize par/make-pstate par/operand-exp?)))))
 
 (deftest parse-structures
   (testing "Testing that parsing does the right things"
     ;; I can't see the problem in the following! (get -nil +nil)
-    #_(is (= {:_type :JaBinOpExp,
+    (is (= {:_type :JaBinOpExp,
             :exp1 {:field-name "a", :_type :JaField}, :bin-op \., :exp2 {:_type :JaBinOpExp,
              :exp1 {:field-name "b", :_type :JaField}, :bin-op \., :exp2 {:_type :JaBinOpExp,
               :exp1 {:field-name "c", :_type :JaField}, :bin-op \., :exp2 {:_type :JaBinOpExp,
@@ -54,11 +54,11 @@
   (testing "Testing that queries parse okay."
     (is (= {:_type :JaTriple,
             :ent {:_type :JaQueryVar, :qvar-name "?x"},
-            :rel {:_type :JaTripleRole, :role-name ":rdf/type"},
+            :rel {:_type :JaTripleRole, :role-name :rdf/type},
             :val-exp "owl/Class"}
            (rew/rewrite* :ptag/triple "[?x :rdf/type 'owl/Class']" :simplify? true)))
-    (is (= [{:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?x"}, :rel {:_type :JaTripleRole, :role-name ":a"}, :val-exp "one"}
-            {:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?y"}, :rel {:_type :JaTripleRole, :role-name ":b"}, :val-exp "two"}]
+    (is (= [{:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?x"}, :rel {:_type :JaTripleRole, :role-name :a}, :val-exp "one"}
+            {:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?y"}, :rel {:_type :JaTripleRole, :role-name :b}, :val-exp "two"}]
            (rew/rewrite* :ptag/triples "[?x :a 'one'] [?y :b 'two']" :simplify? true)))
     (is (= (rew/rewrite* :ptag/exp q1 :simplify? true)
            {:_type :JaQuery,
@@ -66,9 +66,9 @@
             :args
             [{:_type :JaTriple,
               :ent {:_type :JaQueryVar, :qvar-name "?class"},
-              :rel {:_type :JaTripleRole, :role-name ":rdf/type"},
+              :rel {:_type :JaTripleRole, :role-name :rdf/type},
               :val-exp "owl/Class"}
              {:_type :JaTriple,
               :ent {:_type :JaQueryVar, :qvar-name "?class"},
-              :rel {:_type :JaTripleRole, :role-name ":resource/iri"},
+              :rel {:_type :JaTripleRole, :role-name :resource/iri},
               :val-exp {:_type :JaQueryVar, :qvar-name "?class-iri"}}]}))))

@@ -2,18 +2,20 @@
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    rewrite* is a top-level function for this."
   (:require
+   [pdenno.rad-mapper.evaluate :as ev]
    [pdenno.rad-mapper.util :as util]
    [pdenno.rad-mapper.parse  :as par]
-   [clojure.pprint :refer (cl-format)]
-   [clojure.set    :as sets]
-   [clojure.spec.alpha :as s]))
+   [clojure.pprint :refer [cl-format pprint]]
+   [clojure.set    :as set]
+   [clojure.spec.alpha :as s]
+   [taoensso.timbre   :as log]))
 
 (def ^:dynamic *debugging?* false)
 (def diag (atom {}))
 (def tags (atom []))
 (def locals (atom [{}]))
-(declare map-simplify remove-nils rewrite )
-(declare binops2bvecs walk-for-bvecs reorder-for-delimited-exps connect-bvec-fields rewrite-bvec-as-sexp precedence op-precedence)
+(declare map-simplify remove-nils rewrite make-runnable)
+(declare binops2bvecs walk-for-bvecs reorder-for-delimited-exps connect-bvec-fields rewrite-bvec-as-sexp precedence)
 
 ;;; ToDo:
 ;;;   - Investigate Small Clojure Interpreter.
@@ -21,31 +23,41 @@
 ;;;   - All this stuff belongs in a library!
 
 (defn rewrite*
-  "A top-level function for all phases of translation. 
+  "A top-level function for all phases of translation.
    parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it rewrites without debug output."
   [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse?] :as opts}]
-  (let [all? (empty? (sets/intersection #{:simplify? :rewrite? :execute} (-> opts keys set)))]
+  simplify? rewrite? ; ToDo Avoid Kondo warning
+  (let [kopts (-> opts keys set)
+        simplify? (not-empty (set/intersection #{:execute? :rewrite? :simplify?} kopts))
+        rewrite?  (not-empty (set/intersection #{:execute? :rewrite?} kopts))]
     (binding [*debugging?* debug?
               par/*debugging?* debug-parse?]
-      (let [result (-> (par/parse-string tag (if file? (slurp str) str))
-                       :result
-                       (cond->
-                           (or all? rewrite? simplify?) map-simplify
-                           (or all? rewrite?)           rewrite))]
-        (cond execute? ((:map-fn result))
-              rewrite? (if (= tag :ptag/CodeBlock) (:toplevel result) result)
-              :else result)))))
+      (as-> (:result (par/parse-string tag (if file? (slurp str) str))) ?r
+        (if simplify? (map-simplify ?r) ?r)
+        (if rewrite?  (rewrite ?r) ?r)
+        (if (and rewrite? (:rewrite-error? ?r))
+          (log/error "Error in rewriting: result = " (with-out-str (pprint ?r)))
+          ?r)
+        (if (and rewrite? (not (:rewrite-error? ?r)) (not execute?) (= tag :ptag/CodeBlock))
+          (:runnable ?r)
+          ?r)
+        (if (and execute? (-> ?r :runnable not))
+          (log/error "No executable created: result ="  (with-out-str (pprint ?r)))
+          ?r)
+        (if (and execute? (:runnable ?r)) (-> ?r :runnable ev/user-eval) ?r)))))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
-(defmacro defrewrite [tag [obj & keys-form] & body] 
+(defmacro defrewrite [tag [obj & keys-form] & body]
   `(defmethod rewrite-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
      (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
      (swap! tags #(conj % ~tag))
      (swap! locals #(into [{}] %))
      (let [result# (try ~@body
-                        (catch Exception e# (ex-message (.getMessage e#)) {:obj ~obj :rewrite-error? true}))]
+                        (catch Exception e#
+                          (log/error "Error rewriting:" e#)
+                          (ex-message (.getMessage e#)) {:obj ~obj :rewrite-error? true}))]
      (swap! tags #(-> % rest vec))
      (swap! locals #(-> % rest vec))
      (do (when *debugging?* (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
@@ -57,7 +69,7 @@
         (map? type) (-> obj :_type type)))
 
 (defn map-simplify
-  "Recursively traverse the map structures changing records to maps, 
+  "Recursively traverse the map structures changing records to maps,
    removing nil map values, and adding :_type value named after the record."
   [m]
   (cond (record? m) (-> {:_type (-> m .getClass .getSimpleName keyword)}
@@ -65,7 +77,7 @@
                         remove-nils),
         (coll? m) (mapv map-simplify m),
         :else m))
-        
+
 (defn remove-nils
   "Remove map values that are nil."
   [m]
@@ -88,33 +100,20 @@
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
-;;;----------------------- Evaluation ---------------------------------------
-(defn make-map-fn [m]
-  `(~'fn []
-     (~'let [~@(reduce (fn [res vdecl] (into res (rewrite vdecl))) [] (:bound-vars m))]
-       ~(-> m :body rewrite))))
-
-;;; ToDo It would be nice to say *what symbol* is unresolved. In tracking this down,
-;;; of course, I will have to watch for cycles.
-;;; (user-eval '(+ x y))
-(defn user-eval
-  "Do clojure eval in namespace app.model.mm-user.
-   If the sexp has unresolvable symbols, catch them and return :unresolved-symbol."
-  [form & {:keys [verbose?]}]
-  (when verbose? (println "eval form: " form))
-  (binding [*ns* (find-ns 'app.model.mm-user)]
-    (eval form)))
-
 ;;;------------------------ Toplevel of rewriting ----------------------------
 (defrewrite :JaCodeBlock [m]
   (as-> m ?m
       (update-in ?m [:result :preamble :metadata-map] rewrite)
-      (assoc  ?m :toplevel (make-map-fn ?m))
-      (dissoc ?m :max-calls :line :col :stack :tokens :local :tkn :call-count :bound-vars :result :_type :body)
-      (assoc  ?m :map-fn (user-eval (:toplevel ?m)))))
+      (assoc  ?m :runnable (make-runnable ?m))
+      (dissoc ?m :max-calls :line :col :stack :tokens :local :tkn :call-count :bound-vars :result :_type :body)))
+
+(defn make-runnable [m]
+  `(~'fn []
+     (~'let [~@(reduce (fn [res vdecl] (into res (rewrite vdecl))) [] (:bound-vars m))]
+       ~(-> m :body rewrite))))
 
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
-;;; User functions also translate using this, but don't use the metadata. 
+;;; User functions also translate using this, but don't use the metadata.
 (defrewrite :JaFnDef [m]
   (let [vars (mapv #(-> % :var-name symbol) (:vars m))
         body (-> m :body rewrite)]
@@ -129,24 +128,29 @@
 ;(defrewrite :JaField [m] `(~'bi/access ~(-> m :field-name)))
 (defrewrite :JaField [m] (-> m :field-name))
 
-(defrewrite :JaVar    [m] (-> m :var-name symbol)) ; ToDo Temporary? 
+(defrewrite :JaVar    [m] (-> m :var-name symbol)) ; ToDo Temporary?
 #_(defrewrite :JaVar [m]
   (if (or (:bound? m) (= \$ (get (:var-name m) 0))) ; ToDo drop the :bound? part???
     (-> m :var-name symbol)
     (throw (ex-info "Expected an ID that started with a $." {:arg m}))))
 
-;;; ALL of these become :MAP ?
-(defrewrite :JaParenDelimitedExp [_m]
-  "No, they don't all become :MAP!")
+;;; This should only execute in simple JaPDEs (no :BFLAT?)
+(defrewrite :JaParenDelimitedExp [m]
+  `(~'bi/map-path ~(-> m :exp rewrite) ~(-> m :operand rewrite))
+  #_(log/error "\nExpected :MAP tranlation. \nm=" m))
 
 ;;; Some of these become :FILTER
 (defrewrite :JaSquareDelimitedExp [m]
-  (-> m :exp rewrite))
+  (if (:operand m) ; ToDo -- Not at all sure about the THEN part (appeasing problem in easy tests).
+    `(bi/filter-aref
+      ~(-> m :operand rewrite)
+      ~@(-> m :exp rewrite))
+    (-> m :exp rewrite)))
 
 ;;; Some of these become :CONSTRUCT
 (defrewrite :JaCurlyDelimitedExp [m]
   `(~'-> {}
-       ~@(map rewrite (:map-pairs m))))
+       ~@(map rewrite (:exp m))))
 
 (defrewrite :JaMapPair [m]
   `(~'assoc ~(:key m) ~(rewrite (:val m))))
@@ -167,15 +171,27 @@
 (defrewrite :JaRangeExp [m]
   `(~'range ~(rewrite (:start m)) (~'inc ~(rewrite (:stop m)))))
 
+(defrewrite :JaQuery [m]
+  `(~(-> m :fn-name par/builtin-fns)
+    '~(mapv rewrite (:args m))))
+
+(defrewrite :JaTriple [m]
+  `[~(rewrite (:ent m))
+    ~(rewrite (:rel m))
+    ~(rewrite (:val-exp m))])
+
+(defrewrite :JaQueryVar [m] (-> (:qvar-name m) symbol))
+(defrewrite :JaTripleRole [m] (:role-name m))
+
 ;;;---------------------------- Binary ops, precedence ordering, and paths --------------------------------------------------
-;;; This one produces a :BFLAT structure. 
+;;; This one produces a :BFLAT structure.
 (defrewrite :JaBinOpExp [m]
   (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps rewrite))
 
 (defrewrite :BFLAT [m]
   (-> m :bf connect-bvec-fields rewrite-bvec-as-sexp rewrite))
 
-(defn binops2bvecs 
+(defn binops2bvecs
   "Walk structure rewriting JaBinOpExp as a map with :_type :BVEC and :bvec, a vector of the arguments and operators.
    This doesn't flatten things, just gets the bvecs in there."
   [exp]
@@ -198,7 +214,7 @@
       {:_type :BFLAT :bf res}
       (let [[operand1 op operand2] (:bvec bv)]
         (if (type? operand2 :BVEC)
-          (recur operand2 
+          (recur operand2
                  (into res (vector (walk-for-bvecs operand1) op)))
           (recur []
                  (into res (vector (walk-for-bvecs operand1) op (walk-for-bvecs operand2)))))))))
@@ -234,7 +250,6 @@
 (defrewrite :CONSTRUCT [m]
   `(~'bi/construct-path ~(-> m :exp rewrite) ~(-> m :arg rewrite)))
 
-
 (def JaDelimitedExp? {:JaParenDelimitedExp  :MAP,
                       :JaSquareDelimitedExp :FILTER,
                       :JaCurlyDelimitedExp  :CONSTRUCT})
@@ -247,7 +262,7 @@
    the builtin function determines whether it is intended as array indexing or actual filtering.
    One more quirk is addressed here: Owing to the way parsing is implemented (currently?) the
    JaDelimitedExp has an attribute that is the last operand encountered. This is put into the BFLAT
-   separated by one more \\." 
+   separated by one more \\."
   [bflat]
   (let [[p1 p2] (split-with #(not (type? % JaDelimitedExp?)) (:bf bflat))]
     (if (empty? p2)
@@ -264,51 +279,60 @@
         (-> bflat
             (assoc  :bf (conj (vec p1-1) primary))
             (update :bf into (-> {:_type :BFLAT :bf (vec others)} reorder-for-delimited-exps :bf)))))))
-            
+
 ;;; Here it makes sense to wrap both of the fields: "a + b * f()"
 ;;; [{:_type :JaField, :field-name "a"} \+ {:_type :JaField, :field-name "b"} \* {:_type :JaFnCall, :fn-name "$f"}]
 ;;;
-;;; $sum($v.field) 
+;;; $sum($v.field)
 ;;; [{:_type :JaVar :var-name "$v"} \. {:_type :JaField :field-name "field"}]
-;;; 
+;;;
 ;;; [{:_type :JaField :field-name "a"} \+ {:_type :JaField :field-name "b"} \* {:_type :JaFnCall :fn-name "$f"}]
 (defn connect-bvec-fields
   "Any JaField in a BFLAT.bf that isn't preceded by a bi/access (\\.) is a reference to that field in the context variable.
    Thus replace such JaFields with the one-argument call to bi/access.
    The rewrite for :JaField just returns the string.
-   This leaves some fields, the ones preceded by a \\., to be processed by rewrite-bvec-as-sexp. 
-   The others (they start new accesses into context variable) are wrapped in 1-arg bi/access here."
+   This leaves some fields, the ones preceded by a \\., to be processed by rewrite-bvec-as-sexp.
+   These others (they start new accesses into context variable) are wrapped in 1-arg bi/access here."
   [bvec]
-  (reset! diag bvec)
+  ;(log/info "bvec =" bvec)
   (loop [bv bvec
          res []
          start? true]
-    (cond (empty? bv) res,                                          
+    (cond (empty? bv) res, 
+    
+          ;;[\. {:_type :JaField, :field-name "b"}]
+          (and (== 2 (count bvec)) (= \. (first bv)) (type? (second bv) :JaField))
+          (conj res `(~'bi/access ~(-> bv second :field-name))),
+          
           (and start? (type? (first bv) :JaField))                  ; starts with a field; wrap in 1-arg bi/access.
           (recur (-> bv rest vec)
                  (vector `(~'bi/access ~(-> bv first :field-name)))
                  false),
+          
           start?                                                    ; Starts with anything but a field, advance by one.
           (recur (-> bv rest vec)
                  (-> bv first vector)
                  false),
+          
           ;; After start, it does [<operator>, <operand>].
-          (and (= \. (first bv)) (type? (second bv) :JaField))      ; Ordinary field, advance two. 
+          (and (= \. (first bv)) (type? (second bv) :JaField))      ; Ordinary field, advance two.
           (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; rewrite-bvec-as-sexp will take care of it.
                  (into res (subvec bv 0 2))
                  false),
+          
           (type? (second bv) :JaField)
           (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; 'Newly started' field; wrap it.
                  (into res (vector (first bv) `(~'bi/access ~(-> bv second :field-name))))
                  false)
-          :else                                                     ; Advance two. If it contains a field, 
+          :else                                                     ; Advance two. If it contains a field,
           (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; rewrite-bvec-as-sexp will take care of it.
                  (into res (subvec bv 0 2))
+                 ;(if (<= (count bv) 2) res (into res (subvec bv 0 2)))
                  false))))
 
 ;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 ;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
-(def op-precedence-tbl ; lower :val means binds tighter. 
+(def op-precedence-tbl ; lower :val means binds tighter.
   {:or          {:assoc :left :val 1000}
    :and         {:assoc :left :val 900}
    \<           {:assoc :none :val 800}
@@ -331,7 +355,6 @@
   (if (contains? op-precedence-tbl op)
     (-> op op-precedence-tbl :val)
     100))
-
 
 (def spec-ops (-> par/binary-op? vals set))
 
@@ -358,7 +381,7 @@
    {:operators [] :args []}
    (map #(vector %1 %2) (range (count bvec)) bvec)))
 
-(defn update-op-pos 
+(defn update-op-pos
   "Update the :pos values in operators according to new shortened :operands."
   [info]
   (let [args (:args info)
@@ -385,7 +408,7 @@
                   (if is-op? (rest positions) positions))))))))
 
 (defn update-args
-  "Remove used operands and replace with sexps." 
+  "Remove used operands and replace with sexps."
   [info mod-pos]
   (update info
             :args
@@ -411,12 +434,12 @@
     (s/assert ::info info)
     (as-> info ?info
       (reduce (fn [info pval]
-                (loop [index (-> info :operators count range) 
+                (loop [index (-> info :operators count range)
                        info info]
                   (let [ops (:operators info)]
                     (if (empty? index)
                       info
-                      (let [ix (first index) ; Picks out an operator (might not be modified; see pval). 
+                      (let [ix (first index) ; Picks out an operator (might not be modified; see pval).
                             omap (nth ops ix)
                             pos  (:pos omap)
                             prec (:prec omap)

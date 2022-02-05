@@ -6,9 +6,11 @@
    respectively for navigation to a property and concatenation."
   (:refer-clojure :exclude [+ - * /])
   (:require
+   [dk.ative.docjure.spreadsheet :as ss]
+   [datahike.api                  :as d]
+   [pdenno.rad-mapper.query      :as qu]
    [pdenno.rad-mapper.util       :as util]
-   [clojure.string               :as str]
-   [dk.ative.docjure.spreadsheet :as ss]))
+   [clojure.string               :as str]))
 
 ;;; ToDo:
 ;;;   1) Singleton wrapper (on defn* ?)
@@ -23,7 +25,7 @@
       (== 0 len) nil,
       (== 1 len) (first res)
       :else res)))
-  
+
 (def $ "The JSONata context variable." (atom nil))
 (def $$ "The JSONata root variable." (atom nil))
 
@@ -92,15 +94,15 @@
     (apply + v_)
     (throw (ex-info "In $sum, argument does not look like a vector of numbers." {:value v_}))))
 
-;;; ToDo $contains(), $split(), $replace()
-;;; ToDo flags on regular expressions. /regex/flags  (the only flags are 'i' and 'm' (case insenstive, multi-line)).
+;;; ToDo: $contains(), $split(), $replace()
+;;; ToDo: flags on regular expressions. /regex/flags  (the only flags are 'i' and 'm' (case insenstive, multi-line)).
 ;;; (re-find #"foo" "foovar")
 (defn* $match
   "Return a JSONata-like map for the result of regex mapping.
    Pattern is a Clojure regex."
   [s_ pattern]
   (let [result (re-find pattern s_)]
-    (cond (string? result) {"match" result 
+    (cond (string? result) {"match" result
                             "index" (str/index-of s_ result)
                             "groups" []}
           (vector? result)
@@ -118,14 +120,15 @@
   [obj prop]
   ;; Could be a vector of content but also could be a vector of vectors of content.
   ;; The latter because of JSONata's implicit 'map over' semantics. Don't go deeper.
-  (let [res (cond (and (vector? obj) (every? map? obj)) (mapv #(get % prop) (filter #(contains? % prop) obj)),
+  (let [res (cond (fn? prop) (prop obj) ; $query is like this.
+                  (and (vector? obj) (every? map? obj)) (mapv #(get % prop) (filter #(contains? % prop) obj)),
                   (map? obj) (get obj prop),
                   :else (throw (ex-info "Expected a map or vector of maps" {:got obj})))]
     (jsonata-flatten res)))
 
 (defn* access "JSONata . operator" [obj_ prop] (access-internal obj_ prop))
 
-;;; ToDo Review value of meta in the following. 
+;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------
 ;;; These cannot access the context variable implicitly (by reduced arity).
 ;;; Thus Account.Order.Product.ProductID.$map($, $string)
@@ -231,7 +234,7 @@
                 :else
                 (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
                                 {:vars (-> func meta :params)}))))))
-  
+
 (defn $single
   "See http://docs.jsonata.org/higher-order-functions
    Signature: $single(array, function)
@@ -267,7 +270,7 @@
               :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
                                     {:vars (-> func meta :params)}))))))
 
-;;; ToDo NYI
+;;; ToDo: NYI
 (defn map-path
   "Run Clojure map on the argument."
   [fn arg]
@@ -295,7 +298,7 @@
         ;; Array behavior
         (if (or (and (pos? pred|num) (> pred|num len))
                 (and (neg? pred|num) (> (Math/abs pred|num) (inc len))))
-          (throw (ex-info "Array bounds exceeded:" {:index pred|num})) 
+          (throw (ex-info "Array bounds exceeded:" {:index pred|num}))
           (if (neg? pred|num)
             (let [ix (clojure.core/+ len pred|num 2)] (first (subvec obj (dec ix) ix)))
             (nth obj pred|num)))
@@ -303,12 +306,29 @@
         (filter pred|num obj)))
     (throw (ex-info "An array is required for indexing/filtering" {}))))
 
-;;;=================== Extended (not part of JSONata) functions ================================
-;;; ToDo Currently assumes XML.
+;;;=================== Non-JSONata functions ================================
+(defn key2str
+  "Return the object with its map values that were keys replaced with strings.
+  :ab ==> 'ab'; :ns/ab ==> 'ns/ab'."
+  [obj]
+  (cond (map? obj) (reduce-kv (fn [m k v]
+                                (cond (keyword? v) (assoc m k (subs (str v) 1))
+                                      (vector? v) (assoc m k (mapv key2str v))
+                                      (map? v)   (assoc m k (reduce-kv (fn [m k v] (assoc m k (key2str v))) {} v))
+                                      :else     (assoc m k v)))
+                              {}
+                              obj),
+        (vector? obj) (mapv key2str obj),
+        :else obj))
+
+;;; ToDo: Currently no JSON
 (defn $readFile
   "Read a file of JSON or XML, creating a map."
-  [fname]
-  (reset! $ (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)))
+  ([fname] ($readFile fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
+  ([fname opts]
+   (case (or (get opts "type") "xml")
+     "xml" (reset! $ (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml))
+     "edn" (reset! $ (-> fname slurp read-string key2str))))) ; Great for testing!
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -340,8 +360,8 @@
   (->> (reduce (fn [res m] (assoc res (:A m) (:B m))) {} in-map)
        (reduce-kv (fn [res k v] (assoc res (-> (str/replace k #"[\s+,\.+]" "_") keyword) v))
                   {})))
-  
-;;; ($readSpreadsheet 
+
+;;; ($readSpreadsheet
 (defn $readSpreadsheet
   "Read the .xlsx and make a clojure map for each row. No fancy names, just :A,:B,:C,...!"
   ([filename sheet-name] ($readSpreadsheet filename sheet-name false))
@@ -358,3 +378,37 @@
                    (transpose-sheet raw)
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
+
+(defn* $schemaFor [data_]
+  (qu/learn-schema-walking data_))
+
+;;; Thoughts on schema""
+;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
+;;;   - One needs to to specify schema on $transform, even if it is {}
+;;;   - What is provided as argument overrides what is learned in $query.
+;;;   - $enforce could be with an argument schema.
+
+(defn qform
+  "Return a Datahike query form [:find ... :where ... :keys] for the argument triples"
+  [triples]
+  (let [thirds (->> triples (map #(nth % 2)) (filter #(str/starts-with? % "?")))]
+    `[:find ~@thirds
+      :keys ~@(->> thirds (map #(subs (str %) 1)) (map symbol))
+      :where ~@triples]))
+
+;;; ToDo: Third role in qforms can be an expression.
+(defn $query
+  "Run a $query."
+  [qforms]
+  (fn [data]
+    (let [conn (qu/db-for! data)]
+      (d/q `~(qform qforms) conn))))
+
+(defn $query-fn
+  "Return a function that runs a query."
+  [qforms]
+  (fn [data]
+    (let [conn (qu/db-for! data)]
+       (d/q `~(qform qforms) conn))))
+
+(defn* $transform [_data schema query enforce] :nyi)

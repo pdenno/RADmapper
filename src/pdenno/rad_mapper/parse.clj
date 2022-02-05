@@ -5,7 +5,8 @@
    [clojure.pprint :refer (cl-format)]
    [clojure.string :as str]
    [clojure.set    :as sets]
-   [clojure.spec.alpha :as s]))
+   [clojure.spec.alpha :as s]
+   [taoensso.timbre   :as log]))
 
 ;;; The 'defparse' parsing functions pass around complete state.
 ;;; The 'parse state' (AKA pstate) is a map with keys:
@@ -29,6 +30,8 @@
 
 (def ^:dynamic *debugging?* false)
 (def diag (atom nil))
+
+(util/config-log (if *debugging?* :debug :info))
 
 ;;; ============ Tokenizer ===============================================================
 (def keywords-basic
@@ -151,11 +154,14 @@
       (if (or (> (-> (for [x matched :when (= x  \/)] x) count) 1)
               (= \/ (nth matched (-> matched count dec))))
         (throw (ex-info "String does not start a legal triple role:" {:string s}))
-        {:raw matched :tkn (->JaTripleRole matched)})
+        {:raw matched :tkn (->JaTripleRole (read-string matched))})
       (throw (ex-info "String does not start a legal triple role:" {:string st})))))
 
 ;;; ToDo multi-line comment (e.g. /* ... */ would go in here, sort of.
-(defn read-long-syntactic [st ws]
+(defn read-long-syntactic
+  "Return a map containing a :tkn and :raw string for 'long syntactic' lexemes,
+   which include arbitray query vars and roles too."
+  [st ws]
   (let [len (count st)
         c0  (nth st 0)
         c1  (and (> len 1) (nth st 1))]
@@ -388,7 +394,9 @@
   ([tag str]
    (let [pstate (->> str tokenize make-pstate (parse tag))]
      (if (not= (:tkn pstate) :eof)
-       (do (when *debugging?* (cl-format *out* "~2%*** Tokens remain. pstate=~A ~%" pstate))
+       (throw (ex-info "Tokens remain" {:pstate pstate}))
+        #_(do (when *debugging?*
+             (log/error (cl-format nil "~2%*** Tokens remain. pstate=~A ~%" pstate)))
            pstate)
        pstate))))
 
@@ -707,6 +715,7 @@
   [{:keys [next-tkns]}]
   (-> next-tkns first binary-op?))
 
+;;; ToDo: Rethink use of in-binary?
 ;;; <exp> ::=  ( <delimited-exp> | <binary-exp> | (<builtin-un-op> <exp>) | <fn-call> | <literal> | <field> | <$id>) ( <conditional-tail> | <exp> )?
 (defrecord JaBinOpExp [exp1 bin-op exp2])
 (defparse :ptag/exp
@@ -716,7 +725,7 @@
         operand-look (operand-exp? ps)
         base-ps (cond (delimited-next? operand-look)                              ; <delimited-exp>
                       (parse :ptag/delimited-exp ps :operand-info operand-look),
-                      (and (not in-binary?) (binary-next? operand-look))           ; <binary-exp>
+                      (and (not in-binary?) (binary-next? operand-look))          ; <binary-exp>
                       (parse :ptag/binary-exp ps :operand-info operand-look),
                       (builtin-un-op tkn) (parse :ptag/unary-op-exp ps),          ; <unary-op-exp>
                       (= tkn :function) (parse :ptag/fn-def ps),
@@ -732,7 +741,7 @@
                                       {:got tkn :pstate ps})))]
     (cond (and (= \? (:tkn base-ps)) (not in-binary?))
           (parse :ptag/conditional-tail base-ps :predicate (:result base-ps))
-          (and (not in-binary?) (-> base-ps :tkn binary-op?))
+          (and #_(not in-binary?) (-> base-ps :tkn binary-op?)) ; (not in-binary?) is causing early termination.
           (as-> base-ps ?ps
             (store ?ps :operator :tkn)
             (eat-token ?ps)
@@ -788,6 +797,7 @@
 
 ;;; <obj> ::= "{" <map-pair> (',' <map-pair> )* "}"
 (defrecord JaCurlyDelimitedExp [operand map-pairs])
+(defparse :ptag/obj [ps] (parse :ptag/curly-delimited-exp ps))
 (defparse :ptag/curly-delimited-exp
   [ps]
   (as-> ps ?ps
