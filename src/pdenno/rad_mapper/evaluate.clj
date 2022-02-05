@@ -15,7 +15,7 @@
   (when verbose? (println "eval form: " fn-form))
   (binding [*ns* (find-ns 'user)]
     (try
-      ((eval fn-form))
+      (eval fn-form)
       (catch Exception e
         (log/error "\nError evaluating form:" e "\nform:" fn-form)))))
 

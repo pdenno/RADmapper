@@ -26,7 +26,7 @@
   "A top-level function for all phases of translation.
    parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it rewrites without debug output."
-  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse?] :as opts}]
+  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? verbose?] :as opts}]
   simplify? rewrite? ; ToDo Avoid Kondo warning
   (let [kopts (-> opts keys set)
         simplify? (not-empty (set/intersection #{:execute? :rewrite? :simplify?} kopts))
@@ -36,16 +36,10 @@
       (as-> (:result (par/parse-string tag (if file? (slurp str) str))) ?r
         (if simplify? (map-simplify ?r) ?r)
         (if rewrite?  (rewrite ?r) ?r)
-        (if (and rewrite? (:rewrite-error? ?r))
+        (if execute?  (ev/user-eval ?r :verbose? verbose?) ?r)
+        (if (:rewrite-error? ?r)
           (log/error "Error in rewriting: result = " (with-out-str (pprint ?r)))
-          ?r)
-        (if (and rewrite? (not (:rewrite-error? ?r)) (not execute?) (= tag :ptag/CodeBlock))
-          (:runnable ?r)
-          ?r)
-        (if (and execute? (-> ?r :runnable not))
-          (log/error "No executable created: result ="  (with-out-str (pprint ?r)))
-          ?r)
-        (if (and execute? (:runnable ?r)) (-> ?r :runnable ev/user-eval) ?r)))))
+          ?r)))))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
@@ -100,17 +94,9 @@
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
-;;;------------------------ Toplevel of rewriting ----------------------------
 (defrewrite :JaCodeBlock [m]
-  (as-> m ?m
-      (update-in ?m [:result :preamble :metadata-map] rewrite)
-      (assoc  ?m :runnable (make-runnable ?m))
-      (dissoc ?m :max-calls :line :col :stack :tokens :local :tkn :call-count :bound-vars :result :_type :body)))
-
-(defn make-runnable [m]
-  `(~'fn []
-     (~'let [~@(reduce (fn [res vdecl] (into res (rewrite vdecl))) [] (:bound-vars m))]
-       ~(-> m :body rewrite))))
+  `(~'let [~@(reduce (fn [res vdecl] (into res (rewrite vdecl))) [] (:bound-vars m))]
+    ~(-> m :body rewrite)))
 
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
 ;;; User functions also translate using this, but don't use the metadata.
@@ -134,10 +120,33 @@
     (-> m :var-name symbol)
     (throw (ex-info "Expected an ID that started with a $." {:arg m}))))
 
-;;; This should only execute in simple JaPDEs (no :BFLAT?)
+(defn sym-bi-access
+  "When doing mapping such as '$.(A * B)' the expressions A and B
+   were rewritten (bi/access 'A'). There needs to be a first argument
+   to that, before the 'A'. This function inserts the argument symbol
+   in such forms so that they can be wrapped in (fn [<that symbol>] ...)
+   and called in map/filter/reduce settings."
+  [form sym]
+  (letfn [(sba-aux [form]
+            (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
+                  (vector? form) (mapv sba-aux form)
+                  (seq? form) (if (and (= (first form) 'bi/access) (== 2 (count form)))
+                                 `(~(first form) ~sym ~@(map sba-aux (rest form)))
+                                 (map sba-aux form))
+                  :else form))]
+    (sba-aux form)))
+
+(def ^:dynamic *test-sym* "Used with sym-bi-access calls in testing" nil)
+
+;;; This should only execute in simple JaPDEs (no :BFLAT?) ???
 (defrewrite :JaParenDelimitedExp [m]
-  `(~'bi/map-path ~(-> m :exp rewrite) ~(-> m :operand rewrite))
-  #_(log/error "\nExpected :MAP tranlation. \nm=" m))
+  (if (:operand m)
+    (let [sym (or *test-sym* (gensym "x"))]
+      `(~'mapv (~'fn [~sym] ~(-> m :exp rewrite (sym-bi-access sym)))
+             ~(-> m :operand rewrite)))
+    (-> m :exp rewrite)))
+  
+;`(~'bi/map-path ~(-> m :exp rewrite) ~(-> m :operand rewrite))
 
 ;;; Some of these become :FILTER
 (defrewrite :JaSquareDelimitedExp [m]
@@ -147,6 +156,7 @@
       ~@(-> m :exp rewrite))
     (-> m :exp rewrite)))
 
+;;; ToDo: Maybe there should be a more direct way to create data!
 ;;; Some of these become :CONSTRUCT
 (defrewrite :JaCurlyDelimitedExp [m]
   `(~'-> {}
@@ -164,6 +174,10 @@
 
 (defrewrite :JaArray [m]
   (mapv rewrite (:exprs m)))
+
+(defrewrite :JaUniOpExp [m]
+  `(~(-> m :uni-op str symbol)
+    ~(-> m :exp rewrite)))
 
 (defrewrite :or  [m] (par/binary-op? m))
 (defrewrite :and [m] (par/binary-op? m))
@@ -241,10 +255,11 @@
         :else exp))
 
 (defrewrite :MAP [m]
-  `(~'bi/map-path ~(-> m :exp rewrite) ~(-> m :arg rewrite)))
+  (log/error "\nExpected :MAP tranlation. \nm=" m)
+  (throw (ex-info "Expected :MAP tranlation." {:m m})))
 
-(defrewrite :FILTER [m]
-  `(~'bi/filter-path ~(-> m :exp rewrite) ~(-> m :arg rewrite)))
+(defrewrite :FILTER [m] ; ToDo: Investigate use of ~@ here.
+  `(~'bi/filter-path ~(-> m :exp first rewrite second) ~(-> m :arg rewrite)))
 
 ;;; ToDo Needs work!
 (defrewrite :CONSTRUCT [m]

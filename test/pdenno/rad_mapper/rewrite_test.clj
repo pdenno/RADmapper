@@ -22,6 +22,9 @@
     (is (= '(bi/filter-aref $A 1)                               (rew/rewrite* :ptag/exp "$A[1]"  :rewrite? true)))
     (is (= '(bi/$sum (bi/access $v "field"))                    (rew/rewrite* :ptag/exp "$sum($v.field)" :rewrite? true)))
     (is (= '(bi/$sum (bi/access (bi/access "a") "b"))           (rew/rewrite* :ptag/exp "$sum(a.b)" :rewrite? true)))
+    (is (= '(bi/* (bi/access "A") (bi/access "B"))              (rew/rewrite* :ptag/exp "(A * B)" :rewrite? true)))
+    (is (= '(mapv (fn [foo] (bi/* (bi/access foo "A") (bi/access foo "B"))) $data)
+           (binding [rew/*test-sym* 'foo] (rew/rewrite* :ptag/exp "$data.(A * B)" :rewrite? true))))
     (is (= '(bi/+ (bi/access (bi/access (bi/access (bi/access "a") "b") "c") "d") (bi/access (bi/access "e") "f"))
            (rew/rewrite* :ptag/exp "a.b.c.d + e.f" :rewrite? true)))
     (is (= '(bi/+ (bi/access "a") (bi/* (bi/access "b") ($f (bi/+ (bi/access "c") (bi/access "d")))))
@@ -40,10 +43,10 @@
     (is (= '(-> (fn [$v $i $a] (< (bi/access $v "cbc_InvoicedQuantity") 0))
                              (with-meta {:params '[$v $i $a], :body '(< (bi/access $v "cbc_InvoicedQuantity") 0)}))
            (rew/rewrite* :ptag/fn-def "function($v,$i,$a) { $v.cbc_InvoicedQuantity < 0 }" :rewrite? true)))
-    (is (= '(fn [] (let [$inc (-> (fn [$v] (bi/+ $v 1)) (with-meta {:params '[$v], :body '(bi/+ $v 1)}))]
-                     (bi/$map [1 2 3] $inc)))
-           (rew/rewrite* :ptag/CodeBlock "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))" :rewrite? true)))
-    (is (= '($fn1 (bi/access (bi/access ($fn2 $v)) "a") "b")
+    (is (= '(let [$inc (-> (fn [$v] (bi/+ $v 1)) (with-meta {:params '[$v], :body '(bi/+ $v 1)}))]
+              (bi/$map [1 2 3] $inc))
+           (rew/rewrite* :ptag/code-block "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))" :rewrite? true)))
+    (is (= '($fn1 (bi/access (bi/access ($fn2 $v) "a") "b"))
            (rew/rewrite* :ptag/exp "$fn1($fn2($v).a.b)" :rewrite? true)))
     (is (= '(bi/$sum
              (bi/access
@@ -59,37 +62,42 @@
            (rew/rewrite* :ptag/exp "$sum($v.a.(P * Q))" :rewrite? true)))))
 
 (deftest expr-executions true
-  #_(testing "execution of small expressions"
+  (testing "execution of small expressions"
     (is (= {"match" "foo", "index" 2, "groups" []}
-           (rew/rewrite* :ptag/CodeBlock "$match(\"bbfoovar\", /foo/)" :execute? true)))
+           (rew/rewrite* :ptag/exp "$match(\"bbfoovar\", /foo/)" :execute? true)))
     (is (= {"match" "xababy", "index" 6, "groups" ["ab"]}
-           (rew/rewrite* :ptag/CodeBlock "$match(\"foobarxababy\",/\\d*x(ab)+y/)" :execute? true)))))
+           (rew/rewrite* :ptag/exp "$match(\"foobarxababy\",/\\d*x(ab)+y/)" :execute? true)))))
 
 (deftest code-block-executions true
-  #_(testing "execution of code bodies"
-    (is (= [2 3 4 5 6] (rew/rewrite* :ptag/CodeBlock "($inc := function($i)    {$i + 1};  $map([1..5], $inc))"    :execute? true)))
-    (is (= 15          (rew/rewrite* :ptag/CodeBlock "($add := function($i, $j){$i + $j}; $reduce([1..5], $add))" :execute? true)))
-    (is (= "b"         (rew/rewrite* :ptag/CodeBlock "($v := ['a', 'b', 'c' 'd']; $v[1])"  :execute? true)))
-    (is (= "a"         (rew/rewrite* :ptag/CodeBlock "($v := ['a', 'b', 'c' 'd']; $v[-4])" :execute? true)))
-    (is (= "a"         (rew/rewrite* :ptag/CodeBlock "($v := ['a', 'b', 'c' 'd']; $v[0])" :execute? true)))))
+  (testing "execution of code bodies"
+    (is (= [2 3 4 5 6] (rew/rewrite* :ptag/code-block "($inc := function($i)    {$i + 1};  $map([1..5], $inc))"    :execute? true)))
+    (is (= 15          (rew/rewrite* :ptag/code-block "($add := function($i, $j){$i + $j}; $reduce([1..5], $add))" :execute? true)))
+    (is (= "b"         (rew/rewrite* :ptag/code-block "($v := ['a', 'b', 'c' 'd']; $v[1])"  :execute? true)))
+    (is (= "a"         (rew/rewrite* :ptag/code-block "($v := ['a', 'b', 'c' 'd']; $v[-4])" :execute? true)))
+    (is (= "a"         (rew/rewrite* :ptag/code-block "($v := ['a', 'b', 'c' 'd']; $v[0])"  :execute? true)))))
 
-(def q1
-"$query( [?class :rdf/type            'owl/Class']
-         [?class :resource/iri        ?class-iri])")
+(def addr-data
+  "( $ADDR :=
+         [{'name'    : 'Peter',
+           'street'  : '123 Mockingbird Lane',
+           'zipcode' : '20898',
+           'phone'   : {'mobile' : '123-456-7890'}},
 
-(deftest query-tests true
-  #_(testing "Testing that query works"
-    (is (= '(bi/$query [[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])
-           (rew/rewrite* :ptag/exp q1 :rewrite? true)))))
+          {'name'    : 'Bill',
+           'street'  : '23 Main Street',
+           'zipcode' : '07010-35445'},
+
+          {'name'    : 'Lisa',
+           'street'  : '903 Forest Road',
+           'zipcode' : '10878'}]; ")
 
 (deftest user-guide-tests true
-  #_(testing "small code examples from the user's guide"
+  (testing "small code examples from the user's guide"
     (is (= ["20898" "07010-35445" "10878"]
-           (rew/rewrite* :ptag/CodeBlock "data/testing/map-examples/iteration/i1.mmp" :file? true :execute? true)))
+           (rew/rewrite* :ptag/code-block (str addr-data "$ADDR.zipcode )") :execute? true)))
     (is (= ["20898" "10878"]
-           (rew/rewrite* :ptag/CodeBlock "data/testing/map-examples/iteration/i2.mmp" :file? true :execute? true)))
-    #_(is (= ["20898" "10878"]
-           (rew/rewrite* :ptag/CodeBlock "data/map-examples/iteration/i3.mmp" :file? true :execute? true)))
-    (is (= "123-456-7890" (rew/rewrite* :ptag/CodeBlock "data/map-examples/iteration/i4.mmp" :file? true :execute? true)))
-    #_(is (= [68.9, 21.67, 137.8, 107.99]
-             (rew/rewrite* :ptag/CodeBlock "data/map-examples/iteration/i6.mmp" :file? true :execute? true)))))
+           (rew/rewrite* :ptag/code-block (str addr-data "$ADDR.zipcode[$match(/^[0-9]+$/)] )") :execute? true)))
+    (is (= "123-456-7890"
+           (rew/rewrite* :ptag/code-block (str addr-data "$ADDR.phone.mobile )") :execute? true)))
+    (is (= [68.9, 21.67, 137.8, 107.99]
+           (rew/rewrite* :ptag/code-block "data/testing/map-examples/iteration/i6.mmp" :file? true :execute? true)))))

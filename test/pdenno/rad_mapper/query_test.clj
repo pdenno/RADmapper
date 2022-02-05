@@ -31,6 +31,8 @@
        read-string
        (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass))))
 
+(def test-data-json (bi/key2str test-data))
+
 (deftest db-for-tests-1
   (testing "Testing that basic db-for! (and its schema-making) work"
     (let [conn (qu/db-for! test-data)
@@ -70,27 +72,37 @@
             "$query( [?class :rdf/type     'owl/Class']
                      [?class :resource/iri  ?class-iri])"
             :rewrite? true)))
-    (is (= '(fn [] (let [$data (bi/$readFile "data/testing/dolce-2.edn"
-                                             (-> {} (assoc "type" "edn")))]
-                     (bi/access $data (bi/$query '[[?class :rdf/type "owl/Class"]
-                                                   [?class :resource/iri ?class-iri]]))))
-           (rew/rewrite* :ptag/CodeBlock
-            "( $data := $readFile('data/testing/dolce-2.edn', {'type' : 'edn'});
+    (is (= '(let [$data (bi/$readFile "data/testing/dolce-2.edn")]
+              (bi/access $data (bi/$query '[[?class :rdf/type "owl/Class"]
+                                            [?class :resource/iri ?class-iri]])))
+           (rew/rewrite* :ptag/code-block
+            "( $data := $readFile('data/testing/dolce-2.edn');
                $data.$query([?class :rdf/type     'owl/Class']
-                            [?class :resource/iri  ?class-iri]) )"
+                            [?class :resource/iri ?class-iri]) )"
             :rewrite? true)))
-    #_(is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+    (is (= [#:db{:id 1, :cardinality :db.cardinality/one, :ident :person/fname, :valueType :db.type/string}
+            #:db{:id 2, :cardinality :db.cardinality/one, :ident :person/lname, :valueType :db.type/string}
+            {:db/id 3, :person/fname "Bob", :person/lname "Clark"}]
+           (rew/rewrite* :ptag/exp "$DBfor({'person/fname' : 'Bob', 'person/lname' : 'Clark'})" :execute? true)))
+    (is (=  {:fname "Bob", :lname "Clark"}
+            (rew/rewrite* :ptag/code-block
+                          "( $data := {'person/fname' : 'Bob', 'person/lname' : 'Clark'};
+                             $data.$query([?person :person/fname ?fname]
+                                          [?person :person/lname ?lname]) )"
+                           :execute? true)))
+    (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
-           (->> (ev/user-eval '(bi/$query test-data [[?class :rdf/type 'owl/Class'] [?class :resource/iri  ?class-iri]]))
+           (->> ((bi/$query '[[?class :rdf/type "owl/Class"] [?class :resource/iri  ?class-iri]]) test-data-json)
                 (map :class-iri)
+                (map keyword)
                 set)))
     ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
     (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
-           (->> (rew/rewrite* :ptag/CodeBlock ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
-                              "( $data := $readFile('data/testing/dolce-2.edn', {'type' : 'edn'});
+           (->> (rew/rewrite* :ptag/code-block ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
+                              "( $data := $readFile('data/testing/dolce-2.edn');
                                  $data.$query([?class :rdf/type     'owl/Class']
                                               [?class :resource/iri  ?class-iri]) )"
                               :execute? true)
@@ -126,7 +138,7 @@
 
 (deftest enforce-basics
   (testing "Testing that $enforce works"
-    (is true) #_(= :NYI  (rew/rewrite* :ptag/CodeBlock))
+    (is true) #_(= :NYI  (rew/rewrite* :ptag/code-block))
 #_#_#_"($schema =
    [{'schema' : {'db/attrs'  : [{'schema/name'   : {'db/type' : 'string', 'db/cardinality' : 'one'}}],
                  'db/key'    : ['schema/name']}}

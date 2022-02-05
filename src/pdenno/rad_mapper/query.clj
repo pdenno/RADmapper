@@ -1,5 +1,5 @@
 (ns pdenno.rad-mapper.query
-  "query, query!, enforce and things related"
+  "supporting code for $query and $enforce"
   (:require
    [datahike.api                  :as d]
    [taoensso.timbre               :as log]))
@@ -52,10 +52,38 @@
       (lsw-aux data)
       (reduce-kv (fn [res k v] (conj res (assoc v :db/ident k))) [] @learned))))
 
+(defn json-like
+  "Return the object with its map values that were keys replaced with strings.
+  :ab ==> 'ab'; :ns/ab ==> 'ns/ab'."
+  [obj]
+  (cond (map? obj) (reduce-kv (fn [m k v]
+                                (cond (keyword? v) (assoc m k (subs (str v) 1))
+                                      (vector? v) (assoc m k (mapv json-like v))
+                                      (map? v)   (assoc m k (reduce-kv (fn [m k v] (assoc m k (json-like v))) {} v))
+                                      :else     (assoc m k v)))
+                              {}
+                              obj),
+        (vector? obj) (mapv json-like obj),
+        :else obj))
+
+(defn clj-like
+  "Return the object with its map keys that were strings replaced with keyword.
+  'ab' ==> :ab; 'ns/ab' ==> :ns/ab."
+  [obj]
+  (cond (map? obj) (reduce-kv (fn [m k v]
+                                (cond (vector? v) (assoc m k (mapv clj-like v))
+                                      (map? v)    (assoc m k (reduce-kv (fn [m k v] (assoc m k (clj-like v))) {} v))
+                                      :else       (assoc m (if (string? k) (keyword k) k) v)))
+                              {}
+                              obj),
+        (vector? obj) (mapv clj-like obj),
+        :else obj))
+
 (defn db-for!
   "Create a database for the argument data and return a connection to it."
   [data & {:keys [db-name] :or {db-name "temp"}}]
-  (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}]
+  (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}
+        data (-> (if (vector? data) data (vector data)) clj-like)]
     (when (d/database-exists? db-cfg) (d/delete-database db-cfg))
     (d/create-database db-cfg)
     (let [conn-atm (d/connect db-cfg)]

@@ -64,10 +64,11 @@
                    "$each" bi/$each, "$keys" bi/$keys, "$spread" bi/$spread})
 (def datetime-fns '{"$fromMillis" bi/$fromMillis, "$millis" bi/$millis, "$now" bi/$now, "$toMillis" bi/$toMillis})
 (def higher-fns   '{"$filter" bi/$filter, "$map" bi/$map, "$reduce" bi/$reduce, "$sift" bi/$sift, "$single" bi/$single})
-(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet "$query" bi/$query})
+(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet "$query" bi/$query "$DBfor" bi/$DBfor})
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns extended-fns))
 (def query-fn? #{"$query" "$queryFn"})
+(def builtin-un-op #{\+, \- :not})
 
 (def keywords (sets/union keywords-basic (-> builtin-fns vals set))) ; ToDo necessary? Why not just let it be = keywords-basic?
 (def builtin-type #{:int :string})
@@ -390,7 +391,7 @@
   "Toplevel parsing function.
    NB: This function is typically used for debugging with a literal string argument.
    If the text is intended to have JS escape, \\, in it, it has to be escaped!"
-  ([str] (parse-string :ptag/CodeBlock str))
+  ([str] (parse-string :ptag/code-block str))
   ([tag str]
    (let [pstate (->> str tokenize make-pstate (parse tag))]
      (if (not= (:tkn pstate) :eof)
@@ -417,7 +418,7 @@
 (defn parse-file
   "Parse a whole file given a filename string."
   [filename]
-  (parse-string :ptag/CodeBlock (-> filename slurp esc-esc)))
+  (parse-string :ptag/code-block (-> filename slurp esc-esc)))
 
 (defn parse-ok?
   "Return true if the string parses okay."
@@ -493,12 +494,7 @@
         builtin-num-bin-op))
 (defparse-auto :ptag/builtin-bin-op builtin-bin-op)
 
-;;; <builtin-num-un-op> ::= + | -
-(def builtin-num-un-op #{\+, \-})
-(defparse-auto :ptag/builtin-num-un-op builtin-num-un-op)
-
-;;; <builtin-un-op> ::= "not" | <builtin-num-un-op>
-(def builtin-un-op (conj builtin-num-un-op :not))
+;;; <builtin-un-op> ::= "not" | "+" | "-"
 (defparse-auto :ptag/builtin-un-op builtin-un-op)
 
 ;;; <builtin-op> ::= <builtin-bin-op> | <builtin-un-op>
@@ -515,7 +511,7 @@
 (s/def ::CodeBlock (s/keys :req-un [::body]))
 ;;; <code-block> ::= ( 'transform' <var> '{' <preamble> '}' )? ( '('  <global-params>* <obj>* ')' | <obj>* )
 (defrecord JaCodeBlock [name preamble bound-vars body])
-(defparse :ptag/CodeBlock ; top-level grammar element.
+(defparse :ptag/code-block
   [pstate]
   (let [has-bindings? (atom nil)] ; <exp> wrapped in parentheses could just be a primary.
     (as-> pstate ?ps
@@ -676,19 +672,10 @@
   "Return one of [:ptag/field :ptag/var :ptag/literal :ptag/fn-call :ptag/delimited] if the front
    of the token stack is something that could be continued as a binary expression followed by a binary operator.
    This is called by the <exp> grammar rule, so you can't use it to anticipate something that starts with an
-   expression such as '<exp> ? <exp> : <exp>'. That would result in a non-consuming loop."
+   expression such as '<exp> ? <exp> : <exp>'; that would result in a non-consuming loop."
   [ps]
   (binding [*debugging?* false] ; I don't think we need to see this!
-    (continue-mac ps [:ptag/field :ptag/var :ptag/literal :ptag/fn-call #_:ptag/paren-delimited-exp :ptag/unary-op-exp])))
-
-#_(defn operand-exp-no-operator?
-  "Return one of [:ptag/field :ptag/var :ptag/literal :ptag/fn-call :ptag/delimited] if the front
-   of the token stack is something that could be continued as a binary expression followed by a binary operator.
-   This is called by the <exp> grammar rule, so you can't use it to anticipate something that starts with an
-   expression such as '<exp> ? <exp> : <exp>'. That would result in a non-consuming loop."
-  [ps]
-  (binding [*debugging?* false] ; I don't think we need to see this!
-    (continue-mac ps [:ptag/field :ptag/var :ptag/literal :ptag/fn-call :ptag/paren-delimited-exp :ptag/unary-op-exp] :suppress-bin-op? true)))
+    (continue-mac ps [:ptag/field :ptag/var :ptag/literal :ptag/fn-call :ptag/unary-op-exp])))
 
 (defparse :ptag/field
   [ps]
@@ -723,7 +710,8 @@
   (let [tkn   (:tkn ps)
         tkn2  (look ps 1)
         operand-look (operand-exp? ps)
-        base-ps (cond (delimited-next? operand-look)                              ; <delimited-exp>
+        base-ps (cond #_#_(#{\{ \[ \(} tkn) (parse :ptag/delimited-exp ps),  ; ??????????????
+                      (delimited-next? operand-look)                              ; <delimited-exp>
                       (parse :ptag/delimited-exp ps :operand-info operand-look),
                       (and (not in-binary?) (binary-next? operand-look))          ; <binary-exp>
                       (parse :ptag/binary-exp ps :operand-info operand-look),
@@ -765,20 +753,25 @@
 ;;; <delimited-exp> ::= <operand-exp> ( ('.' <paren-delimited-exp>) | ('.' <curly-delimited-exp>) | <square-delimited-exp> )
 (defparse :ptag/delimited-exp
   [ps & {:keys [operand-info]}]
-  (let [{:keys [operand-tag next-tkns]} operand-info]
-    (as-> ps ?ps
-      (parse operand-tag ?ps) ; Parametric tag!
-      (store ?ps :operand)    ; Note that this ISN'T THE WHOLE OPERAND...See rewriting.
-      (cond (= [\. \(] next-tkns) (as-> ?ps ?ps1
-                                    (eat-token ?ps1 \.)
-                                    (parse :ptag/paren-delimited-exp ?ps1)),
-            (= [\. \{] next-tkns) (as-> ?ps ?ps1
-                                    (eat-token ?ps1 \.)
-                                    (parse :ptag/curly-delimited-exp ?ps1)),
-            (= \[ (first next-tkns)) (parse :ptag/square-delimited-exp ?ps),
-            :else (throw (ex-info "Expected a delimited-exp." {:operand-info operand-info})))
-      (assoc-in ?ps [:result :operand] (recall ?ps :operand)))))
-
+  (let [{:keys [operand-tag next-tkns]} operand-info
+        tkn (:tkn ps)]
+;    (if (not operand-info) ; primary?
+;      (cond (= tkn \() (parse :ptag/paren-delimited-exp ps)
+;            (= tkn \{) (parse :ptag/curly-delimited-exp ps)
+;            (= tkn \[) (parse :ptag/square-delimited-exp ps))
+      (as-> ps ?ps
+        (parse operand-tag ?ps) ; Parametric tag!
+        (store ?ps :operand)    ; Note that this ISN'T THE WHOLE OPERAND...See rewriting.
+        (cond (= [\. \(] next-tkns) (as-> ?ps ?ps1
+                                      (eat-token ?ps1 \.)
+                                      (parse :ptag/paren-delimited-exp ?ps1)),
+              (= [\. \{] next-tkns) (as-> ?ps ?ps1
+                                      (eat-token ?ps1 \.)
+                                      (parse :ptag/curly-delimited-exp ?ps1)),
+              (= \[ (first next-tkns)) (parse :ptag/square-delimited-exp ?ps),
+              :else (throw (ex-info "Expected a delimited-exp." {:operand-info operand-info})))
+        (assoc-in ?ps [:result :operand] (recall ?ps :operand)))))
+  
 (defrecord JaParenDelimitedExp [exp operand])
 (defparse :ptag/paren-delimited-exp
   [ps]

@@ -1,13 +1,14 @@
 (ns pdenno.rad-mapper.builtins
-  "Built-in functions implementing the expression language for the mapping language.
-   Functions with names beginning with a $ are available to the user (e.g. $filter).
+  "Built-in functions implementing the expression language of the mapping language.
+   Functions with names beginning with a '$' are available to the user (e.g. $filter).
    Others (such as bi/access and bi/strcat) implement other parts of the expression language
    but are not available directly to the user except through the operators (e.g. the dot, and &
-   respectively for navigation to a property and concatenation."
+   respectively for navigation to a property and concatenation)."
   (:refer-clojure :exclude [+ - * /])
   (:require
    [dk.ative.docjure.spreadsheet :as ss]
-   [datahike.api                  :as d]
+   [datahike.api                 :as d]
+   [datahike.pull-api            :as dp]
    [pdenno.rad-mapper.query      :as qu]
    [pdenno.rad-mapper.util       :as util]
    [clojure.string               :as str]))
@@ -15,29 +16,33 @@
 ;;; ToDo:
 ;;;   1) Singleton wrapper (on defn* ?)
 ;;;   2) Implement dynamic var *advance* ???
+;;;   3) Consider threading instead of resetting the atom $.
 
 (defn jsonata-flatten
   "See http://docs.jsonata.org/processing section 'Sequences'"
   [s]
-  (let [res (-> s flatten vec)
-        len (count res)]
-    (cond
-      (== 0 len) nil,
-      (== 1 len) (first res)
-      :else res)))
+  (if (vector? s)
+    (let [res (-> s flatten vec)
+          len (count res)]
+      (cond
+        (== 0 len) nil,
+        (== 1 len) (first res)
+        :else res))
+    s))
 
 (def $ "The JSONata context variable." (atom nil))
 (def $$ "The JSONata root variable." (atom nil))
 
-;;; ToDo No provisions for parameter destructuring. Okay?
-;;; ToDo This jumps through some hoops to avoid ns-qualified params. Is there another way?
+;;; ToDo: No provisions for parameter destructuring. Okay?
+;;; ToDo: This jumps through some hoops to avoid ns-qualified params. Is there another way?
 ;;; (macroexpand-1 `(defn* example "This is an example." [x y_] {:val (+ x y_)}))
 (defmacro defn*
   "Define two function arities using the body:
      (1) the ordinary one, that has the usual arguments for the built-in, and,
      (2) a function where the missing argument will be assumed to be the context variable, $.
    The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
-   Additionally, reset the context variable to the value returned by the function."
+   Additionally, reset the context variable to the value returned by the function.
+   doc-string is required."
   [fn-name doc-string [& params] & body]
   (let [param-map (zipmap params (map #(symbol nil (name %)) params))
         abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
@@ -306,29 +311,24 @@
         (filter pred|num obj)))
     (throw (ex-info "An array is required for indexing/filtering" {}))))
 
+;;; WHAT?!?!
+#_(defmacro filter-path [regex source]
+  `(filterv (fn [x#] (bi/$match x# ~regex)) ~source))
+
+#_(defmacro map-path [exp source]
+   `(mapv (fn [x#] ~exp) ~source))
+
 ;;;=================== Non-JSONata functions ================================
-(defn key2str
-  "Return the object with its map values that were keys replaced with strings.
-  :ab ==> 'ab'; :ns/ab ==> 'ns/ab'."
-  [obj]
-  (cond (map? obj) (reduce-kv (fn [m k v]
-                                (cond (keyword? v) (assoc m k (subs (str v) 1))
-                                      (vector? v) (assoc m k (mapv key2str v))
-                                      (map? v)   (assoc m k (reduce-kv (fn [m k v] (assoc m k (key2str v))) {} v))
-                                      :else     (assoc m k v)))
-                              {}
-                              obj),
-        (vector? obj) (mapv key2str obj),
-        :else obj))
 
 ;;; ToDo: Currently no JSON
 (defn $readFile
   "Read a file of JSON or XML, creating a map."
   ([fname] ($readFile fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([fname opts]
-   (case (or (get opts "type") "xml")
-     "xml" (reset! $ (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml))
-     "edn" (reset! $ (-> fname slurp read-string key2str))))) ; Great for testing!
+   (let [type (second (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname))]
+     (case (or (get opts "type") type "xml")
+       "xml" (reset! $ (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml))
+       "edn" (reset! $ (-> fname slurp read-string qu/json-like)))))) ; Great for testing!
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -379,7 +379,10 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
 
-(defn* $schemaFor [data_]
+(defn* $schemaFor
+  "Study the argument data and heuristically suggest the types and multiplicity of data.
+   Note that this function does not make a guess at what the keys (db/key) are."
+  [data_]
   (qu/learn-schema-walking data_))
 
 ;;; Thoughts on schema""
@@ -388,6 +391,7 @@
 ;;;   - What is provided as argument overrides what is learned in $query.
 ;;;   - $enforce could be with an argument schema.
 
+;;; ToDo: Third role in qforms can be an expression.
 (defn qform
   "Return a Datahike query form [:find ... :where ... :keys] for the argument triples"
   [triples]
@@ -396,19 +400,20 @@
       :keys ~@(->> thirds (map #(subs (str %) 1)) (map symbol))
       :where ~@triples]))
 
-;;; ToDo: Third role in qforms can be an expression.
 (defn $query
-  "Run a $query."
+  "Use the triple forms provided to return a function that takes performs a
+  $query on data provided to the function."
   [qforms]
   (fn [data]
     (let [conn (qu/db-for! data)]
       (d/q `~(qform qforms) conn))))
 
-(defn $query-fn
-  "Return a function that runs a query."
-  [qforms]
-  (fn [data]
-    (let [conn (qu/db-for! data)]
-       (d/q `~(qform qforms) conn))))
+(defn* $DBfor
+  "Serialize the triples DB for the given data."
+  [data_]
+  (let [conn (qu/db-for! data_)]
+    (dp/pull-many conn '[*] (range 1 (-> conn :max-eid inc)))))
 
-(defn* $transform [_data schema query enforce] :nyi)
+(defn* $transform
+  "Transform data"
+  [data_ schema query enforce] :nyi)
