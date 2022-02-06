@@ -2,6 +2,7 @@
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    rewrite* is a top-level function for this."
   (:require
+   [pdenno.rad-mapper.builtins :as bi]
    [pdenno.rad-mapper.evaluate :as ev]
    [pdenno.rad-mapper.util :as util]
    [pdenno.rad-mapper.parse  :as par]
@@ -120,41 +121,33 @@
     (-> m :var-name symbol)
     (throw (ex-info "Expected an ID that started with a $." {:arg m}))))
 
-(defn sym-bi-access
-  "When doing mapping such as '$.(A * B)' the expressions A and B
-   were rewritten (bi/access 'A'). There needs to be a first argument
-   to that, before the 'A'. This function inserts the argument symbol
-   in such forms so that they can be wrapped in (fn [<that symbol>] ...)
-   and called in map/filter/reduce settings."
-  [form sym]
-  (letfn [(sba-aux [form]
-            (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
-                  (vector? form) (mapv sba-aux form)
-                  (seq? form) (if (and (= (first form) 'bi/access) (== 2 (count form)))
-                                 `(~(first form) ~sym ~@(map sba-aux (rest form)))
-                                 (map sba-aux form))
-                  :else form))]
-    (sba-aux form)))
+(defn combined-map-translation [m]
+  (let [sym (or bi/*test-sym* (gensym "x"))]
+    `(~'mapv (~'fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
+      ~(-> m :operand rewrite))))
 
-(def ^:dynamic *test-sym* "Used with sym-bi-access calls in testing" nil)
-
-;;; This should only execute in simple JaPDEs (no :BFLAT?) ???
 (defrewrite :JaParenDelimitedExp [m]
   (if (:operand m)
-    (let [sym (or *test-sym* (gensym "x"))]
-      `(~'mapv (~'fn [~sym] ~(-> m :exp rewrite (sym-bi-access sym)))
-             ~(-> m :operand rewrite)))
+    (combined-map-translation m)
     (-> m :exp rewrite)))
-  
-;`(~'bi/map-path ~(-> m :exp rewrite) ~(-> m :operand rewrite))
 
-;;; Some of these become :FILTER
+(defrewrite :MAP [m]
+  (combined-map-translation m))
+
+;;; Whether you filter or aref depends on the argument.
+;;; Thus this one has to be done at runtime. (It's a JSONata quirk).
+(defn combined-filter-translation [m]
+  `(~'bi/filter-aref 
+    ~(-> m :operand rewrite)
+    ~(-> m :exp rewrite)))
+
 (defrewrite :JaSquareDelimitedExp [m]
-  (if (:operand m) ; ToDo -- Not at all sure about the THEN part (appeasing problem in easy tests).
-    `(bi/filter-aref
-      ~(-> m :operand rewrite)
-      ~@(-> m :exp rewrite))
+  (if (:operand m)
+    (combined-filter-translation m)
     (-> m :exp rewrite)))
+
+(defrewrite :FILTER [m]
+  (combined-map-translation m))
 
 ;;; ToDo: Maybe there should be a more direct way to create data!
 ;;; Some of these become :CONSTRUCT
@@ -200,10 +193,19 @@
 ;;;---------------------------- Binary ops, precedence ordering, and paths --------------------------------------------------
 ;;; This one produces a :BFLAT structure.
 (defrewrite :JaBinOpExp [m]
-  (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps rewrite))
+  (let [preprocess (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps)]
+    (when *debugging?*
+      (println "======== :BFLAT Preprocess (START) =========")
+      (pprint preprocess *out*)
+      (println "------- :BFLAT Preprocess (step 1) ---------"))
+    (rewrite preprocess)))
 
 (defrewrite :BFLAT [m]
-  (-> m :bf connect-bvec-fields rewrite-bvec-as-sexp rewrite))
+  (let [preprocess (-> m :bf connect-bvec-fields rewrite-bvec-as-sexp)]
+    (when *debugging?*
+      (pprint preprocess *out*)
+      (println "========= :BFLAT Preprocess (END) ========"))
+  (rewrite preprocess)))
 
 (defn binops2bvecs
   "Walk structure rewriting JaBinOpExp as a map with :_type :BVEC and :bvec, a vector of the arguments and operators.
@@ -254,10 +256,6 @@
         (atomic? exp) exp
         :else exp))
 
-(defrewrite :MAP [m]
-  (log/error "\nExpected :MAP tranlation. \nm=" m)
-  (throw (ex-info "Expected :MAP tranlation." {:m m})))
-
 (defrewrite :FILTER [m] ; ToDo: Investigate use of ~@ here.
   `(~'bi/filter-path ~(-> m :exp first rewrite second) ~(-> m :arg rewrite)))
 
@@ -268,6 +266,8 @@
 (def JaDelimitedExp? {:JaParenDelimitedExp  :MAP,
                       :JaSquareDelimitedExp :FILTER,
                       :JaCurlyDelimitedExp  :CONSTRUCT})
+
+(def diag (atom nil))
 
 (defn reorder-for-delimited-exps
   "The operand of things in JaDelimitedExp are things lexically prior to the delimiter exp.
@@ -286,11 +286,15 @@
             p1-1 (reverse p1-2-r)
             p1-2 (reverse p1-1-r)
             [JaDE & others] p2
-            primary (-> JaDE
-                        (assoc :_type (type? JaDE JaDelimitedExp?))
-                        (assoc :arg (-> {:_type :BFLAT
-                                         :bf (-> p1-2 butlast vec (conj \.) (conj (:operand JaDE)))}
-                                        reorder-for-delimited-exps)))]
+            primary (assoc JaDE :operand (-> {:_type :BFLAT
+                                              :bf (-> p1-2 butlast vec (conj \.) ; put stuff from p1-1
+                                                      (conj (:operand JaDE)))}   ; in front of what you had.
+                                             reorder-for-delimited-exps))]       ; Then go deeper.
+        ;(println "p1-2=" p1-2 "\n")
+        ;(println "JaDE=" JaDE "\n")
+        ;(println "p1-1=" p1-1 "\n")
+        ;(println "others=" others "\n")
+        ;(println "primary=" primary "\n")
         (-> bflat
             (assoc  :bf (conj (vec p1-1) primary))
             (update :bf into (-> {:_type :BFLAT :bf (vec others)} reorder-for-delimited-exps :bf)))))))
@@ -309,7 +313,6 @@
    This leaves some fields, the ones preceded by a \\., to be processed by rewrite-bvec-as-sexp.
    These others (they start new accesses into context variable) are wrapped in 1-arg bi/access here."
   [bvec]
-  ;(log/info "bvec =" bvec)
   (loop [bv bvec
          res []
          start? true]

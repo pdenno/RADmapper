@@ -3,7 +3,6 @@
    [clojure.test :refer  [deftest is testing]]
    [datahike.api                  :as d]
    [pdenno.rad-mapper.builtins    :as bi]
-   [pdenno.rad-mapper.evaluate    :as ev]
    [pdenno.rad-mapper.query       :as qu]
    [pdenno.rad-mapper.rewrite     :as rew]))
 
@@ -22,7 +21,6 @@
                              {:column/table {:db/type  :db/object, :db/cardinality  :one}}],
                 :db/key     [:column/table, :column/name]}}])
 
-
 ;;; ToDo: Dissoc is temporary; boxing.
 (def test-data
   "Get maps of everything in the DOLCE (dol) namespace. "
@@ -31,7 +29,7 @@
        read-string
        (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass))))
 
-(def test-data-json (bi/key2str test-data))
+(def test-data-json (qu/json-like test-data))
 
 (deftest db-for-tests-1
   (testing "Testing that basic db-for! (and its schema-making) work"

@@ -275,16 +275,34 @@
               :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
                                     {:vars (-> func meta :params)}))))))
 
-;;; ToDo: NYI
-(defn map-path
-  "Run Clojure map on the argument."
-  [fn arg]
-  (println "NYI: map-path fn:" fn "arg:" arg))
-
 (defn strcat
   "The JSONata & operator."
   [& objs]
   (apply str objs))
+
+;;; rewrite.clj would have been a good place for this, but here we need it at runtime!
+(defn sym-bi-access
+  "When doing mapping such as '$.(A * B)' the expressions A and B
+   were rewritten (bi/access 'A'). There needs to be a first argument
+   to that, before the 'A'. This function inserts the argument symbol
+   in such forms so that they can be wrapped in (fn [<that symbol>] ...)
+   and called in map/filter/reduce settings."
+  [form sym]
+  (letfn [(sba-aux [form]
+            (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
+                  (vector? form) (mapv sba-aux form)
+                  (seq? form) (if (and (= (first form) 'bi/access) (== 2 (count form)))
+                                 `(~(first form) ~sym ~@(map sba-aux (rest form)))
+                                 (map sba-aux form))
+                  :else form))]
+    (sba-aux form)))
+
+(def ^:dynamic *test-sym* "Used with sym-bi-access calls in testing" 'foo) ; <========== ToDo: Why can't this be nil?
+(defn filter-fn
+  "Return a function for form, making the sym-bi-access insertions."
+  [form]
+  (let [sym (or *test-sym* (gensym "x"))]
+    (eval `(fn [~sym] ~(sym-bi-access form sym)))))
 
 ;;; ToDo I don't think this is a candidate for defn*. [<exp>] returns the value of <exp> (which in JSONata is same as a singleton array).
 (defn filter-aref
@@ -296,27 +314,21 @@
     (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
         If the array contains objects, and the location path selects fields within these objects, then each object within the array
         will be queried for selection."
-  [obj pred|num]
+  [obj pred|vec]
   (if (vector? obj)
     (let [len (-> obj count dec)]
-      (if (number? pred|num)
+      (if (vector? pred|vec)
         ;; Array behavior
-        (if (or (and (pos? pred|num) (> pred|num len))
-                (and (neg? pred|num) (> (Math/abs pred|num) (inc len))))
-          (throw (ex-info "Array bounds exceeded:" {:index pred|num}))
-          (if (neg? pred|num)
-            (let [ix (clojure.core/+ len pred|num 2)] (first (subvec obj (dec ix) ix)))
-            (nth obj pred|num)))
+        (let [ix (first pred|vec)]
+          (if (or (and (pos? ix) (> ix len))
+                  (and (neg? ix) (> (Math/abs ix) (inc len))))
+            (throw (ex-info "Array bounds exceeded:" {:index ix}))
+            (if (neg? ix)
+              (let [ix (clojure.core/+ len ix 2)] (first (subvec obj (dec ix) ix)))
+              (nth obj ix))))
         ;; Filter behavior
-        (filter pred|num obj)))
+        (filter (-> pred|vec first filter-fn ) obj)))
     (throw (ex-info "An array is required for indexing/filtering" {}))))
-
-;;; WHAT?!?!
-#_(defmacro filter-path [regex source]
-  `(filterv (fn [x#] (bi/$match x# ~regex)) ~source))
-
-#_(defmacro map-path [exp source]
-   `(mapv (fn [x#] ~exp) ~source))
 
 ;;;=================== Non-JSONata functions ================================
 

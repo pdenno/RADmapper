@@ -710,7 +710,7 @@
   (let [tkn   (:tkn ps)
         tkn2  (look ps 1)
         operand-look (operand-exp? ps)
-        base-ps (cond #_#_(#{\{ \[ \(} tkn) (parse :ptag/delimited-exp ps),  ; ??????????????
+        base-ps (cond (and (not in-binary?) (#{\{ \[ \(} tkn)) (parse :ptag/delimited-exp ps),  ; ??????????????
                       (delimited-next? operand-look)                              ; <delimited-exp>
                       (parse :ptag/delimited-exp ps :operand-info operand-look),
                       (and (not in-binary?) (binary-next? operand-look))          ; <binary-exp>
@@ -755,10 +755,10 @@
   [ps & {:keys [operand-info]}]
   (let [{:keys [operand-tag next-tkns]} operand-info
         tkn (:tkn ps)]
-;    (if (not operand-info) ; primary?
-;      (cond (= tkn \() (parse :ptag/paren-delimited-exp ps)
-;            (= tkn \{) (parse :ptag/curly-delimited-exp ps)
-;            (= tkn \[) (parse :ptag/square-delimited-exp ps))
+    (if (not operand-info) ; primary?
+      (cond (= tkn \() (parse :ptag/paren-delimited-exp ps)
+            (= tkn \{) (parse :ptag/curly-delimited-exp ps)
+            (= tkn \[) (parse :ptag/square-delimited-exp ps))
       (as-> ps ?ps
         (parse operand-tag ?ps) ; Parametric tag!
         (store ?ps :operand)    ; Note that this ISN'T THE WHOLE OPERAND...See rewriting.
@@ -770,7 +770,7 @@
                                       (parse :ptag/curly-delimited-exp ?ps1)),
               (= \[ (first next-tkns)) (parse :ptag/square-delimited-exp ?ps),
               :else (throw (ex-info "Expected a delimited-exp." {:operand-info operand-info})))
-        (assoc-in ?ps [:result :operand] (recall ?ps :operand)))))
+        (assoc-in ?ps [:result :operand] (recall ?ps :operand))))))
   
 (defrecord JaParenDelimitedExp [exp operand])
 (defparse :ptag/paren-delimited-exp
@@ -781,12 +781,42 @@
     (eat-token ?ps \))
     (assoc ?ps :result (map->JaParenDelimitedExp {:exp (:result ?ps)}))))
 
+;;; <square-delimited-exp> ::=  <range-exp> | 
+(defrecord JaRange [start stop])
 (defrecord JaSquareDelimitedExp [operand exp])
 (defparse :ptag/square-delimited-exp
   [ps]
+  (let [tvec (token-vec ps)
+        close-pos (when (= (first tvec) \[) (find-balanced-pos tvec \]))
+        range-pos (when close-pos (find-token tvec :range :stop-pos close-pos))]
+    (if (and close-pos range-pos (< range-pos close-pos)) ; ToDo Heuristic! (Replace with try?)
+      (parse :ptag/range-exp ps)
+      (as-> ps ?ps
+        (parse-list ?ps \[ \] \, :ptag/exp)
+        (assoc ?ps :result (map->JaSquareDelimitedExp {:exp (:result ?ps)}))))))
+
+  ;;; <array> '[' <exp>? ( ',' <exp>)? ']'
+
+;;; The JSONata range expression is a bit weird; it is not a binary op but a construct with [ and ].
+;;; <range-exp> ::= '[' <exp> '..' <exp> ']'
+(defrecord JaRangeExp [start stop])
+(defparse :ptag/range-exp
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps \[)
+    (parse :ptag/exp ?ps)
+    (store ?ps :start)
+    (eat-token ?ps :range)
+    (parse :ptag/exp ?ps)
+    (store ?ps :stop)
+    (eat-token ?ps \])
+    (assoc ?ps :result (->JaRangeExp (recall ?ps :start) (recall ?ps :stop)))))
+
+#_(defparse :ptag/array
+  [ps]
   (as-> ps ?ps
     (parse-list ?ps \[ \] \, :ptag/exp)
-    (assoc ?ps :result (map->JaSquareDelimitedExp {:exp (:result ?ps)}))))
+    (assoc ?ps :result (->JaArray (:result ?ps)))))
 
 ;;; <obj> ::= "{" <map-pair> (',' <map-pair> )* "}"
 (defrecord JaCurlyDelimitedExp [operand map-pairs])
@@ -836,40 +866,6 @@
                         (recall ?ps :key)
                         (:result ?ps)))))
 
-;;; <array-like> ::=  <array> | <range-exp>
-(defrecord JaRange [start stop])
-(defparse :ptag/array-like
-  [ps]
-  (let [tvec (token-vec ps)
-        close-pos (when (= (first tvec) \[) (find-balanced-pos tvec \]))
-        range-pos (when close-pos (find-token tvec :range :stop-pos close-pos))]
-    (if (and close-pos range-pos (< range-pos close-pos)) ; ToDo Heuristic! (Replace with try?)
-      (parse :ptag/range-exp ps)
-      (parse :ptag/array ps))))
-
-;;; <array> '[' <exp>? ( ',' <exp>)? ']'
-(defrecord JaArray [exprs])
-(defparse :ptag/array
-  [ps]
-  (as-> ps ?ps
-    (parse-list ?ps \[ \] \, :ptag/exp)
-    (assoc ?ps :result (->JaArray (:result ?ps)))))
-
-;;; The JSONata range expression is a bit weird; it is not a binary op but a construct with [ and ].
-;;; <range-exp> ::= '[' <exp> '..' <exp> ']'
-(defrecord JaRangeExp [start stop])
-(defparse :ptag/range-exp
-  [ps]
-  (as-> ps ?ps
-    (eat-token ?ps \[)
-    (parse :ptag/exp ?ps)
-    (store ?ps :start)
-    (eat-token ?ps :range)
-    (parse :ptag/exp ?ps)
-    (store ?ps :stop)
-    (eat-token ?ps \])
-    (assoc ?ps :result (->JaRangeExp (recall ?ps :start) (recall ?ps :stop)))))
-
   ;;;------------ 'atomic' expressions --------------------------------------
 (defn is-bound? [ps tkn]
   (some #(= (:name tkn) %)
@@ -891,13 +887,13 @@
       (-> pstate (assoc :result tkn) eat-token)
       (throw (ex-info "expected a string literal" {:got tkn :pstate pstate})))))
 
-;;; <literal> ::= string | number | 'true' | 'false' | regex | <obj> | <array-like>
+;;; <literal> ::= string | number | 'true' | 'false' | regex | <obj> | <square-delimited-exp>
 (defparse :ptag/literal
   [ps]
   (let [tkn (:tkn ps)]
     (cond (literal? tkn) (-> ps (assoc :result tkn) eat-token),
           (= tkn \{)     (parse :ptag/obj ps),
-          (= tkn \[)     (parse :ptag/array-like ps),
+          (= tkn \[)     (parse :ptag/square-delimited-exp ps),
           :else (throw (ex-info "expected a literal string, number, 'true', 'false' regex, obj, range, or array."
                                 {:got tkn :pstate ps})))))
 
