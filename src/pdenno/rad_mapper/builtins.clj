@@ -14,9 +14,12 @@
    [clojure.string               :as str]))
 
 ;;; ToDo:
+;;;  -1) defn* should check for vec/scalar.
+;;;   0) defn*s do not need to reset! $ (it is in the macro).
 ;;;   1) Singleton wrapper (on defn* ?)
 ;;;   2) Implement dynamic var *advance* ???
-;;;   3) Consider threading instead of resetting the atom $.
+;;;   3) Consider threading/binding instead of resetting the atom $.
+;;;   4) Investigate Small Clojure Interpreter.
 
 (defn jsonata-flatten
   "See http://docs.jsonata.org/processing section 'Sequences'"
@@ -106,15 +109,20 @@
   "Return a JSONata-like map for the result of regex mapping.
    Pattern is a Clojure regex."
   [s_ pattern]
-  (let [result (re-find pattern s_)]
-    (cond (string? result) {"match" result
-                            "index" (str/index-of s_ result)
-                            "groups" []}
-          (vector? result)
-          (let [[success & groups] result]
-            {"match" success
-             "index" (str/index-of s_ success)
-             "groups" (vec groups)}))))
+  (letfn [(match-aux [s]
+            (let [result (re-find pattern s)]
+              (cond (string? result) {"match" result
+                                      "index" (str/index-of s result)
+                                      "groups" []}
+                    (vector? result)
+                    (let [[success & groups] result]
+                      {"match" success
+                       "index" (str/index-of s success)
+                       "groups" (vec groups)}))))]
+    ;; ToDo: I think this should be the pattern of every defn* ???
+    (if (vector? s_)
+      (mapv match-aux s_)
+      (match-aux s_))))
 
 (defn* $string
   "Return the argument as a string."
@@ -172,25 +180,25 @@
                                     {:vars (-> func meta :params)}))))))
 
 ;;; (bi/$filter [1 2 3 4] (with-meta (fn [v i a] (when (even? v) v)) {:params {:val-var 'v :index-var 'i :array-var 'a}}))
-(defn $filter
+(defn* $filter
   "Return a function for the argument form."
-  [coll func]
+  [coll_ func]
   (reset! $ (let [nvars (-> func meta :params count)]
               (cond
                 (== nvars 3)
-                (loop [c coll, i 0, r []]
+                (loop [c coll_, i 0, r []]
                   (if (empty? c)
                     r
-                    (let [val (when (func (first c) i coll) (first c))]
+                    (let [val (when (func (first c) i coll_) (first c))]
                       (recur (rest c), (inc i), (if val (conj r val) r)))))
                 (== nvars 2)
-                (loop [c coll, i 0, r []]
+                (loop [c coll_, i 0, r []]
                   (if (empty? c)
                     r
                     (let [val (when (func (first c) i) (first c))]
                       (recur (rest c), (inc i) (conj (if val (conj r val) r))))))
                 (== nvars 1)
-                (loop [c coll, r []]
+                (loop [c coll_, r []]
                   (if (empty? c)
                     r
                     (let [val (when (func (first c)) (first c))]
@@ -305,30 +313,33 @@
     (eval `(fn [~sym] ~(sym-bi-access form sym)))))
 
 ;;; ToDo I don't think this is a candidate for defn*. [<exp>] returns the value of <exp> (which in JSONata is same as a singleton array).
-(defn filter-aref
-  "Does array reference or predicate application (filtering) on the arguments following JSONata rules:
-    (1) If the expression in square brackets is non-numeric, or is an expression that doesn't evaluate to a number,
+(defmacro filter-aref
+  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
+    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
         then it is treated as a predicate.
     (2) Negative indexes count from the end of the array, for example, arr[-1] will select the last value, arr[-2] the second to last, etc.
         If an index is specified that exceeds the size of the array, then nothing is selected.
     (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
         If the array contains objects, and the location path selects fields within these objects, then each object within the array
         will be queried for selection."
-  [obj pred|vec]
-  (if (vector? obj)
-    (let [len (-> obj count dec)]
-      (if (vector? pred|vec)
-        ;; Array behavior
-        (let [ix (first pred|vec)]
-          (if (or (and (pos? ix) (> ix len))
-                  (and (neg? ix) (> (Math/abs ix) (inc len))))
-            (throw (ex-info "Array bounds exceeded:" {:index ix}))
-            (if (neg? ix)
-              (let [ix (clojure.core/+ len ix 2)] (first (subvec obj (dec ix) ix)))
-              (nth obj ix))))
-        ;; Filter behavior
-        (filter (-> pred|vec first filter-fn ) obj)))
-    (throw (ex-info "An array is required for indexing/filtering" {}))))
+  [obj pred|ix]
+  `(let [prix# (try ~pred|ix (catch Exception _e# nil))
+         obj# ~obj]
+     (if (number? prix#)
+       ;; Array behavior.
+       ;; Singletons are treated as values, AND values are treated as singletons!
+       (let [obj# (if (vector? obj#) obj# (vector obj#))
+             ix#  (-> prix# Math/floor int) ; Really! I checked!
+             len# (count obj#)]
+         ;; [:a :b :c :d][0] ==> :a ; [:a :b :c :d][-4] ==> :a.
+         (if (or (and (pos? ix#) (>= ix# len#))
+                 (and (neg? ix#) (> (Math/abs ix#) len#)))
+           nil ; Rule 2, above.
+           (if (neg? ix#)
+             (nth obj# (clojure.core/+ len# ix#))
+             (nth obj# ix#))))
+       ;; Filter behavior
+       (reset! $ (filterv (fn [arg#] (reset! $ arg#) ~pred|ix) obj#)))))
 
 ;;;=================== Non-JSONata functions ================================
 

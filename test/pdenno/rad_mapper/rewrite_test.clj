@@ -47,7 +47,7 @@
       (is (= [1 2 3]                                              (rew/rewrite* :ptag/exp "[1, 2, 3]" :rewrite? true)))
       (is (= '(bi/+ 1 2)                                          (rew/rewrite* :ptag/exp "1 + 2"  :rewrite? true)))
       (is (= '(range 1 (inc 5))                                   (rew/rewrite* :ptag/exp "[1..5]" :rewrite? true)))
-      (is (= '(bi/filter-aref $A [1])                             (rew/rewrite* :ptag/exp "$A[1]"  :rewrite? true)))
+      (is (= '(bi/filter-aref $A 1)                               (rew/rewrite* :ptag/exp "$A[1]"  :rewrite? true)))
       (is (= '(bi/$sum (bi/access $v "field"))                    (rew/rewrite* :ptag/exp "$sum($v.field)" :rewrite? true)))
       (is (= '(bi/$sum (bi/access (bi/access "a") "b"))           (rew/rewrite* :ptag/exp "$sum(a.b)" :rewrite? true)))
       (is (= '(bi/* (bi/access "A") (bi/access "B"))              (rew/rewrite* :ptag/exp "(A * B)" :rewrite? true)))
@@ -90,7 +90,7 @@
              (rew/rewrite* :ptag/exp "$sum($v.a.(P * Q))" :rewrite? true)))
 
       ;; ToDo: is with-meta sill useful here?
-      ;; Miscellaneous other tests. 
+      ;; Miscellaneous other tests.
       (is (= '(-> (fn [$v $i $a] (< (bi/access $v "cbc_InvoicedQuantity") 0))
                   (with-meta {:params '[$v $i $a], :body '(< (bi/access $v "cbc_InvoicedQuantity") 0)}))
              (rew/rewrite* :ptag/fn-def "function($v,$i,$a) { $v.cbc_InvoicedQuantity < 0 }" :rewrite? true)))
@@ -135,7 +135,7 @@
 
           {'name'    : 'Bill',
            'street'  : '23 Main Street',
-           'zipcode' : '07010-35445'},
+           'zipcode' : '07010-3544'},
 
           {'name'    : 'Lisa',
            'street'  : '903 Forest Road',
@@ -143,7 +143,7 @@
 
 (deftest user-guide-tests true
   (testing "small code examples from the user's guide"
-    (is (= ["20898" "07010-35445" "10878"]
+    (is (= ["20898" "07010-3544" "10878"]
            (rew/rewrite* :ptag/code-block (str addr-data "$ADDR.zipcode )") :execute? true)))
     (is (= ["20898" "10878"]
            (rew/rewrite* :ptag/code-block (str addr-data "$ADDR.zipcode[$match(/^[0-9]+$/)] )") :execute? true)))

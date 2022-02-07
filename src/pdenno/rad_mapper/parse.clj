@@ -29,8 +29,6 @@
 ;;;   3) Perhaps maintaining record types for JaVar and JaField was a waste of time?
 
 (def ^:dynamic *debugging?* false)
-(def diag (atom nil))
-
 (util/config-log (if *debugging?* :debug :info))
 
 ;;; ============ Tokenizer ===============================================================
@@ -771,7 +769,7 @@
               (= \[ (first next-tkns)) (parse :ptag/square-delimited-exp ?ps),
               :else (throw (ex-info "Expected a delimited-exp." {:operand-info operand-info})))
         (assoc-in ?ps [:result :operand] (recall ?ps :operand))))))
-  
+
 (defrecord JaParenDelimitedExp [exp operand])
 (defparse :ptag/paren-delimited-exp
   [ps]
@@ -781,7 +779,7 @@
     (eat-token ?ps \))
     (assoc ?ps :result (map->JaParenDelimitedExp {:exp (:result ?ps)}))))
 
-;;; <square-delimited-exp> ::=  <range-exp> | 
+;;; <square-delimited-exp> ::=  <range-exp> |
 (defrecord JaRange [start stop])
 (defrecord JaSquareDelimitedExp [operand exp])
 (defparse :ptag/square-delimited-exp

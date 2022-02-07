@@ -11,17 +11,15 @@
    [clojure.spec.alpha :as s]
    [taoensso.timbre   :as log]))
 
+;;; ToDo:
+;;;   - Look into why you can't do (defrewriter \. ...) That is, use something other than a keyword for the tag.
+;;;   - All this stuff belongs in a library!
+
 (def ^:dynamic *debugging?* false)
-(def diag (atom {}))
 (def tags (atom []))
 (def locals (atom [{}]))
 (declare map-simplify remove-nils rewrite make-runnable)
 (declare binops2bvecs walk-for-bvecs reorder-for-delimited-exps connect-bvec-fields rewrite-bvec-as-sexp precedence)
-
-;;; ToDo:
-;;;   - Investigate Small Clojure Interpreter.
-;;;   - Look into why you can't do (defrewriter \. ...) That is, use something other than a keyword for the tag.
-;;;   - All this stuff belongs in a library!
 
 (defn rewrite*
   "A top-level function for all phases of translation.
@@ -112,7 +110,6 @@
     (vector (-> m :var :var-name symbol)
             (if (= :JaFnDef (:_type val)) (:form val) val))))
 
-;(defrewrite :JaField [m] `(~'bi/access ~(-> m :field-name)))
 (defrewrite :JaField [m] (-> m :field-name))
 
 (defrewrite :JaVar    [m] (-> m :var-name symbol)) ; ToDo Temporary?
@@ -137,9 +134,9 @@
 ;;; Whether you filter or aref depends on the argument.
 ;;; Thus this one has to be done at runtime. (It's a JSONata quirk).
 (defn combined-filter-translation [m]
-  `(~'bi/filter-aref 
+  `(~'bi/filter-aref
     ~(-> m :operand rewrite)
-    ~(-> m :exp rewrite)))
+    ~(-> m :exp first rewrite)))
 
 (defrewrite :JaSquareDelimitedExp [m]
   (if (:operand m)
@@ -267,8 +264,6 @@
                       :JaSquareDelimitedExp :FILTER,
                       :JaCurlyDelimitedExp  :CONSTRUCT})
 
-(def diag (atom nil))
-
 (defn reorder-for-delimited-exps
   "The operand of things in JaDelimitedExp are things lexically prior to the delimiter exp.
    This function transforms a JaDelimitedExps (three kinds; I use the term as an abstraction over the three)
@@ -316,28 +311,28 @@
   (loop [bv bvec
          res []
          start? true]
-    (cond (empty? bv) res, 
-    
+    (cond (empty? bv) res,
+
           ;;[\. {:_type :JaField, :field-name "b"}]
           (and (== 2 (count bvec)) (= \. (first bv)) (type? (second bv) :JaField))
           (conj res `(~'bi/access ~(-> bv second :field-name))),
-          
+
           (and start? (type? (first bv) :JaField))                  ; starts with a field; wrap in 1-arg bi/access.
           (recur (-> bv rest vec)
                  (vector `(~'bi/access ~(-> bv first :field-name)))
                  false),
-          
+
           start?                                                    ; Starts with anything but a field, advance by one.
           (recur (-> bv rest vec)
                  (-> bv first vector)
                  false),
-          
+
           ;; After start, it does [<operator>, <operand>].
           (and (= \. (first bv)) (type? (second bv) :JaField))      ; Ordinary field, advance two.
           (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; rewrite-bvec-as-sexp will take care of it.
                  (into res (subvec bv 0 2))
                  false),
-          
+
           (type? (second bv) :JaField)
           (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; 'Newly started' field; wrap it.
                  (into res (vector (first bv) `(~'bi/access ~(-> bv second :field-name))))
