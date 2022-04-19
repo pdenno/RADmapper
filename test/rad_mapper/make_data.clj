@@ -1,12 +1,12 @@
-(ns pdenno.rad-mapper.make-data
+(ns rad-mapper.make-data
   "This is some stuff useful for making data with owl-db-tools"
   (:require
    [clojure.pprint :refer [pprint]]
-   [pdenno.owl-db-tools.core      :as owlc]
-   [pdenno.owl-db-tools.resolvers :as owlr]
+   [owl-db-tools.core      :as owlc]
+   [owl-db-tools.resolvers :as owlr]
    [datahike.api                  :as d]))
 
-(def big-cfg {:store {:backend :file :path "/tmp/datahike-owl-db"}
+(def big-cfg {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
               :keep-history? false
               :schema-flexibility :write})
 

@@ -1,33 +1,23 @@
 {:paths   ["src"]
 
  :deps    {com.cemerick/url               {:mvn/version "0.1.1"}
-           com.taoensso/timbre            {:mvn/version "5.1.2"}
-           com.wsscode/pathom3            {:mvn/version "2022.01.09-alpha"}
-           dk.ative/docjure               {:mvn/version "1.16.0"} ; spreadsheets
-           io.replikativ/datahike         {:mvn/version "0.4.1480"}
-           org.clojure/clojure            {:mvn/version "1.10.3"}
+           com.taoensso/timbre            {:mvn/version "5.2.1"}
+           com.wsscode/pathom3            {:mvn/version "2022.03.17-alpha"}
+           dk.ative/docjure               {:mvn/version "1.17.0"} ; spreadsheets
+           io.replikativ/datahike         {:mvn/version "0.4.1491"}
+           org.clojure/clojure            {:mvn/version "1.11.1"}
            org.clojure/data.zip           {:mvn/version "1.0.0"}
            org.clojure/data.json          {:mvn/version "2.4.0"}
            org.clojure/data.xml           {:mvn/version "0.2.0-alpha6"}}
 
- :aliases {:test {:extra-paths ["test"]
-                   :extra-deps  {lambdaisland/kaocha {:mvn/version "1.60.977"}}}
+ :aliases {:dev {:extra-deps {com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}} ; clj -A:dev, for example.
 
-           :jar {:replace-deps {com.github.seancorfield/depstar {:mvn/version "2.1.303"}}
-                 :exec-fn hf.depstar/jar
-                 :exec-args {:jar "RADmapper-1.0.29.jar"
-                             :sync-pom true
-                             :version "1.0.29"
-                             :group-id "com.github.pdenno"
-                             :artifact-id "RADmapper"}}
-
-           :install {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}
-                     :exec-fn deps-deploy.deps-deploy/deploy
-                     :exec-args {:installer :local
-                                 :artifact "RADmapper-1.0.29.jar"}}
+           :test {:extra-paths ["test"]
+                  :extra-deps  {lambdaisland/kaocha {:mvn/version "1.65.1029"}
+                                com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
 
            :deploy {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}
                     :exec-fn deps-deploy.deps-deploy/deploy
                     :exec-args {:installer :remote
-                                :sign-releases? true
+                                :sign-releases? false ; signing problem (see mznp deps.edn)
                                 :artifact "RADmapper-1.0.29.jar"}}}}

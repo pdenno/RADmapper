@@ -1,8 +1,8 @@
-(ns pdenno.rad-mapper.parse-test
+(ns rad-mapper.parse-test
   "Test parsing"
   (:require
-   [pdenno.rad-mapper.parse    :as par]
-   [pdenno.rad-mapper.rewrite  :as rew]
+   [rad-mapper.parse    :as par]
+   [rad-mapper.rewrite  :as rew]
    [clojure.test :refer  [deftest is testing]]))
 
 (deftest tokenizer

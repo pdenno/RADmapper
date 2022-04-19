@@ -1,7 +1,7 @@
-(ns pdenno.rad-mapper.builtins-test
+(ns rad-mapper.builtins-test
   "Test built-in functions"
   (:require
-   [pdenno.rad-mapper.builtins :as bi]
+   [rad-mapper.builtins :as bi]
    [clojure.test :refer  [deftest is testing]]))
 
 (deftest builtin-basics

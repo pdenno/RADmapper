@@ -1,11 +1,11 @@
-(ns pdenno.rad-mapper.rewrite
+(ns rad-mapper.rewrite
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    rewrite* is a top-level function for this."
   (:require
-   [pdenno.rad-mapper.builtins :as bi]
-   [pdenno.rad-mapper.evaluate :as ev]
-   [pdenno.rad-mapper.util :as util]
-   [pdenno.rad-mapper.parse  :as par]
+   [rad-mapper.builtins :as bi]
+   [rad-mapper.evaluate :as ev]
+   [rad-mapper.util :as util]
+   [rad-mapper.parse  :as par]
    [clojure.pprint :refer [cl-format pprint]]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]

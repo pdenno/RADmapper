@@ -1,4 +1,4 @@
-(ns pdenno.rad-mapper.evaluate
+(ns rad-mapper.evaluate
   "Evaluate (someday with SCI) a rewritten form."
   (:require
    [taoensso.timbre   :as log]))

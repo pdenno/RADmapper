@@ -1,4 +1,4 @@
-(ns pdenno.rad-mapper.util
+(ns rad-mapper.util
   (:require
    [cemerick.url                 :as url]
    [clojure.data.xml             :as x]

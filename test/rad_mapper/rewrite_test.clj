@@ -1,17 +1,17 @@
-(ns pdenno.rad-mapper.rewrite-test
+(ns rad-mapper.rewrite-test
   "Test the rewrite of parse trees. rew/rewrite* is a toplevel function"
   (:require
    [clojure.test       :refer  [deftest is testing]]
-   [pdenno.rad-mapper.builtins :as bi]
-   [pdenno.rad-mapper.rewrite  :as rew]))
+   [rad-mapper.builtins :as bi]
+   [rad-mapper.rewrite  :as rew]))
 
-;;; (pdenno.rad-mapper.rewrite-test/for-testing-in-par)
+;;; (rad-mapper.rewrite-test/for-testing-in-par)
 (defn for-testing-in-par
-  "Convenience for REPL-based exploration while in pdenno.rad-mapper.parse"
+  "Convenience for REPL-based exploration while in rad-mapper.parse"
   []
-  (binding [*ns* (find-ns 'pdenno.rad-mapper.parse)]
-    (alias 'bi  'pdenno.rad-mapper.builtins)
-    (alias 'rew 'pdenno.rad-mapper.rewrite)))
+  (binding [*ns* (find-ns 'rad-mapper.parse)]
+    (alias 'bi  'rad-mapper.builtins)
+    (alias 'rew 'rad-mapper.rewrite)))
 
 (deftest binary-reordering
   (testing "Testing that we reorder infix to prefix syntax correctly."

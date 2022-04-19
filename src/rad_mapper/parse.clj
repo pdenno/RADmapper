@@ -1,10 +1,10 @@
-(ns pdenno.rad-mapper.parse
+(ns rad-mapper.parse
   "Parse the JSONata-like message mapping language."
   (:require
-   [pdenno.rad-mapper.util :as util]
+   [rad-mapper.util :as util]
    [clojure.pprint :refer (cl-format)]
    [clojure.string :as str]
-   [clojure.set    :as sets]
+   [clojure.set    :as set]
    [clojure.spec.alpha :as s]
    [taoensso.timbre   :as log]))
 
@@ -68,7 +68,7 @@
 (def query-fn? #{"$query" "$queryFn"})
 (def builtin-un-op #{\+, \- :not})
 
-(def keywords (sets/union keywords-basic (-> builtin-fns vals set))) ; ToDo necessary? Why not just let it be = keywords-basic?
+(def keywords (set/union keywords-basic (-> builtin-fns vals set))) ; ToDo necessary? Why not just let it be = keywords-basic?
 (def builtin-type #{:int :string})
 
 (def numeric-operators '{\% bi/%, \* bi/*, \+ bi/+, \- bi/-, \/ bi//}) ; :range is not one of these.
@@ -284,7 +284,7 @@
 (defn token-vec [pstate] (mapv :tkn (:tokens pstate)))
 
 (def balanced-map "What balances with the opening syntax?" { \{ \}, \( \), \[ \] :2d-array-open :2d-array-close})
-(def balanced-inv (sets/map-invert balanced-map))
+(def balanced-inv (set/map-invert balanced-map))
 
 (defn find-token
   "Return position if tkn is found within the item (before semicolon)."
@@ -496,7 +496,7 @@
 (defparse-auto :ptag/builtin-un-op builtin-un-op)
 
 ;;; <builtin-op> ::= <builtin-bin-op> | <builtin-un-op>
-(def builtin-op (sets/union builtin-bin-op builtin-un-op))
+(def builtin-op (set/union builtin-bin-op builtin-un-op))
 (defparse-auto :ptag/builtin-op builtin-op)
 (defparse-auto :ptag/builtin-fn builtin-fns)
 
@@ -701,7 +701,7 @@
   (-> next-tkns first binary-op?))
 
 ;;; ToDo: Rethink use of in-binary?
-;;; <exp> ::=  ( <delimited-exp> | <binary-exp> | (<builtin-un-op> <exp>) | <fn-call> | <literal> | <field> | <$id>) ( <conditional-tail> | <exp> )?
+;;; <exp> ::=  ( <delimited-exp> | <binary-exp> | (<builtin-un-op> <exp>) | <fn-call> | <literal> | <field> | <$id>) ( '?' <conditional-tail> | <exp> )?
 (defrecord JaBinOpExp [exp1 bin-op exp2])
 (defparse :ptag/exp
   [ps & {:keys [in-binary?]}]

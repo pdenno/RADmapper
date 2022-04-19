@@ -1,10 +1,12 @@
-(ns pdenno.rad-mapper.query-test
+(ns rad-mapper.query-test
   (:require
    [clojure.test :refer  [deftest is testing]]
    [datahike.api                  :as d]
-   [pdenno.rad-mapper.builtins    :as bi]
-   [pdenno.rad-mapper.query       :as qu]
-   [pdenno.rad-mapper.rewrite     :as rew]))
+   [datahike.pull-api             :as dp]
+   [owl-db-tools.resolvers :refer [pull-resource]]
+   [rad-mapper.builtins    :as bi]
+   [rad-mapper.query       :as qu]
+   [rad-mapper.rewrite     :as rew]))
 
 ;;;====================================================================================== NYI
 (def test-schema
@@ -82,7 +84,7 @@
             #:db{:id 2, :cardinality :db.cardinality/one, :ident :person/lname, :valueType :db.type/string}
             {:db/id 3, :person/fname "Bob", :person/lname "Clark"}]
            (rew/rewrite* :ptag/exp "$DBfor({'person/fname' : 'Bob', 'person/lname' : 'Clark'})" :execute? true)))
-    (is (=  {:fname "Bob", :lname "Clark"}
+    (is (=  {:fname "Bob", :lname "Clark"} ; ToDo: Isn't this suppose to return a vector?
             (rew/rewrite* :ptag/code-block
                           "( $data := {'person/fname' : 'Bob', 'person/lname' : 'Clark'};
                              $data.$query([?person :person/fname ?fname]
@@ -152,3 +154,34 @@
                                 {'column/table'  : {'db/type' : 'object', 'db/cardinality' : 'one'}}],
                  'db/key'    : ['column/table', 'column/name']}}]
  )" :execute? true))
+
+
+;;;==================================================================
+;; Loosely related
+;;;==================================================================
+
+;;; Here is a database to play around with...
+(def db-cfg
+  {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
+   :keep-history? false
+   :schema-flexibility :write})
+
+(def conn (-> db-cfg d/connect deref))
+
+(deftest use-of-owl-db-tools-query
+  (testing "owl-db-tools is USED in development. This is here mostly to ensure it has needed functionality."
+    (is (=
+         {:resource/iri :dol/perdurant,
+          :resource/name "perdurant",
+          :resource/namespace "dol",
+          :owl/disjointWith [:dol/endurant :dol/abstract :dol/quality],
+          :rdf/type :owl/Class,
+          :rdfs/subClassOf
+          [:dol/spatio-temporal-particular
+           {:owl/onProperty :dol/has-quality, :owl/allValuesFrom [:dol/temporal-quality], :rdf/type :owl/Restriction}
+           {:owl/onProperty :dol/has-quality, :owl/someValuesFrom [:dol/temporal-location_q], :rdf/type :owl/Restriction}
+           {:owl/onProperty :dol/part, :owl/allValuesFrom [:dol/perdurant], :rdf/type :owl/Restriction}
+           {:owl/onProperty :dol/participant, :owl/someValuesFrom [:dol/endurant], :rdf/type :owl/Restriction}
+           {:owl/onProperty :dol/specific-constant-constituent, :owl/allValuesFrom [:dol/perdurant], :rdf/type :owl/Restriction}]}
+         ;; Returns a sorted-map, thus str and read-string.
+         (-> (pull-resource :dol/perdurant conn) (dissoc :rdfs/comment) str read-string)))))

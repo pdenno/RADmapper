@@ -1,4 +1,4 @@
-(ns pdenno.rad-mapper.query
+(ns rad-mapper.query
   "supporting code for $query and $enforce"
   (:require
    [datahike.api                  :as d]

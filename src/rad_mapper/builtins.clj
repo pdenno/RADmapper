@@ -1,4 +1,4 @@
-(ns pdenno.rad-mapper.builtins
+(ns rad-mapper.builtins
   "Built-in functions implementing the expression language of the mapping language.
    Functions with names beginning with a '$' are available to the user (e.g. $filter).
    Others (such as bi/access and bi/strcat) implement other parts of the expression language
@@ -9,8 +9,8 @@
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
    [datahike.pull-api            :as dp]
-   [pdenno.rad-mapper.query      :as qu]
-   [pdenno.rad-mapper.util       :as util]
+   [rad-mapper.query      :as qu]
+   [rad-mapper.util       :as util]
    [clojure.string               :as str]))
 
 ;;; ToDo:
