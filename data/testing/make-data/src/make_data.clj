@@ -51,21 +51,38 @@
   "Arrange to pull data from the database at big-atm"
   (owlr/register-resolvers! owlc/*conn*))
 
+(def all-objs "107 objects in the DOLCE namespace, I think."
+  (mapv #(owlr/pull-resource % owlc/*conn*)
+        (:ontology/context
+         (owl-db '[(:ontology/context {:filter-by {:attr :resource/namespace :val "dol"}})]))))
+
+(defn write-pretty-file
+  "Transform/filter and sort objects; write them to fname."
+  [fname objs & {:keys [transform] :or {transform identity}}]
+  (spit fname
+        (with-out-str
+          (println "[")
+          (doseq [obj (->> objs transform (sort-by :resource/iri))]
+            (println "\n")
+            (pprint obj))
+          (println "]"))))
+
+;;; (write-test-data all-objs)
 (defn write-test-data
   "Add a DOLCE ontology test to ./tests."
-  []
-  (let [all-objs (->> (mapv #(owlr/pull-resource % owlc/*conn*)
-                            (:ontology/context
-                             (owl-db '[(:ontology/context {:filter-by {:attr :resource/namespace :val "dol"}})])))
-                      ;; Clean them up: domain and range are just singletons here. :rdfs/subClassOf is heterogeneous
-                      (mapv #(if (:rdfs/domain %) (update % :rdfs/domain first) %))
-                      (mapv #(if (:rdfs/range  %) (update % :rdfs/range  first) %)))
-        used-class? (->> all-objs (filter :rdfs/domain) (map :rdfs/domain) set)] ; Things used as domain are also used as range.
-    (spit "dolce-1.edn" ; copy this to RADmapper/data/testing when you are satisfied.
-          (with-out-str
-            (println "[")
-            (doseq [obj (into (filterv #(used-class? (:resource/iri %)) all-objs)
-                            (filterv #(= :owl/ObjectProperty (:rdf/type %)) all-objs))]
-              (println "\n")
-              (pprint obj))
-            (println "]")))))
+  [objs]
+  (write-pretty-file "dolce-raw.edn" objs)
+  (write-pretty-file "dolce-simpler.edn" objs
+                     :transform (fn [objs]
+                                  ;; domain and range are just singletons here. NB: :rdfs/subClassOf is heterogeneous
+                                  (->> objs
+                                       (mapv #(if (:rdfs/subClassOf %) (update % :rdfs/subClassOf first) %))
+                                       (mapv #(if (:rdfs/domain %  ) (update % :rdfs/domain first) %))
+                                       (mapv #(if (:rdfs/range  %)   (update % :rdfs/range  first) %)))))
+  (write-pretty-file "dolce-used.edn" objs
+                     :transform (fn [objs]
+                                  ;; Things used as domain are also used as range.
+                                  (let [used-class? (->> objs (filter :rdfs/domain) (map :rdfs/domain) set)]
+                                    (into (filterv #(used-class? (:resource/iri %)) objs)
+                                          (filterv #(= :owl/ObjectProperty (:rdf/type %)) objs))))))
+    

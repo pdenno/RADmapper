@@ -1,8 +1,8 @@
 (ns rad-mapper.query-test
   (:require
    [clojure.test :refer  [deftest is testing]]
-   [datahike.api                  :as d]
-   [datahike.pull-api             :as dp]
+   [datahike.api           :as d]
+   [datahike.pull-api      :as dp]
    [owl-db-tools.resolvers :refer [pull-resource]]
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
@@ -24,6 +24,7 @@
                 :db/key     [:column/table, :column/name]}}])
 
 ;;; ToDo: Dissoc is temporary; boxing.
+;;; dolce-1.edn is both :owl/Class and :owl/ObjectProperty. 
 (def test-data
   "Get maps of everything in the DOLCE (dol) namespace. "
   (->> "data/testing/dolce-1.edn"
