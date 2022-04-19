@@ -1,10 +1,10 @@
-(ns rad-mapper.make-data
+(ns make-data
   "This is some stuff useful for making data with owl-db-tools"
   (:require
    [clojure.pprint :refer [pprint]]
    [owl-db-tools.core      :as owlc]
    [owl-db-tools.resolvers :as owlr]
-   [datahike.api                  :as d]))
+   [datahike.api           :as d]))
 
 (def big-cfg {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
               :keep-history? false
@@ -44,6 +44,7 @@
                      :check-sites ["http://ontologydesignpatterns.org/wiki/Main_Page"]))))
 
 (def conn @big-atm)
+;;; ToDo: Really? This needs to be fixed!
 (alter-var-root (var owlc/*conn*) (fn [_] conn))
 
 (def owl-db
@@ -60,7 +61,7 @@
                       (mapv #(if (:rdfs/domain %) (update % :rdfs/domain first) %))
                       (mapv #(if (:rdfs/range  %) (update % :rdfs/range  first) %)))
         used-class? (->> all-objs (filter :rdfs/domain) (map :rdfs/domain) set)] ; Things used as domain are also used as range.
-    (spit "data/testing/dolce-1.edn"
+    (spit "dolce-1.edn" ; copy this to RADmapper/data/testing when you are satisfied.
           (with-out-str
             (println "[")
             (doseq [obj (into (filterv #(used-class? (:resource/iri %)) all-objs)

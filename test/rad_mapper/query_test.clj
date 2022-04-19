@@ -160,7 +160,7 @@
 ;; Loosely related
 ;;;==================================================================
 
-;;; Here is a database to play around with...
+;;; Here is a database to play around with. To make it see data/testing/make-data/make_data.clj
 (def db-cfg
   {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
    :keep-history? false
