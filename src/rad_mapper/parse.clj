@@ -936,7 +936,7 @@
     (store ?ps :ent :tkn)
     (eat-token ?ps query-var?)
     (store ?ps :role :tkn)
-    (eat-token ?ps triple-role?)
+    (eat-token ?ps #(or (triple-role? %) (query-var? %)))
     (if (query-var? (:tkn ?ps))
       (as-> ?ps ?ps1
           (store ?ps1 :third :tkn)

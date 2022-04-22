@@ -418,18 +418,25 @@
 (defn qform
   "Return a Datahike query form [:find ... :where ... :keys] for the argument triples"
   [triples]
-  (let [thirds (->> triples (map #(nth % 2)) (filter #(str/starts-with? % "?")))]
-    `[:find ~@thirds
-      :keys ~@(->> thirds (map #(subs (str %) 1)) (map symbol))
+  (let [vars (->> (reduce (fn [r x] (into r x)) triples)
+                  (filter #(str/starts-with? % "?"))
+                  distinct)]
+    `[:find ~@vars
+      :keys ~@(->> vars (map #(subs (str %) 1)) (map symbol))
       :where ~@triples]))
 
+;;; For example (d/q '[:find ?attr :keys attr :where [_ ?attr _]] (qu/db-for! [{:foo 1} {:foo 2}]))
+;;; ==> [{:attr :db/ident} {:attr :db/cardinality} {:attr :db/valueType} {:attr :foo}]
 (defn $query
   "Use the triple forms provided to return a function that takes performs a
   $query on data provided to the function."
   [qforms]
   (fn [data]
     (let [conn (qu/db-for! data)]
-      (d/q `~(qform qforms) conn))))
+      (->> (d/q `~(qform qforms) conn)
+           ;; Remove binding sets that involve a schema entity.
+           (remove (fn [x] (some #(and (keyword? %) (= "db" (namespace %))) (vals x))))
+           vec))))
 
 (defn* $DBfor
   "Serialize the triples DB for the given data."

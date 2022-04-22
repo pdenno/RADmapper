@@ -1,0 +1,32 @@
+[
+
+
+{:resource/iri :dol/endurant,
+ :resource/name "endurant",
+ :resource/namespace "dol",
+ :owl/disjointWith [:dol/abstract :dol/quality :dol/perdurant],
+ :rdf/type :owl/Class,
+ :rdfs/comment ["The main characteristic of endurants is ..."],
+ :rdfs/subClassOf :dol/spatio-temporal-particular}
+
+
+{:resource/iri :dol/participant,
+ :resource/name "participant",
+ :resource/namespace "dol",
+ :owl/inverseOf :dol/participant-in,
+ :rdf/type :owl/ObjectProperty,
+ :rdfs/comment ["The immediate relation holding between e..."],
+ :rdfs/domain :dol/perdurant,
+ :rdfs/range :dol/endurant,
+ :rdfs/subPropertyOf :dol/immediate-relation}
+
+
+{:resource/iri :dol/participant-in,
+ :resource/name "participant-in",
+ :resource/namespace "dol",
+ :owl/inverseOf :dol/participant,
+ :rdf/type :owl/ObjectProperty,
+ :rdfs/domain :dol/endurant,
+ :rdfs/range :dol/perdurant,
+ :rdfs/subPropertyOf :dol/immediate-relation-i}
+]

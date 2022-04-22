@@ -1,5 +1,6 @@
 (ns rad-mapper.query-test
   (:require
+   [clojure.pprint :refer [pprint cl-format]]
    [clojure.test :refer  [deftest is testing]]
    [datahike.api           :as d]
    [datahike.pull-api      :as dp]
@@ -24,7 +25,7 @@
                 :db/key     [:column/table, :column/name]}}])
 
 ;;; ToDo: Dissoc is temporary; boxing.
-;;; dolce-1.edn is both :owl/Class and :owl/ObjectProperty. 
+;;; dolce-1.edn is both :owl/Class and :owl/ObjectProperty.
 (def test-data
   "Get maps of everything in the DOLCE (dol) namespace. "
   (->> "data/testing/dolce-1.edn"
@@ -73,6 +74,7 @@
             "$query( [?class :rdf/type     'owl/Class']
                      [?class :resource/iri  ?class-iri])"
             :rewrite? true)))
+
     (is (= '(let [$data (bi/$readFile "data/testing/dolce-2.edn")]
               (bi/access $data (bi/$query '[[?class :rdf/type "owl/Class"]
                                             [?class :resource/iri ?class-iri]])))
@@ -81,16 +83,37 @@
                $data.$query([?class :rdf/type     'owl/Class']
                             [?class :resource/iri ?class-iri]) )"
             :rewrite? true)))
+
+    ;; The attr of a triple (middle item) can be queried and results do not include db/schema content.
+    (is (= [{:ent 3, :attr :person/lname, :val "Dee"} {:ent 3, :attr :person/fname, :val "Peter"}]
+           (rew/rewrite* :ptag/code-block
+                         "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
+                            $data.$query([?ent ?attr ?val]))"
+                         :execute? true)))
+
     (is (= [#:db{:id 1, :cardinality :db.cardinality/one, :ident :person/fname, :valueType :db.type/string}
             #:db{:id 2, :cardinality :db.cardinality/one, :ident :person/lname, :valueType :db.type/string}
             {:db/id 3, :person/fname "Bob", :person/lname "Clark"}]
            (rew/rewrite* :ptag/exp "$DBfor({'person/fname' : 'Bob', 'person/lname' : 'Clark'})" :execute? true)))
-    (is (=  {:fname "Bob", :lname "Clark"} ; ToDo: Isn't this suppose to return a vector?
+
+    ;; ToDo: Isn't this suppose to return a vector?
+    ;; (d/q '[:find ?f :keys f :where [_ :foo ?f]] (qu/db-for! [{:foo 1} {:foo 2}])) ==> [{:f 2} {:f 1}]
+    (is (=  {:person 3, :fname "Bob", :lname "Clark"}
             (rew/rewrite* :ptag/code-block
                           "( $data := {'person/fname' : 'Bob', 'person/lname' : 'Clark'};
                              $data.$query([?person :person/fname ?fname]
                                           [?person :person/lname ?lname]) )"
-                           :execute? true)))
+                          :execute? true)))
+
+    ;; I think the above isn't returning a vector because of the JSONata 'singleton thing'.
+    (is (= [{:person 4, :fname "Peter", :lname "Dee"} {:person 3, :fname "Bob", :lname "Clark"}]
+           (rew/rewrite* :ptag/code-block
+                         "( $data := [{'person/fname' : 'Bob'  , 'person/lname' : 'Clark'},
+                                      {'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
+                            $data.$query([?person :person/fname ?fname]
+                                         [?person :person/lname ?lname]) )"
+                         :execute? true)))
+
     (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
@@ -98,6 +121,7 @@
                 (map :class-iri)
                 (map keyword)
                 set)))
+
     ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
     (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
@@ -111,15 +135,70 @@
                 (map keyword)
                 set)))))
 
-(def q1
-"$query( [?class rdf/type            'owl/Class']
-         [?class resource/iri        ?class-iri]
-         [?class resource/namespace  ?class-ns]
-         [?class resource/name       ?class-name]
-         [?rel   rdf/type            'owl/ObjectProperty']
-         [?rel   rdfs/domain         ?class-iri]
-         [?rel   rdfs/range          ?rel-range]
-         [?rel   resource/name       ?rel-name] )")
+;;;====================================================================
+;; OWL example from the Draft OAGi Interoperable Mapping Specification
+;;;====================================================================
+;;; I'm using here the OWL DB that I also use for owl-db-tools.
+;;; To make this DB see data/testing/make-data/make_data.clj.
+(def db-cfg
+  {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
+   :keep-history? false
+   :schema-flexibility :write})
+
+(def conn (-> db-cfg d/connect deref))
+
+(def owl-test-data "the simplified objects used in the Draft OAGi Interoperable Mapping Specification example"
+  (reduce (fn [res obj]
+            (conj res (as-> (pull-resource obj conn) ?o
+                        (cond-> ?o
+                          (contains? ?o :rdfs/comment)    (update :rdfs/comment (fn [c] (mapv #(str (subs % 0 40) "...") c)))
+                          (contains? ?o :rdfs/domain)     (update :rdfs/domain first)
+                          (contains? ?o :rdfs/range)      (update :rdfs/range first)
+                          (contains? ?o :rdfs/subClassOf) (update :rdfs/subClassOf first)))))
+          []
+          [:dol/endurant :dol/participant :dol/participant-in]))
+
+(defn write-pretty-file
+  "Transform/filter and sort objects; write them to fname."
+  [fname objs & {:keys [transform] :or {transform identity}}]
+  (spit fname
+        (with-out-str
+          (println "[")
+          (doseq [obj (->> objs transform (sort-by :resource/iri))]
+            (println "\n")
+            (pprint obj))
+          (println "]"))))
+
+(write-pretty-file "data/testing/owl-example.edn" owl-test-data)
+
+(def owl-q1
+"$query( [?class :rdf/type            'owl/Class']
+         [?class :resource/iri        ?class-iri]
+         [?class :resource/namespace  ?class-ns]
+         [?class :resource/name       ?class-name]
+         [?rel   :rdf/type            'owl/ObjectProperty']
+         [?rel   :rdfs/domain         ?class-iri]
+         [?rel   :rdfs/range          ?rel-range]
+         [?rel   :resource/name       ?rel-name] )")
+
+(def owl-q2
+  (with-out-str
+    (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $data.~A)" owl-q1)))
+
+(deftest owl-example
+  (testing "Testing that the steps of $query, $enforce, and $transform work for the OWL example in the spec."
+    (is (= '(bi/$query
+             '[[?class :rdf/type "owl/Class"]
+               [?class :resource/iri ?class-iri]
+               [?class :resource/namespace ?class-ns]
+               [?class :resource/name ?class-name]
+               [?rel   :rdf/type "owl/ObjectProperty"]
+               [?rel   :rdfs/domain ?class-iri]
+               [?rel   :rdfs/range ?rel-range]
+               [?rel   :resource/name ?rel-name]])
+           (rew/rewrite* :ptag/fn-call owl-q1 :rewrite? true)))
+    #_(is (= :foo
+           (rew/rewrite* :ptag/code-block owl-q2 :execute? true)))))
 
 (def t1
 "$transform(
@@ -156,18 +235,6 @@
                  'db/key'    : ['column/table', 'column/name']}}]
  )" :execute? true))
 
-
-;;;==================================================================
-;; Loosely related
-;;;==================================================================
-
-;;; Here is a database to play around with. To make it see data/testing/make-data/make_data.clj
-(def db-cfg
-  {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
-   :keep-history? false
-   :schema-flexibility :write})
-
-(def conn (-> db-cfg d/connect deref))
 
 (deftest use-of-owl-db-tools-query
   (testing "owl-db-tools is USED in development. This is here mostly to ensure it has needed functionality."
