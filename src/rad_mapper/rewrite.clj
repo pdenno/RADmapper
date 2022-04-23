@@ -103,7 +103,13 @@
   (let [vars (mapv #(-> % :var-name symbol) (:vars m))
         body (-> m :body rewrite)]
     `(~'-> (~'fn ~(mapv rewrite (:vars m)) ~body)
-         (~'with-meta {:params '~vars :body '~body}))))
+      (~'with-meta {:params '~vars :body '~body}))))
+
+(defrewrite :JaEnforceDef [m]
+  (let [vars (mapv #(-> % :var-name symbol) (:vars m))
+        body (-> m :body rewrite)]
+    `(~'-> (~'bi/enforce ~(mapv rewrite (:vars m)) ~body)
+      (~'with-meta {:params '~vars :body '~body :enforce? true}))))
 
 (defrewrite :JaVarDecl [m]
   (let [val (-> m :init-val rewrite)]

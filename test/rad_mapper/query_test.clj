@@ -106,14 +106,15 @@
                           :execute? true)))
 
     ;; I think the above isn't returning a vector because of the JSONata 'singleton thing'.
+    ;; Here is an example from the spec.
     (is (= [{:person 4, :fname "Peter", :lname "Dee"} {:person 3, :fname "Bob", :lname "Clark"}]
            (rew/rewrite* :ptag/code-block
-                         "( $data := [{'person/fname' : 'Bob'  , 'person/lname' : 'Clark'},
-                                      {'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
-                            $data.$query([?person :person/fname ?fname]
-                                         [?person :person/lname ?lname]) )"
+                         "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
+                                      {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
+                            $data.$query([?person :Person/firstname ?fname]
+                                         [?person :Person/lastname  ?lname]))"
                          :execute? true)))
-
+    
     (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
@@ -171,70 +172,98 @@
 
 (write-pretty-file "data/testing/owl-example.edn" owl-test-data)
 
-(def owl-q1
+(def owl-q1 "an expression used in testing below"
 "$query( [?class :rdf/type            'owl/Class']
          [?class :resource/iri        ?class-iri]
          [?class :resource/namespace  ?class-ns]
-         [?class :resource/name       ?class-name]
-         [?rel   :rdf/type            'owl/ObjectProperty']
-         [?rel   :rdfs/domain         ?class-iri]
-         [?rel   :rdfs/range          ?rel-range]
-         [?rel   :resource/name       ?rel-name] )")
+         [?class :resource/name       ?class-name])")
 
-(def owl-q2
-  (with-out-str
-    (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $data.~A)" owl-q1)))
+(def owl-e1 "an expression used in testing below"
+"enforce(){  {'instance-of'  : 'insert-row',
+                   'table'        : 'ObjectDefinition',
+                   'content'      : [{'resourceIRI'       : ?iri},
+                                     {'resourceLabel'     : ?label},
+                                     {'resourceNamespace' : ?ns}]}  
+              }")
 
-(deftest owl-example
-  (testing "Testing that the steps of $query, $enforce, and $transform work for the OWL example in the spec."
+(def owl-full-example "The whole thing looks like this:"
+"($data   := $readFile('data/testing/owl-example.edn');
+ $target := [];
+ $reduce($data.$query( [?class :rdf/type 'owl/Class']
+                       [?class :resource/iri        ?class-iri]
+                       [?class :resource/namespace  ?class-ns]
+                       [?class :resource/name       ?class-name] ),
+         enforce()
+           {  
+             {'instance-of'  : 'insert-row',
+              'table'        : 'ObjectDefinition',
+              'content'      : [{'resourceIRI'       : ?iri},
+                                {'resourceLabel'     : ?label},
+                                {'resourceNamespace' : ?ns}]}  
+           },
+        $target)
+ )")
+
+(deftest owl-example-parse
+  (testing "Test parsing the owl example in the spec"
+    (is (= '(:name :preamble :bound-vars :body)
+           (-> (rew/rewrite* :ptag/code-block owl-full-example :parse? true) keys)))))
+
+(deftest owl-example-rewrite
+  (testing "Test rewriting the OWL example in the spec."
+    ;; This is a test of rewriting a $query expression.
     (is (= '(bi/$query
              '[[?class :rdf/type "owl/Class"]
                [?class :resource/iri ?class-iri]
                [?class :resource/namespace ?class-ns]
-               [?class :resource/name ?class-name]
-               [?rel   :rdf/type "owl/ObjectProperty"]
-               [?rel   :rdfs/domain ?class-iri]
-               [?rel   :rdfs/range ?rel-range]
-               [?rel   :resource/name ?rel-name]])
+               [?class :resource/name ?class-name]])
            (rew/rewrite* :ptag/fn-call owl-q1 :rewrite? true)))
-    #_(is (= :foo
-           (rew/rewrite* :ptag/code-block owl-q2 :execute? true)))))
+    
+    ;;; This is a test of rewriting an enforce.  
+    (is (=
+         '(->
+           (bi/enforce
+            []
+            (-> {}
+                (assoc "instance-of" "insert-row")
+                (assoc "table" "ObjectDefinition")
+                (assoc "content" [(-> {} (assoc "resourceIRI" ?iri))
+                                  (-> {} (assoc "resourceLabel" ?label))
+                                  (-> {} (assoc "resourceNamespace" ?ns))])))
+           (with-meta
+             {:params '[],
+              :enforce? true,
+              :body
+              '(-> {}
+                   (assoc "instance-of" "insert-row")
+                   (assoc "table" "ObjectDefinition")
+                   (assoc "content" [(-> {} (assoc "resourceIRI" ?iri))
+                                     (-> {} (assoc "resourceLabel" ?label))
+                                     (-> {} (assoc "resourceNamespace" ?ns))]))}))
+         (rew/rewrite* :ptag/exp owl-e1 :rewrite? true )))))
 
-(def t1
-"$transform(
-   $query( [?class rdf/type            'owl/Class']
-           [?class resource/iri        ?class-iri]
-           [?class resource/namespace  ?class-ns]
-           [?class resource/name       ?class-name]
-           [?rel   rdf/type            'owl/ObjectProperty']
-           [?rel   rdfs/domain         ?class-iri]
-           [?rel   rdfs/range          ?rel-range]
-           [?rel   resource/name       ?rel-name] )
-   $enforce( {'table/name'     ?class-name,
-              'table/schema'   {'schema/name'  ?ns},
-              'table/columns'  {'column/name'  ?rel-name,
-                               'column/type'  ?rel-range,
-                               'column/table' ?table-ent}} :as ?table-ent))")
 
-(deftest enforce-basics
-  (testing "Testing that $enforce works"
-    (is true) #_(= :NYI  (rew/rewrite* :ptag/code-block))
-#_#_#_"($schema =
-   [{'schema' : {'db/attrs'  : [{'schema/name'   : {'db/type' : 'string', 'db/cardinality' : 'one'}}],
-                 'db/key'    : ['schema/name']}}
-
-    {'table'  : {'db/attrs'  : [{'table/name'    : {'db/type' : 'string', 'db/cardinality' : 'one' },
-                                 'table/schema'  : {'db/type' : 'object', 'db/cardinality' : 'one',
-                                                    'db/in-line?' : true},
-                                 'table/columns' : {'db/type' : 'object', 'db/cardinality' : 'many'}}],
-                 'db/key'    : ['table/schema', 'table/name']}}
-
-    {'column' : {'db/attrs'  : [{'column/name'   : {'db/type' : 'string', 'db/cardinality' : 'one'}},
-                                {'column/type'   : {'db/type' : 'string', 'db/cardinality' : 'one'}},
-                                {'column/table'  : {'db/type' : 'object', 'db/cardinality' : 'one'}}],
-                 'db/key'    : ['column/table', 'column/name']}}]
- )" :execute? true))
-
+(deftest owl-example-executes
+  (testing "Testing execution of $query and enforce."
+    
+    ;; This is a test of executing the above $query expression against data from the example in the spec.
+    (is (= {:class 12, :class-iri "dol/endurant", :class-ns "dol", :class-name "endurant"}
+           (rew/rewrite*
+            (with-out-str
+              (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $data.~A)"
+                         owl-q1))
+            :ptag/code-block
+            :execute? true)))
+    
+    ;; This is a test of execute $map($query,enforce) against data from the example in the spec.
+    (is (= :todo
+           (rew/rewrite*
+            :ptag/code-block
+            (with-out-str
+              (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $map($data.~A,~%      ~A)" 
+                         owl-q1 owl-e1))
+            :ptag/code-block
+            :execute? true)))))
 
 (deftest use-of-owl-db-tools-query
   (testing "owl-db-tools is USED in development. This is here mostly to ensure it has needed functionality."
