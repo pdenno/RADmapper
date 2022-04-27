@@ -34,7 +34,7 @@
 ;;; ============ Tokenizer ===============================================================
 (def keywords-basic
   #{"alias" "and" "else" "elseif" "endif" "false" "for" "function" "enforce" "if" "in" "int" "library" "list" "metadata"
-    "of" "or" "return" "source" "string" "target" "then" "transform" "true" "where"})
+    "of" "or" "query" "return" "source" "string" "target" "then" "transform" "true" "where"})
 
 (defn straight-to-bi [m]
   (reduce (fn [res s]
@@ -62,10 +62,9 @@
                    "$each" bi/$each, "$keys" bi/$keys, "$spread" bi/$spread})
 (def datetime-fns '{"$fromMillis" bi/$fromMillis, "$millis" bi/$millis, "$now" bi/$now, "$toMillis" bi/$toMillis})
 (def higher-fns   '{"$filter" bi/$filter, "$map" bi/$map, "$reduce" bi/$reduce, "$sift" bi/$sift, "$single" bi/$single})
-(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet "$query" bi/$query "$DBfor" bi/$DBfor})
+(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet "$DBfor" bi/$DBfor})
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns extended-fns))
-(def query-fn? #{"$query" "$queryFn"})
 (def builtin-un-op #{\+, \- :not})
 
 (def keywords (set/union keywords-basic (-> builtin-fns vals set))) ; ToDo necessary? Why not just let it be = keywords-basic?
@@ -87,7 +86,7 @@
 
 (defrecord JaVar [var-name bound?])
 (defrecord JaQueryVar [qvar-name])
-(defrecord JaField [field-name])
+(defrecord JaField [field-name]) ; Used for fields (e.g. the a in $.a, and function params
 (defrecord JaEOLcomment [text])
 
 ;;; (regex-from-string "/abc\\/.*/")
@@ -687,6 +686,13 @@
     (assoc ?ps :result (:tkn ?ps))
     (eat-token ?ps jvar?)))
 
+(defparse :ptag/param
+  [ps]
+  (as-> ps ?ps
+    (assoc ?ps :result (:tkn ?ps))
+    (eat-token ?ps jvar?)))
+
+
 (defn delimited-next?
   "Check 'next-tkns' from operand-exp?. Return true if the tokens
    start a delimited-exp (as opposed to a fn-call, etc.)."
@@ -708,20 +714,21 @@
   (let [tkn   (:tkn ps)
         tkn2  (look ps 1)
         operand-look (operand-exp? ps)
-        base-ps (cond (and (not in-binary?) (#{\{ \[ \(} tkn)) (parse :ptag/delimited-exp ps),  
+        base-ps (cond (and (not in-binary?) (#{\{ \[ \(} tkn)) (parse :ptag/delimited-exp ps),
                       (delimited-next? operand-look)                              ; <delimited-exp>
                       (parse :ptag/delimited-exp ps :operand-info operand-look),
                       (and (not in-binary?) (binary-next? operand-look))          ; <binary-exp>
                       (parse :ptag/binary-exp ps :operand-info operand-look),
                       (builtin-un-op tkn) (parse :ptag/unary-op-exp ps),          ; <unary-op-exp>
                       (= tkn :function)   (parse :ptag/fn-def ps),                ; <fn-def>
-                      (= tkn :enforce)    (parse :ptag/enforce-def ps),           ; <enforce-def>                      
+                      (= tkn :query)      (parse :ptag/query-def ps),             ; <query-def>
+                      (= tkn :enforce)    (parse :ptag/enforce-def ps),           ; <enforce-def>
                       (and (or (builtin-fns tkn) (jvar? tkn)) (= \( tkn2))        ; <fn-call>
                       (parse :ptag/fn-call ps),
                       (or (literal? tkn) (#{\[ \{} tkn))                          ; <literal>
                       (parse :ptag/literal ps),
                       (or (jvar? tkn) (qvar? tkn) (field? tkn))                   ; <field>, <jvar>, or <qvar>
-                      (as-> ps ?ps                  
+                      (as-> ps ?ps
                         (assoc ?ps :result tkn)
                         (eat-token ?ps)),
                       :else
@@ -897,25 +904,18 @@
           :else (throw (ex-info "expected a literal string, number, 'true', 'false' regex, obj, range, or array."
                                 {:got tkn :pstate ps})))))
 
-;;; fn-call ::=  <$id> '(' [<exp> ','...]* ')' | ('$query' | '$queryFn' '(' <query-triple>+ ')'
+;;; fn-call ::=  <$id> '(' [<exp> ','...]* ')'
 (defrecord JaFnCall [fn-name args])
-(defrecord JaQuery  [fn-name args])
 (defparse :ptag/fn-call
   [ps]
-  (let [query? (-> ps :tkn :var-name query-fn?)]
     (as-> ps ?ps
       (store ?ps :fn-name :tkn)
       (eat-token ?ps jvar?)
       (eat-token ?ps \()
-      (if query?
-        (parse :ptag/triples ?ps)
-        (parse-list-terminated ?ps :term-fn #(= % \)) :sep-fn #(= % \,)))
+      (parse-list-terminated ?ps :term-fn #(= % \)) :sep-fn #(= % \,))
       (store ?ps :args)
       (eat-token ?ps \))
-      (assoc ?ps :result
-             (if query?
-               (->JaQuery  (:var-name (recall ?ps :fn-name)) (recall ?ps :args))
-               (->JaFnCall (:var-name (recall ?ps :fn-name)) (recall ?ps :args)))))))
+      (assoc ?ps :result (->JaFnCall (:var-name (recall ?ps :fn-name)) (recall ?ps :args)))))
 
 ;;; <triples> ::= <triple>+
 (defparse :ptag/triples
@@ -949,7 +949,7 @@
     (eat-token ?ps \])
     (assoc ?ps :result (->JaTriple (recall ?ps :ent) (recall ?ps :role) (recall ?ps :third)))))
 
-;;; <fn-def> ::= 'function' '(' <$id>? [',' <$id>]* ')' '{' <exp> '}'
+;;; <fn-def> ::= 'function' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
 (defrecord JaFnDef [vars body])
 (defparse :ptag/fn-def
   [ps]
@@ -965,19 +965,34 @@
     (eat-token ?ps \})
     (assoc ?ps :result (->JaFnDef (recall ?ps :vars) (recall ?ps :body)))))
 
-;;; <enforce-def> ::= 'enforce' '(' <$id>? [',' <$id>]* ')' '{' <exp> '}'
-(defrecord JaEnforceDef [vars body])
+;;; <query-def> ::= 'query '(' <jvar>? [',' <jvar>]* ')' '{' <triples> '}'
+(defrecord JaQueryDef  [params triples])
+(defparse :ptag/query-def
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps :query)
+    (eat-token ?ps \()
+    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/var)
+    (store ?ps :params)
+    (eat-token ?ps \))
+    (eat-token ?ps \{)
+    (parse :ptag/triples ?ps)
+    (eat-token ?ps \})
+    (assoc ?ps :result (->JaQueryDef (recall ?ps :params) (:result ?ps)))))
+
+;;; ToDo: These aren't jvars, probably want some sort of optional parameter syntax.
+;;; <enforce-def> ::= 'enforce' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
+(defrecord JaEnforceDef [params body])
 (defparse :ptag/enforce-def
   [ps]
   (as-> ps ?ps
     (eat-token ?ps :enforce)
     (eat-token ?ps \()
     (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/var)
-    (store ?ps :vars)
+    (store ?ps :params)
     (eat-token ?ps \))
     (eat-token ?ps \{)
     (parse :ptag/exp ?ps)
     (store ?ps :body)
     (eat-token ?ps \})
-    (assoc ?ps :result (->JaEnforceDef (recall ?ps :vars) (recall ?ps :body)))))
-
+    (assoc ?ps :result (->JaEnforceDef (recall ?ps :params) (recall ?ps :body)))))

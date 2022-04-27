@@ -206,6 +206,8 @@
                 :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
                                       {:vars (-> func meta :params)}))))))
 
+;;; ToDo: Check whether $map can use bi/access.
+;;; Certainly "mapping" in the sense of  $.(<expr) can, but that's a different sort of thing.
 (defn $reduce
   "Signature: $reduce(array, function [, init])
 
@@ -223,30 +225,32 @@
 
   If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
   If not supplied, the initial value is the first value in the array parameter"
-  [coll func]
-  (reset! $ (let [nvars  (-> func meta :params count)]
-              (cond
-                (== nvars 4)
-                (loop [c (rest coll), i 0, r (first coll)]
-                  (if (empty? c)
-                    r
-                    (let [val (func r (first c) i coll)]
-                      (recur (rest c), (inc i), val))))
-                (== nvars 3)
-                (loop [c (rest coll), i 0, r (first coll)]
-                  (if (empty? c)
-                    r
-                    (let [val (func r (first c) i)]
-                      (recur (rest c), (inc i), val))))
-                (== nvars 2)
-                (loop [c (rest coll), r (first coll)]
-                  (if (empty? c)
-                    r
-                    (let [val (func r (first c))]
-                      (recur (rest c) val))))
-                :else
-                (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
-                                {:vars (-> func meta :params)}))))))
+  ([coll func init] ($reduce (into (vector init) coll) func))
+  ([coll func]
+   (reset! $ (let [nvars  (-> func meta :params count)]
+               ;; Deal with the accumulator function having 2-4 arguments.
+               (cond
+                 (== nvars 4)
+                 (loop [c (rest coll), i 0, r (first coll)]
+                   (if (empty? c)
+                     r
+                     (let [val (func r (first c) i coll)]
+                       (recur (rest c), (inc i), val))))
+                 (== nvars 3)
+                 (loop [c (rest coll), i 0, r (first coll)]
+                   (if (empty? c)
+                     r
+                     (let [val (func r (first c) i)]
+                       (recur (rest c), (inc i), val))))
+                 (== nvars 2)
+                 (loop [c (rest coll), r (first coll)]
+                   (if (empty? c)
+                     r
+                     (let [val (func r (first c))]
+                       (recur (rest c) val))))
+                 :else
+                 (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
+                                 {:vars (-> func meta :params)})))))))
 
 (defn $single
   "See http://docs.jsonata.org/higher-order-functions
@@ -289,6 +293,8 @@
   (apply str objs))
 
 ;;; rewrite.clj would have been a good place for this, but here we need it at runtime!
+;;; ToDo: sym-bi-access IS executed for $map in rewrite. So can that for filter too?
+;;; N.B. filter-fn below calls eval.
 (defn sym-bi-access
   "When doing mapping such as '$.(A * B)' the expressions A and B
    were rewritten (bi/access 'A'). There needs to be a first argument
@@ -417,7 +423,7 @@
 ;;; ToDo: Third role in qforms can be an expression.
 (defn qform
   "Return a Datahike query form [:find ... :where ... :keys] for the argument triples"
-  [triples]
+  [triples _] ; ToDo params
   (let [vars (->> (reduce (fn [r x] (into r x)) triples)
                   (filter #(str/starts-with? % "?"))
                   distinct)]
@@ -427,16 +433,24 @@
 
 ;;; For example (d/q '[:find ?attr :keys attr :where [_ ?attr _]] (qu/db-for! [{:foo 1} {:foo 2}]))
 ;;; ==> [{:attr :db/ident} {:attr :db/cardinality} {:attr :db/valueType} {:attr :foo}]
-(defn $query
-  "Use the triple forms provided to return a function that takes performs a
-  $query on data provided to the function."
-  [qforms]
-  (fn [data]
-    (let [conn (qu/db-for! data)]
-      (->> (d/q `~(qform qforms) conn)
-           ;; Remove binding sets that involve a schema entity.
-           (remove (fn [x] (some #(and (keyword? %) (= "db" (namespace %))) (vals x))))
-           vec))))
+;;; $queryCellByName := query($name)([?e "name" $name]
+;;;                                  [?e "phoneNumberObjs" ?pn]
+;;;                                  [?pn "cell" ?cellNum])
+;;; Example usage  $queryCellByName($,"Bob")
+;;;
+;;; (macroexpand-1 '(bi/query {:params [$name], :qforms [[?e "name" $name]]}))
+;;; (macroexpand-1 '(bi/query {:params [], :qforms [[?e "name" "Bob"]]}))
+;;; (bi/query {:params [], :qforms [[?e "name" "Bob"]]})
+(defmacro query
+  "Use the triple forms provided to return a function that takes performs a DH/q on
+   data provided to the function."
+  [{:keys [params qforms]}]
+  `(fn [~'data ~@params]
+     (let [~'conn (qu/db-for! ~'data)]
+       (->> (d/q '~(qform qforms params) ~'conn)
+            ;; Remove binding sets that involve a schema entity.
+            (remove (fn [~'x] (some #(and (keyword? %) (= "db" (namespace %))) (vals ~'x))))
+            vec))))
 
 (defn* $DBfor
   "Serialize the triples DB for the given data."
@@ -444,6 +458,15 @@
   (let [conn (qu/db-for! data_)]
     (dp/pull-many conn '[*] (range 1 (-> conn :max-eid inc)))))
 
-(defn* $transform
-  "Transform data"
-  [data_ schema query enforce] :nyi)
+(defn get-from-bs [bs k]
+  (when-not (contains? bs k)
+    (throw (ex-info "Argument binding set does not contain the key provided"
+                    {:binding-set bs :key k})))
+  (get bs k))
+
+;;; - It returns a function usable by $reduce.
+;;; - Binding the variables of the binding set is the work of the function; it can't be done by the macro.
+;;; - The problem I'm having is in avoiding eval. (Maybe live with it, banking on SCI working.)
+;;;   For example, I don't think letfn and then running it will work.
+(defn enforce [&keys [config body]]
+  `(destructure-bset '~body))

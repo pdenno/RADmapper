@@ -5,6 +5,7 @@
            com.wsscode/pathom3            {:mvn/version "2022.03.17-alpha"}
            dk.ative/docjure               {:mvn/version "1.17.0"} ; spreadsheets
            io.replikativ/datahike         {:mvn/version "0.4.1491"}
+           ;org.babashka/sci               {:mvn/version "0.3.4"} ; someday soon?
            org.clojure/clojure            {:mvn/version "1.11.1"}
            org.clojure/data.zip           {:mvn/version "1.0.0"}
            org.clojure/data.json          {:mvn/version "2.4.0"}

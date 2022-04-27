@@ -114,7 +114,7 @@
                             $data.$query([?person :Person/firstname ?fname]
                                          [?person :Person/lastname  ?lname]))"
                          :execute? true)))
-    
+
     (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
@@ -173,36 +173,39 @@
 (write-pretty-file "data/testing/owl-example.edn" owl-test-data)
 
 (def owl-q1 "an expression used in testing below"
-"$query( [?class :rdf/type            'owl/Class']
+"query(){[?class :rdf/type            'owl/Class']
          [?class :resource/iri        ?class-iri]
          [?class :resource/namespace  ?class-ns]
-         [?class :resource/name       ?class-name])")
+         [?class :resource/name       ?class-name]}")
 
 (def owl-e1 "an expression used in testing below"
 "enforce(){  {'instance-of'  : 'insert-row',
                    'table'        : 'ObjectDefinition',
-                   'content'      : [{'resourceIRI'       : ?iri},
-                                     {'resourceLabel'     : ?label},
-                                     {'resourceNamespace' : ?ns}]}  
+                   'content'      : [{'resourceIRI'       : ?class-iri},
+                                     {'resourceNamespace' : ?class-ns},
+                                     {'resourceLabel'     : ?class-label}]}
               }")
 
 (def owl-full-example "The whole thing looks like this:"
-"($data   := $readFile('data/testing/owl-example.edn');
- $target := [];
- $reduce($data.$query( [?class :rdf/type 'owl/Class']
-                       [?class :resource/iri        ?class-iri]
-                       [?class :resource/namespace  ?class-ns]
-                       [?class :resource/name       ?class-name] ),
-         enforce()
-           {  
-             {'instance-of'  : 'insert-row',
-              'table'        : 'ObjectDefinition',
-              'content'      : [{'resourceIRI'       : ?iri},
-                                {'resourceLabel'     : ?label},
-                                {'resourceNamespace' : ?ns}]}  
-           },
-        $target)
- )")
+"
+( $data   := $readFile('data/testing/owl-example.edn');
+  $bsets  := query()
+                { [?class :rdf/type 'owl/Class']
+                  [?class :resource/iri        ?class-iri]
+                  [?class :resource/namespace  ?class-ns]
+                  [?class :resource/name       ?class-name]
+                },
+  $target := [],
+  $ef     := enforce($target) 
+                {  {'instance-of'  : 'insert-row',
+                    'table'        : 'ObjectDefinition',
+                    'content'      : [{'resourceIRI'       : ?class-iri},
+                                      {'resourceNamespace' : ?class-ns},
+                                      {'resourceLabel'     : ?class-label}]}
+                },
+ 
+ $reduce($bsets($data), $ef)
+)")
 
 (deftest owl-example-parse
   (testing "Test parsing the owl example in the spec"
@@ -218,51 +221,41 @@
                [?class :resource/namespace ?class-ns]
                [?class :resource/name ?class-name]])
            (rew/rewrite* :ptag/fn-call owl-q1 :rewrite? true)))
-    
-    ;;; This is a test of rewriting an enforce.  
-    (is (=
-         '(->
-           (bi/enforce
-            []
-            (-> {}
-                (assoc "instance-of" "insert-row")
-                (assoc "table" "ObjectDefinition")
-                (assoc "content" [(-> {} (assoc "resourceIRI" ?iri))
-                                  (-> {} (assoc "resourceLabel" ?label))
-                                  (-> {} (assoc "resourceNamespace" ?ns))])))
-           (with-meta
-             {:params '[],
-              :enforce? true,
-              :body
-              '(-> {}
-                   (assoc "instance-of" "insert-row")
-                   (assoc "table" "ObjectDefinition")
-                   (assoc "content" [(-> {} (assoc "resourceIRI" ?iri))
-                                     (-> {} (assoc "resourceLabel" ?label))
-                                     (-> {} (assoc "resourceNamespace" ?ns))]))}))
-         (rew/rewrite* :ptag/exp owl-e1 :rewrite? true )))))
 
+    ;;; This is a test of rewriting an enforce.
+    (is (=
+         '(fn
+            [binding-set]
+            (->
+             {}
+             (assoc "instance-of" "insert-row")
+             (assoc "table" "ObjectDefinition")
+             (assoc
+              "content"
+              [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
+               (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+               (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))
+         (rew/rewrite* :ptag/exp owl-e1 :rewrite? true)))))
 
 (deftest owl-example-executes
   (testing "Testing execution of $query and enforce."
-    
+
     ;; This is a test of executing the above $query expression against data from the example in the spec.
     (is (= {:class 12, :class-iri "dol/endurant", :class-ns "dol", :class-name "endurant"}
            (rew/rewrite*
+            :ptag/code-block
             (with-out-str
               (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $data.~A)"
                          owl-q1))
-            :ptag/code-block
             :execute? true)))
-    
+
     ;; This is a test of execute $map($query,enforce) against data from the example in the spec.
-    (is (= :todo
+    (is (not= :todo ;<==================================================================================== ToDo
            (rew/rewrite*
             :ptag/code-block
             (with-out-str
-              (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $map($data.~A,~%      ~A)" 
+              (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $map($data.~A,~%      ~A))"
                          owl-q1 owl-e1))
-            :ptag/code-block
             :execute? true)))))
 
 (deftest use-of-owl-db-tools-query
@@ -282,3 +275,26 @@
            {:owl/onProperty :dol/specific-constant-constituent, :owl/allValuesFrom [:dol/perdurant], :rdf/type :owl/Restriction}]}
          ;; Returns a sorted-map, thus str and read-string.
          (-> (pull-resource :dol/perdurant conn) (dissoc :rdfs/comment) str read-string)))))
+
+
+(defn tryme []
+  (let [$data (bi/$readFile "data/testing/owl-example.edn")
+        $target []]
+    (bi/$reduce
+     (bi/access $data (bi/$query '[[?class :rdf/type "owl/Class"]
+                                   [?class :resource/iri ?class-iri]
+                                   [?class :resource/namespace ?class-ns]
+                                   [?class :resource/name ?class-name]]))
+     (fn
+       [binding-set]
+       (->
+        {}
+        (assoc "instance-of" "insert-row")
+        (assoc "table" "ObjectDefinition")
+        (assoc
+         "content"
+         [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
+          (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+          (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))
+     #_$target)))
+

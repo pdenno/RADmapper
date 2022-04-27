@@ -97,20 +97,6 @@
   `(~'let [~@(reduce (fn [res vdecl] (into res (rewrite vdecl))) [] (:bound-vars m))]
     ~(-> m :body rewrite)))
 
-;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
-;;; User functions also translate using this, but don't use the metadata.
-(defrewrite :JaFnDef [m]
-  (let [vars (mapv #(-> % :var-name symbol) (:vars m))
-        body (-> m :body rewrite)]
-    `(~'-> (~'fn ~(mapv rewrite (:vars m)) ~body)
-      (~'with-meta {:params '~vars :body '~body}))))
-
-(defrewrite :JaEnforceDef [m]
-  (let [vars (mapv #(-> % :var-name symbol) (:vars m))
-        body (-> m :body rewrite)]
-    `(~'-> (~'bi/enforce ~(mapv rewrite (:vars m)) ~body)
-      (~'with-meta {:params '~vars :body '~body :enforce? true}))))
-
 (defrewrite :JaVarDecl [m]
   (let [val (-> m :init-val rewrite)]
     (vector (-> m :var :var-name symbol)
@@ -181,16 +167,46 @@
 (defrewrite :JaRangeExp [m]
   `(~'range ~(rewrite (:start m)) (~'inc ~(rewrite (:stop m)))))
 
-(defrewrite :JaQuery [m]
-  `(~(-> m :fn-name par/builtin-fns)
-    '~(mapv rewrite (:args m))))
+(defrewrite :JaQueryDef [m]
+  `(~'bi/query
+    {:params '~(mapv rewrite (:params m))
+     :qforms '~(mapv rewrite (:triples m))}))
 
 (defrewrite :JaTriple [m]
   `[~(rewrite (:ent m))
     ~(rewrite (:rel m))
     ~(rewrite (:val-exp m))])
 
-(defrewrite :JaQueryVar [m] (-> (:qvar-name m) symbol))
+(def ^:dynamic *in-enforce?* false)
+
+(defrewrite :JaQueryVar [m]
+  (if *in-enforce?*
+    `(~'bi/get-from-bs
+      ~'binding-set
+      ~(-> (:qvar-name m) (subs 1) keyword))
+    (-> (:qvar-name m) symbol)))
+
+;;; enforce is a function called (typically from $reduce) with a binding set.
+;;; ToDo: (:vars m) are not yet processed.
+(defrewrite :JaEnforceDef [m]
+  (binding [*in-enforce?* true]
+    (let [result `(~'fn [~'binding-set]
+                   ~(-> m :body rewrite))]
+      (str "result =" result)
+      result)))
+  
+(defn checking [arg]
+  (println "checking: arg = " arg))
+
+;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
+;;; User functions also translate using this, but don't use the metadata.
+(defrewrite :JaFnDef [m]
+  (let [vars (mapv #(-> % :var-name symbol) (:vars m))
+        body (-> m :body rewrite)]
+    `(~'-> (~'fn ~(mapv rewrite (:vars m)) ~body)
+      (~'with-meta {:params '~vars :body '~body}))))
+
+
 (defrewrite :JaTripleRole [m] (:role-name m))
 
 ;;;---------------------------- Binary ops, precedence ordering, and paths --------------------------------------------------
