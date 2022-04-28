@@ -68,29 +68,28 @@
              (->> binding-set (map :class-iri) set))))))
 
 (deftest query-basics
-  (testing "Testing $query parsing, rewriting and execution."
-    (is (= '(bi/$query '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])
+  (testing "Testing query parsing, rewriting and execution."
+    (is (= '(bi/query [] [[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])
            (rew/rewrite* :ptag/exp
-            "$query( [?class :rdf/type     'owl/Class']
-                     [?class :resource/iri  ?class-iri])"
-            :rewrite? true)))
-
-    (is (= '(let [$data (bi/$readFile "data/testing/dolce-2.edn")]
-              (bi/access $data (bi/$query '[[?class :rdf/type "owl/Class"]
-                                            [?class :resource/iri ?class-iri]])))
-           (rew/rewrite* :ptag/code-block
-            "( $data := $readFile('data/testing/dolce-2.edn');
-               $data.$query([?class :rdf/type     'owl/Class']
-                            [?class :resource/iri ?class-iri]) )"
+            "query(){[?class :rdf/type     'owl/Class']
+                     [?class :resource/iri  ?class-iri]}"
             :rewrite? true)))
 
     ;; The attr of a triple (middle item) can be queried and results do not include db/schema content.
     (is (= [{:ent 3, :attr :person/lname, :val "Dee"} {:ent 3, :attr :person/fname, :val "Peter"}]
            (rew/rewrite* :ptag/code-block
                          "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
-                            $data.$query([?ent ?attr ?val]))"
+                            $q := query(){[?ent ?attr ?val]};
+                            $q($data))"
                          :execute? true)))
 
+    ;; 'in-line' or 'anonymous' query works
+    #_(is (= [{:ent 3, :attr :person/lname, :val "Dee"} {:ent 3, :attr :person/fname, :val "Peter"}]
+           (rew/rewrite* :ptag/exp
+                         "query(){[?ent ?attr ?val]}[{'person/fname' : 'Peter', 'person/lname' : 'Dee'}]"
+                         :execute? true)))
+
+    ;; Here is a complete DB!
     (is (= [#:db{:id 1, :cardinality :db.cardinality/one, :ident :person/fname, :valueType :db.type/string}
             #:db{:id 2, :cardinality :db.cardinality/one, :ident :person/lname, :valueType :db.type/string}
             {:db/id 3, :person/fname "Bob", :person/lname "Clark"}]
@@ -98,27 +97,31 @@
 
     ;; ToDo: Isn't this suppose to return a vector?
     ;; (d/q '[:find ?f :keys f :where [_ :foo ?f]] (qu/db-for! [{:foo 1} {:foo 2}])) ==> [{:f 2} {:f 1}]
-    (is (=  {:person 3, :fname "Bob", :lname "Clark"}
-            (rew/rewrite* :ptag/code-block
-                          "( $data := {'person/fname' : 'Bob', 'person/lname' : 'Clark'};
-                             $data.$query([?person :person/fname ?fname]
-                                          [?person :person/lname ?lname]) )"
-                          :execute? true)))
+    (is (=  [{:person 3, :fname "Bob", :lname "Clark"}]
+            (rew/rewrite*
+             :ptag/code-block
+             "( $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
+                $q := query(){[?person :person/fname ?fname]
+                              [?person :person/lname ?lname]};
+                $q($data) )"
+             :execute? true)))
 
     ;; I think the above isn't returning a vector because of the JSONata 'singleton thing'.
     ;; Here is an example from the spec.
-    (is (= [{:person 4, :fname "Peter", :lname "Dee"} {:person 3, :fname "Bob", :lname "Clark"}]
+    (is (= [{:person 4, :fname "Peter", :lname "Dee"}
+            {:person 3, :fname "Bob", :lname "Clark"}]
            (rew/rewrite* :ptag/code-block
                          "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
                                       {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
-                            $data.$query([?person :Person/firstname ?fname]
-                                         [?person :Person/lastname  ?lname]))"
+                            $q := query(){[?person :Person/firstname ?fname]
+                                          [?person :Person/lastname  ?lname]};
+                            $q($data) )"
                          :execute? true)))
 
-    (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+    #_(is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
-           (->> ((bi/$query '[[?class :rdf/type "owl/Class"] [?class :resource/iri  ?class-iri]]) test-data-json)
+           (->> ((bi/query '[[?class :rdf/type "owl/Class"] [?class :resource/iri  ?class-iri]]) test-data-json)
                 (map :class-iri)
                 (map keyword)
                 set)))
@@ -129,8 +132,9 @@
              :dol/feature :dol/time-interval}
            (->> (rew/rewrite* :ptag/code-block ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
                               "( $data := $readFile('data/testing/dolce-2.edn');
-                                 $data.$query([?class :rdf/type     'owl/Class']
-                                              [?class :resource/iri  ?class-iri]) )"
+                                 $q := query(){[?class :rdf/type     'owl/Class']
+                                              [?class :resource/iri  ?class-iri]};
+                                 $q($data) )"
                               :execute? true)
                 (map :class-iri)
                 (map keyword)
@@ -173,10 +177,11 @@
 (write-pretty-file "data/testing/owl-example.edn" owl-test-data)
 
 (def owl-q1 "an expression used in testing below"
-"query(){[?class :rdf/type            'owl/Class']
-         [?class :resource/iri        ?class-iri]
-         [?class :resource/namespace  ?class-ns]
-         [?class :resource/name       ?class-name]}")
+"
+query($type){[?class :rdf/type            $type]
+             [?class :resource/iri        ?class-iri]
+             [?class :resource/namespace  ?class-ns]
+             [?class :resource/name       ?class-name]}")
 
 (def owl-e1 "an expression used in testing below"
 "enforce(){  {'instance-of'  : 'insert-row',
@@ -190,21 +195,21 @@
 "
 ( $data   := $readFile('data/testing/owl-example.edn');
   $bsets  := query()
-                { [?class :rdf/type 'owl/Class']
+                { [?class :rdf/type            'owl/Class']
                   [?class :resource/iri        ?class-iri]
                   [?class :resource/namespace  ?class-ns]
                   [?class :resource/name       ?class-name]
-                },
-  $target := [],
-  $ef     := enforce($target) 
-                {  {'instance-of'  : 'insert-row',
-                    'table'        : 'ObjectDefinition',
-                    'content'      : [{'resourceIRI'       : ?class-iri},
-                                      {'resourceNamespace' : ?class-ns},
-                                      {'resourceLabel'     : ?class-label}]}
-                },
- 
- $reduce($bsets($data), $ef)
+                };
+  $target := [];
+  $enfor  := enforce($target)
+               {  {'instance-of'  : 'insert-row',
+                   'table'        : 'ObjectDefinition',
+                   'content'      : [{'resourceIRI'       : ?class-iri},
+                                     {'resourceNamespace' : ?class-ns},
+                                     {'resourceLabel'     : ?class-label}]}
+               };
+
+ $reduce($bsets($data), $enfor)
 )")
 
 (deftest owl-example-parse
@@ -214,15 +219,15 @@
 
 (deftest owl-example-rewrite
   (testing "Test rewriting the OWL example in the spec."
-    ;; This is a test of rewriting a $query expression.
-    (is (= '(bi/$query
-             '[[?class :rdf/type "owl/Class"]
-               [?class :resource/iri ?class-iri]
-               [?class :resource/namespace ?class-ns]
-               [?class :resource/name ?class-name]])
-           (rew/rewrite* :ptag/fn-call owl-q1 :rewrite? true)))
+    ;; This is a test of rewriting a query expression.
+    (is (= '(bi/query [$type]
+                      [[?class :rdf/type $type]
+                       [?class :resource/iri ?class-iri]
+                       [?class :resource/namespace ?class-ns]
+                       [?class :resource/name ?class-name]])
+           (rew/rewrite* :ptag/exp owl-q1 :rewrite? true)))
 
-    ;;; This is a test of rewriting an enforce.
+    ;; This is a test of rewriting an enforce.
     (is (=
          '(fn
             [binding-set]
@@ -235,22 +240,54 @@
               [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
                (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
                (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))
-         (rew/rewrite* :ptag/exp owl-e1 :rewrite? true)))))
+         (rew/rewrite* :ptag/exp owl-e1 :rewrite? true)))
+
+    ;; This is an example of rewriting the whole example.
+    (is (= (rew/rewrite* :ptag/code-block owl-full-example :rewrite? true)
+           '(let [$data (bi/$readFile "data/testing/owl-example.edn")
+                  $bsets  (bi/query [] [[?class :rdf/type "owl/Class"]
+                                        [?class :resource/iri ?class-iri]
+                                        [?class :resource/namespace ?class-ns]
+                                        [?class :resource/name ?class-name]])
+                  $target []
+                  $enfor (fn [binding-set]
+                           (-> {}
+                               (assoc "instance-of" "insert-row")
+                               (assoc "table" "ObjectDefinition")
+                               (assoc
+                                "content"
+                                [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
+                                 (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+                                 (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))]
+              (bi/$reduce ($bsets $data) $enfor))))))
+
+(def owl-q2
+"
+( $data := $readFile('data/testing/owl-example.edn');
+  $q := query($type){[?class :rdf/type            $type]
+                     [?class :resource/iri        ?class-iri]
+                     [?class :resource/namespace  ?class-ns]
+                     [?class :resource/name       ?class-name]};
+  $q($data,'owl/Class') )")
+
 
 (deftest owl-example-executes
   (testing "Testing execution of $query and enforce."
 
+    ;; bi/query is a macro that take parameters and a query form and returns a parameterized function.
+    ;; The call to the function currently has the data first and the values of parameters after that.
+    ;; substituted for these after it. ToDo: I'd like the data last.
+    ;; N.B. Here I'm running the function on a very small DB!
+    (is (= [{:e 2}] ((bi/query []      [[?e :name "Bob"]]) {:name "Bob"})))
+    (is (= [{:e 2}] ((bi/query [$name] [[?e :name $name]]) {:name "Bob"} "Bob")))
+    (is (= []       ((bi/query [$name] [[?e :name $name]]) {:name "Bob"} "xxx")))
+
     ;; This is a test of executing the above $query expression against data from the example in the spec.
-    (is (= {:class 12, :class-iri "dol/endurant", :class-ns "dol", :class-name "endurant"}
-           (rew/rewrite*
-            :ptag/code-block
-            (with-out-str
-              (cl-format *out* "($data := $readFile('data/testing/owl-example.edn');~% $data.~A)"
-                         owl-q1))
-            :execute? true)))
+    (is (= [{:class 12, :class-iri "dol/endurant", :class-ns "dol", :class-name "endurant"}]
+           (rew/rewrite* :ptag/code-block owl-q2 :execute? true)))
 
     ;; This is a test of execute $map($query,enforce) against data from the example in the spec.
-    (is (not= :todo ;<==================================================================================== ToDo
+    #_(is (not= :todo ;<==================================================================================== ToDo
            (rew/rewrite*
             :ptag/code-block
             (with-out-str
@@ -258,8 +295,9 @@
                          owl-q1 owl-e1))
             :execute? true)))))
 
+;;; "owl-db-tools is used in only development (See deps.edn.)  It is here mostly to ensure it has needed functionality."
 (deftest use-of-owl-db-tools-query
-  (testing "owl-db-tools is USED in development. This is here mostly to ensure it has needed functionality."
+  (testing "owl-db-tools/pull-resource"
     (is (=
          {:resource/iri :dol/perdurant,
           :resource/name "perdurant",
@@ -275,26 +313,3 @@
            {:owl/onProperty :dol/specific-constant-constituent, :owl/allValuesFrom [:dol/perdurant], :rdf/type :owl/Restriction}]}
          ;; Returns a sorted-map, thus str and read-string.
          (-> (pull-resource :dol/perdurant conn) (dissoc :rdfs/comment) str read-string)))))
-
-
-(defn tryme []
-  (let [$data (bi/$readFile "data/testing/owl-example.edn")
-        $target []]
-    (bi/$reduce
-     (bi/access $data (bi/$query '[[?class :rdf/type "owl/Class"]
-                                   [?class :resource/iri ?class-iri]
-                                   [?class :resource/namespace ?class-ns]
-                                   [?class :resource/name ?class-name]]))
-     (fn
-       [binding-set]
-       (->
-        {}
-        (assoc "instance-of" "insert-row")
-        (assoc "table" "ObjectDefinition")
-        (assoc
-         "content"
-         [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
-          (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
-          (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))
-     #_$target)))
-

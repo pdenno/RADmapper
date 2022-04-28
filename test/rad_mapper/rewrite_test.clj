@@ -94,17 +94,17 @@
       (is (= '(-> (fn [$v $i $a] (< (bi/access $v "cbc_InvoicedQuantity") 0))
                   (with-meta {:params '[$v $i $a], :body '(< (bi/access $v "cbc_InvoicedQuantity") 0)}))
              (rew/rewrite* :ptag/fn-def "function($v,$i,$a) { $v.cbc_InvoicedQuantity < 0 }" :rewrite? true)))
-      
+
       (is (= '(let [$inc (-> (fn [$v] (bi/+ $v 1)) (with-meta {:params '[$v], :body '(bi/+ $v 1)}))]
                 (bi/$map [1 2 3] $inc))
              (rew/rewrite* :ptag/code-block "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))" :rewrite? true)))
 
       (is (= '(bi/$reduce (range 1 (inc 5)) $sum 100)
              (rew/rewrite* :ptag/exp "$reduce([1..5], $sum, 100)" :rewrite? true)))
-      
+
       (is (= '($fn1 (bi/access (bi/access ($fn2 $v) "a") "b"))
              (rew/rewrite* :ptag/exp "$fn1($fn2($v).a.b)" :rewrite? true)))
-      
+
       (is (= '(bi/$sum
                (bi/access
                 (bi/access

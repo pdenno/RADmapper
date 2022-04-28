@@ -168,9 +168,7 @@
   `(~'range ~(rewrite (:start m)) (~'inc ~(rewrite (:stop m)))))
 
 (defrewrite :JaQueryDef [m]
-  `(~'bi/query
-    {:params '~(mapv rewrite (:params m))
-     :qforms '~(mapv rewrite (:triples m))}))
+  `(~'bi/query ~(mapv rewrite (:params m)) ~(mapv rewrite (:triples m))))
 
 (defrewrite :JaTriple [m]
   `[~(rewrite (:ent m))
@@ -194,7 +192,7 @@
                    ~(-> m :body rewrite))]
       (str "result =" result)
       result)))
-  
+
 (defn checking [arg]
   (println "checking: arg = " arg))
 

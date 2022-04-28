@@ -408,48 +408,94 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
 
+;;; Thoughts on schema""
+;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
+;;;   - One needs to to specify schema on $transform, even if it is {}
+;;;   - What is provided as argument overrides what is learned in $query.
+;;;   - $enforce could be with an argument schema.
 (defn* $schemaFor
   "Study the argument data and heuristically suggest the types and multiplicity of data.
    Note that this function does not make a guess at what the keys (db/key) are."
   [data_]
   (qu/learn-schema-walking data_))
 
-;;; Thoughts on schema""
-;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
-;;;   - One needs to to specify schema on $transform, even if it is {}
-;;;   - What is provided as argument overrides what is learned in $query.
-;;;   - $enforce could be with an argument schema.
-
-;;; ToDo: Third role in qforms can be an expression.
-(defn qform
-  "Return a Datahike query form [:find ... :where ... :keys] for the argument triples"
-  [triples _] ; ToDo params
-  (let [vars (->> (reduce (fn [r x] (into r x)) triples)
-                  (filter #(str/starts-with? % "?"))
-                  distinct)]
+;;; I haven't been able to programmatically form a syntax quoted expression in the bi/query macro. Thus this.
+;;; ToDo: Probably just wasn't warmed up. Try again.
+(defn qform-runtime-sub
+  "Return a DH query [:find...] form that substitutes values as though syntax quote were being used."
+  [body param-val-map]
+  (letfn [(tp-aux [x]
+            (cond (vector? x)                  (mapv tp-aux x),
+                  (seq? x)                     (map  tp-aux x),
+                  (contains? param-val-map x)  (param-val-map x),
+                  :else x))]
+    (let [vars (->> (reduce (fn [r x] (into r x)) body)
+                    (filter #(str/starts-with? % "?"))
+                    distinct)]
     `[:find ~@vars
       :keys ~@(->> vars (map #(subs (str %) 1)) (map symbol))
-      :where ~@triples]))
+      :where ~@(tp-aux body)])))
 
-;;; For example (d/q '[:find ?attr :keys attr :where [_ ?attr _]] (qu/db-for! [{:foo 1} {:foo 2}]))
-;;; ==> [{:attr :db/ident} {:attr :db/cardinality} {:attr :db/valueType} {:attr :foo}]
-;;; $queryCellByName := query($name)([?e "name" $name]
-;;;                                  [?e "phoneNumberObjs" ?pn]
-;;;                                  [?pn "cell" ?cellNum])
-;;; Example usage  $queryCellByName($,"Bob")
-;;;
-;;; (macroexpand-1 '(bi/query {:params [$name], :qforms [[?e "name" $name]]}))
-;;; (macroexpand-1 '(bi/query {:params [], :qforms [[?e "name" "Bob"]]}))
-;;; (bi/query {:params [], :qforms [[?e "name" "Bob"]]})
+(def diag (atom nil))
+;;; (macroexpand-1 '(bi/query [$name], [[?e :name $name]]})
+;;; ((bi/query [$name] [[?e :name $name]]} [{"name" "Bob"}] "Bob")
+
+;;; (macroexpand-1 '(bi/query [], [[?e :name "Bob"]]})
+;;; ((bi/query [] [[?e :name "Bob"]]} [{"name" "Bob"}] "Bob")
 (defmacro query
-  "Use the triple forms provided to return a function that takes performs a DH/q on
-   data provided to the function."
-  [{:keys [params qforms]}]
-  `(fn [~'data ~@params]
-     (let [~'conn (qu/db-for! ~'data)]
-       (->> (d/q '~(qform qforms params) ~'conn)
+  "Evaluates to a function that takes data and returns binding sets.
+  'params' is an ordered vector parameters (jvars) that will be matched to 'args' used
+   to parameterized the query form, thus producing a 'customized' query function.
+
+   Example usage: 
+
+   ( $queryCellByName := query($name)([?e 'name' $name]
+                                      [?e 'phoneNumberObjs' ?pn]
+                                      [?pn 'cell' ?cellNum])
+     $queryCellByName($data,'Bob') )."
+  [params body]
+  `(fn [data# & args#]
+     (let [conn# (qu/db-for! data#)
+           ;; I can't find a way to code a syntax quote, so I'm doing substitutions at run time.
+           param-subs# (zipmap '~params args#)]
+       (->> (d/q (reset! diag (qform-runtime-sub '~body param-subs#)) conn#)
             ;; Remove binding sets that involve a schema entity.
-            (remove (fn [~'x] (some #(and (keyword? %) (= "db" (namespace %))) (vals ~'x))))
+            (remove (fn [bset#] (some (fn [bval#]
+                                        (and (keyword? bval#)
+                                             (= "db" (namespace bval#))))
+                                      (vals bset#))))
+            vec))))
+
+#_(defmacro query
+  "Evaluates to a function that takes data and returns binding sets.
+   The arg-map here is a map keyed by jvars that is used to parameterized the query form,
+   thus producing a 'customized' function for the query." 
+  [qform param-map]
+  `(fn [data#]
+     (let [conn# (qu/db-for! data#)]
+       ;; I can't find a way to code a syntax quote, so I'm with a function call.
+       (->> (d/q (qform-runtime-sub '~qform '~param-map) conn#)
+            ;; Remove binding sets that involve a schema entity.
+            (remove (fn [bset#] (some (fn [bval#]
+                                        (and (keyword? bval#)
+                                             (= "db" (namespace bval#))))
+                                      (vals bset#))))
+            vec))))
+
+#_(defmacro query
+  "Evaluates to a function that takes data and parameter values and returns binding sets.
+   The arg-map here is a map keyed by jvars that is used to parameterized the query form,
+   thus producing a 'customized' function for the query." 
+  [qform]
+  `(fn [data# arg-map#]
+     (let [conn# (qu/db-for! data#)]
+       ;; I can't find a way to code a syntax quote, so I'm with a function call.
+       (->> (d/q (qform-runtime-sub '~qform arg-map#) conn#)
+            ;; Remove binding sets that involve a schema entity.
+            (remove (fn [bset#] (some (fn [bval#]
+                                        (and (keyword? bval#)
+                                             (= "db" (namespace bval#))))
+                                      (vals bset#))))
             vec))))
 
 (defn* $DBfor
