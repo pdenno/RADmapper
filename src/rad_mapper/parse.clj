@@ -467,6 +467,7 @@
        (println "\n<<<<<<<<<<<<<<<<<<<<< parse-list <<<<<<<<<<<<<<<<<<<<<<<"))
      final-ps)))
 
+;;; ToDo: Have a separate variable to turn off debugging on the auto things. 
 (defn parse-list-terminated
   "Does parse parametrically for '[ <item> ','... ] <terminator>'. Does not eat terminator."
   [pstate & {:keys [term-fn sep-fn parse-tag] :or {sep-fn #(= \; %)
@@ -991,7 +992,7 @@
   (as-> ps ?ps
     (eat-token ?ps :enforce)
     (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/var)
+    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/exp) ; ToDo: was :ptag/var investigate
     (store ?ps :params)
     (eat-token ?ps \))
     (eat-token ?ps \{)
@@ -1009,7 +1010,7 @@
              :query     (parse :ptag/query-def ps),      ; <query-def>
              :enforce   (parse :ptag/enforce-def ps))]   ; <enforce-def>
     (if (and (= \( (:tkn ps)) (#{JaFnDef JaQueryDef} (-> ps :result type)))
-      ;; This part to wrap it in a JaImmediateuse
+      ;; This part to wrap it in a JaImmediateUse
       (as-> ps ?ps
         (store ?ps :def)
         (eat-token ?ps)

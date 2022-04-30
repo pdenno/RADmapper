@@ -101,9 +101,11 @@
     ~(-> m :body rewrite)))
 
 (defrewrite :JaVarDecl [m]
-  (let [val (-> m :init-val rewrite)]
-    (vector (-> m :var :var-name symbol)
-            (if (= :JaFnDef (:_type val)) (:form val) val))))
+  (let [val (-> m :init-val rewrite)
+        jvar (if (special-var? (:var m))
+               (special-var? (:var m))
+               (-> m :var :var-name symbol))]
+    (vector jvar (if (= :JaFnDef (:_type val)) (:form val) val))))
 
 (defrewrite :JaField [m] (-> m :field-name))
 
@@ -191,7 +193,7 @@
 ;;; ToDo: (:vars m) are not yet processed.
 (defrewrite :JaEnforceDef [m]
   (binding [*in-enforce?* true]
-    (let [result `(~'fn [~'binding-set]
+    (let [result `(~'fn [~'binding-set ~@(-> m :params rewrite)]
                    ~(-> m :body rewrite))]
       (str "result =" result)
       result)))

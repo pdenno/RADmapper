@@ -194,38 +194,25 @@ query($type){[?class :rdf/type            $type]
              [?class :resource/namespace  ?class-ns]
              [?class :resource/name       ?class-name]}")
 
-(def owl-e1 "an expression used in testing below"
-"enforce(){  {'instance-of'  : 'insert-row',
-              'table'        : 'ObjectDefinition',
-              'content'      : [{'resourceIRI'       : ?class-iri},
-                                {'resourceNamespace' : ?class-ns},
-                                {'resourceLabel'     : ?class-label}]}
-              }")
-
-
 (def owl-full-example "The whole thing looks like this:"
 "
-  $MCnewContext()
-  ~>
-      $MCaddSource($readFile('data/testing/owl-example.edn'))
-  ~>
-      query()
-        { [?class :rdf/type            'owl/Class']
-          [?class :resource/iri        ?class-iri]
-          [?class :resource/namespace  ?class-ns]
-          [?class :resource/name       ?class-name]
-         }
-  ~>
-      enforce()
-        {  {'instance-of'  : 'insert-row',
-            'table'        : 'ObjectDefinition',
-            'content'      : [{'resourceIRI'       : ?class-iri},
-                              {'resourceNamespace' : ?class-ns},
-                              {'resourceLabel'     : ?class-label}]}
-        }")
-
-(deftest owl-example-parse
-  (testing "Test parsing the owl example in the spec"))
+  (    $$$ := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
+       $$$ ~>
+            query() // ToDo: First arg is ignored variable '_'?
+                { [?class :rdf/type            'owl/Class']
+                  [?class :resource/iri        ?class-iri]
+                  [?class :resource/namespace  ?class-ns]
+                  [?class :resource/name       ?class-name]
+                }  // Returns a collection of binding sets.
+       ~>
+            enforce($$$)
+                {  {'instance-of'  : 'insert-row',
+                    'table'        : 'ObjectDefinition',
+                    'content'      : [{'resourceIRI'       : ?class-iri},
+                                      {'resourceNamespace' : ?class-ns},
+                                      {'resourceLabel'     : ?class-label}]}
+                }
+   )")
 
 (deftest owl-example-rewrite
   (testing "Test rewriting the OWL example in the spec."
@@ -238,32 +225,34 @@ query($type){[?class :rdf/type            $type]
            (rew/rewrite* :ptag/exp owl-q1 :rewrite? true)))
 
     ;; This is a test of rewriting an enforce.
-    (is (=
-         '(fn
-            [binding-set]
-            (->
-             {}
-             (assoc "instance-of" "insert-row")
-             (assoc "table" "ObjectDefinition")
-             (assoc
-              "content"
-              [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
-               (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
-               (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))
-         (rew/rewrite* :ptag/exp owl-e1 :rewrite? true)))
+    (is (= '(fn [binding-set bi/$$$]
+              (->  {}
+                   (assoc "instance-of" "insert-row")
+                   (assoc "table" "ObjectDefinition")
+                   (assoc
+                    "content"
+                    [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
+                     (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+                     (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))
+           (rew/rewrite* :ptag/enforce-def
+                         "enforce($$$)
+                           {  {'instance-of'  : 'insert-row',
+                               'table'        : 'ObjectDefinition',
+                               'content'      : [{'resourceIRI'       : ?class-iri},
+                                                 {'resourceNamespace' : ?class-ns},
+                                                 {'resourceLabel'     : ?class-label}]}
+                           }"
+                         :rewrite? true)))
 
     ;; This is an example of rewriting the whole example.
     (is (= (rew/rewrite* :ptag/code-block owl-full-example :rewrite? true)
-           '(let []
+           '(let [bi/$$$ (bi/thread (bi/$MCnewContext) (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn")))]
               (bi/thread
-                (bi/thread
-                  (bi/thread (bi/$MCnewContext) (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn")))
-                  (bi/query [] [[?class :rdf/type "owl/Class"]
-                                [?class :resource/iri ?class-iri]
-                                [?class :resource/namespace ?class-ns]
-                                [?class :resource/name ?class-name]]))
-                (fn
-                  [binding-set]
+                (bi/thread bi/$$$ (bi/query [] [[?class :rdf/type "owl/Class"]
+                                                [?class :resource/iri ?class-iri]
+                                                [?class :resource/namespace ?class-ns]
+                                                [?class :resource/name ?class-name]]))
+                (fn [binding-set bi/$$$]
                   (->
                    {}
                    (assoc "instance-of" "insert-row")
