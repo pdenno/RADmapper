@@ -80,7 +80,8 @@
         :else obj))
 
 (defn db-for!
-  "Create a database for the argument data and return a connection to it."
+  "Create a database for the argument data and return a connection to it.
+   Called by builtins for query and enforce, for example."
   [data & {:keys [db-name] :or {db-name "temp"}}]
   (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}
         data (-> (if (vector? data) data (vector data)) clj-like)]
@@ -90,3 +91,13 @@
       (d/transact conn-atm (learn-schema-walking data))
       (d/transact conn-atm data)
       @conn-atm)))
+
+;;; ToDo: Another idea for this is to return the MC with :using-source set to a DB connection.
+;;;       Thus far, this is only called by query.
+(defn select-source-data
+  "Return a connection to a source DB, as specified by the arguments."
+  [mapping-context & [name]]
+  (let [srcs (:sources mapping-context)]
+    (cond (== 1 (count srcs)) (-> srcs vals first),
+          (and name (contains? srcs name)) (get srcs name),
+          :else (throw (ex-info "The modeling context does not contain the source:" {:name name})))))

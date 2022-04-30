@@ -79,8 +79,9 @@
     (is (= [{:ent 3, :attr :person/lname, :val "Dee"} {:ent 3, :attr :person/fname, :val "Peter"}]
            (rew/rewrite* :ptag/code-block
                          "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
+                            $mc := $MCnewContext() ~> $MCaddSource($data);
                             $q := query(){[?ent ?attr ?val]};
-                            $q($data))"
+                            $q($mc))"
                          :execute? true)))
 
     ;; 'in-line' or 'anonymous' query works
@@ -89,18 +90,27 @@
                          "query(){[?ent ?attr ?val]}[{'person/fname' : 'Peter', 'person/lname' : 'Dee'}]"
                          :execute? true)))
 
-    ;; Here is a complete DB!
+    ;; This test the content of a complete DB, including the schema learned.
     (is (= [#:db{:id 1, :cardinality :db.cardinality/one, :ident :person/fname, :valueType :db.type/string}
             #:db{:id 2, :cardinality :db.cardinality/one, :ident :person/lname, :valueType :db.type/string}
             {:db/id 3, :person/fname "Bob", :person/lname "Clark"}]
-           (rew/rewrite* :ptag/exp "$DBfor({'person/fname' : 'Bob', 'person/lname' : 'Clark'})" :execute? true)))
+           (let [conn (qu/db-for! {:person/fname "Bob" :person/lname "Clark"})]
+             (dp/pull-many conn '[*] (range 1 (-> conn :max-eid inc))))))
+
+    ;; This test execution of query using 'immediate-use syntax' (like function($x){$x+1}(3) ==> 4) but for query.
+    ;; Query is currently a little odd because you define it for n parameters,
+    ;; but call it with n+1, where the first parameter is data. Should we care?
+    (is (= [{:e 2}]
+           (rew/rewrite* :ptag/code-block
+                         "($data := $MCnewContext() ~> $MCaddSource([{'name' : 'Bob'}]);
+                           query($name){[?e :name $name]}($data, 'Bob') )" :execute? true)))
 
     ;; ToDo: Isn't this suppose to return a vector?
     ;; (d/q '[:find ?f :keys f :where [_ :foo ?f]] (qu/db-for! [{:foo 1} {:foo 2}])) ==> [{:f 2} {:f 1}]
     (is (=  [{:person 3, :fname "Bob", :lname "Clark"}]
             (rew/rewrite*
              :ptag/code-block
-             "( $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
+             "( $data := $MCnewContext() ~> $MCaddSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
                 $q := query(){[?person :person/fname ?fname]
                               [?person :person/lname ?lname]};
                 $q($data) )"
@@ -113,9 +123,10 @@
            (rew/rewrite* :ptag/code-block
                          "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
                                       {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
+                            $mc := $MCnewContext() ~> $MCaddSource($data);
                             $q := query(){[?person :Person/firstname ?fname]
                                           [?person :Person/lastname  ?lname]};
-                            $q($data) )"
+                            $q($mc) )"
                          :execute? true)))
 
     #_(is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
@@ -131,9 +142,9 @@
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
            (->> (rew/rewrite* :ptag/code-block ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
-                              "( $data := $readFile('data/testing/dolce-2.edn');
+                              "( $data := $MCnewContext() ~> $MCaddSource($readFile('data/testing/dolce-2.edn'));
                                  $q := query(){[?class :rdf/type     'owl/Class']
-                                              [?class :resource/iri  ?class-iri]};
+                                               [?class :resource/iri  ?class-iri]};
                                  $q($data) )"
                               :execute? true)
                 (map :class-iri)
@@ -185,37 +196,36 @@ query($type){[?class :rdf/type            $type]
 
 (def owl-e1 "an expression used in testing below"
 "enforce(){  {'instance-of'  : 'insert-row',
-                   'table'        : 'ObjectDefinition',
-                   'content'      : [{'resourceIRI'       : ?class-iri},
-                                     {'resourceNamespace' : ?class-ns},
-                                     {'resourceLabel'     : ?class-label}]}
+              'table'        : 'ObjectDefinition',
+              'content'      : [{'resourceIRI'       : ?class-iri},
+                                {'resourceNamespace' : ?class-ns},
+                                {'resourceLabel'     : ?class-label}]}
               }")
+
 
 (def owl-full-example "The whole thing looks like this:"
 "
-( $data   := $readFile('data/testing/owl-example.edn');
-  $bsets  := query()
-                { [?class :rdf/type            'owl/Class']
-                  [?class :resource/iri        ?class-iri]
-                  [?class :resource/namespace  ?class-ns]
-                  [?class :resource/name       ?class-name]
-                };
-  $target := [];
-  $enfor  := enforce($target)
-               {  {'instance-of'  : 'insert-row',
-                   'table'        : 'ObjectDefinition',
-                   'content'      : [{'resourceIRI'       : ?class-iri},
-                                     {'resourceNamespace' : ?class-ns},
-                                     {'resourceLabel'     : ?class-label}]}
-               };
-
- $reduce($bsets($data), $enfor)
-)")
+  $MCnewContext()
+  ~>
+      $MCaddSource($readFile('data/testing/owl-example.edn'))
+  ~>
+      query()
+        { [?class :rdf/type            'owl/Class']
+          [?class :resource/iri        ?class-iri]
+          [?class :resource/namespace  ?class-ns]
+          [?class :resource/name       ?class-name]
+         }
+  ~>
+      enforce()
+        {  {'instance-of'  : 'insert-row',
+            'table'        : 'ObjectDefinition',
+            'content'      : [{'resourceIRI'       : ?class-iri},
+                              {'resourceNamespace' : ?class-ns},
+                              {'resourceLabel'     : ?class-label}]}
+        }")
 
 (deftest owl-example-parse
-  (testing "Test parsing the owl example in the spec"
-    (is (= '(:name :preamble :bound-vars :body)
-           (-> (rew/rewrite* :ptag/code-block owl-full-example :parse? true) keys)))))
+  (testing "Test parsing the owl example in the spec"))
 
 (deftest owl-example-rewrite
   (testing "Test rewriting the OWL example in the spec."
@@ -244,32 +254,34 @@ query($type){[?class :rdf/type            $type]
 
     ;; This is an example of rewriting the whole example.
     (is (= (rew/rewrite* :ptag/code-block owl-full-example :rewrite? true)
-           '(let [$data (bi/$readFile "data/testing/owl-example.edn")
-                  $bsets  (bi/query [] [[?class :rdf/type "owl/Class"]
-                                        [?class :resource/iri ?class-iri]
-                                        [?class :resource/namespace ?class-ns]
-                                        [?class :resource/name ?class-name]])
-                  $target []
-                  $enfor (fn [binding-set]
-                           (-> {}
-                               (assoc "instance-of" "insert-row")
-                               (assoc "table" "ObjectDefinition")
-                               (assoc
-                                "content"
-                                [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
-                                 (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
-                                 (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))]
-              (bi/$reduce ($bsets $data) $enfor))))))
+           '(let []
+              (bi/thread
+                (bi/thread
+                  (bi/thread (bi/$MCnewContext) (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn")))
+                  (bi/query [] [[?class :rdf/type "owl/Class"]
+                                [?class :resource/iri ?class-iri]
+                                [?class :resource/namespace ?class-ns]
+                                [?class :resource/name ?class-name]]))
+                (fn
+                  [binding-set]
+                  (->
+                   {}
+                   (assoc "instance-of" "insert-row")
+                   (assoc "table" "ObjectDefinition")
+                   (assoc
+                    "content"
+                    [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
+                     (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+                     (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))))))))
 
 (def owl-q2
 "
-( $data := $readFile('data/testing/owl-example.edn');
+( $data := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
   $q := query($type){[?class :rdf/type            $type]
                      [?class :resource/iri        ?class-iri]
                      [?class :resource/namespace  ?class-ns]
                      [?class :resource/name       ?class-name]};
   $q($data,'owl/Class') )")
-
 
 (deftest owl-example-executes
   (testing "Testing execution of $query and enforce."
@@ -278,13 +290,22 @@ query($type){[?class :rdf/type            $type]
     ;; The call to the function currently has the data first and the values of parameters after that.
     ;; substituted for these after it. ToDo: I'd like the data last.
     ;; N.B. Here I'm running the function on a very small DB!
-    (is (= [{:e 2}] ((bi/query []      [[?e :name "Bob"]]) {:name "Bob"})))
-    (is (= [{:e 2}] ((bi/query [$name] [[?e :name $name]]) {:name "Bob"} "Bob")))
-    (is (= []       ((bi/query [$name] [[?e :name $name]]) {:name "Bob"} "xxx")))
+    (let [data (-> (bi/$MCnewContext) (bi/$MCaddSource [{:name "Bob"}]))]
+      (is (= [{:e 2}] ((bi/query []       [[?e :name "Bob"]]) data)))
+      (is (= [{:e 2}] ((bi/query [$name]  [[?e :name $name]]) data "Bob")))
+      (is (= []       ((bi/query [$name]  [[?e :name $name]]) data "xxx"))))
+
+    ;; This tests making a new data source. I just check the type because the actual DB can't be tested for equality.
+    (is (= datahike.db.DB
+         (-> (rew/rewrite* :ptag/exp "$MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'))" :execute? true)
+             :sources
+             (get "source-data-1")
+             type)))
 
     ;; This is a test of executing the above $query expression against data from the example in the spec.
     (is (= [{:class 12, :class-iri "dol/endurant", :class-ns "dol", :class-name "endurant"}]
            (rew/rewrite* :ptag/code-block owl-q2 :execute? true)))
+
 
     ;; This is a test of execute $map($query,enforce) against data from the example in the spec.
     #_(is (not= :todo ;<==================================================================================== ToDo
@@ -295,6 +316,7 @@ query($type){[?class :rdf/type            $type]
                          owl-q1 owl-e1))
             :execute? true)))))
 
+;;;================================================================================================================
 ;;; "owl-db-tools is used in only development (See deps.edn.)  It is here mostly to ensure it has needed functionality."
 (deftest use-of-owl-db-tools-query
   (testing "owl-db-tools/pull-resource"

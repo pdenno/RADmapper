@@ -62,27 +62,29 @@
                    "$each" bi/$each, "$keys" bi/$keys, "$spread" bi/$spread})
 (def datetime-fns '{"$fromMillis" bi/$fromMillis, "$millis" bi/$millis, "$now" bi/$now, "$toMillis" bi/$toMillis})
 (def higher-fns   '{"$filter" bi/$filter, "$map" bi/$map, "$reduce" bi/$reduce, "$sift" bi/$sift, "$single" bi/$single})
-(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet "$DBfor" bi/$DBfor})
+(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet})
+(def mc-fns       '{"$MCaddSchema" bi/$MCaddSchema, "$MCaddSource" bi/$MCaddSource, "$MCaddTarget" bi/$MCaddTarget, "$MCnewContext" $MCnewContext})
 
-(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns extended-fns))
+(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns extended-fns mc-fns))
 (def builtin-un-op #{\+, \- :not})
 
 (def keywords (set/union keywords-basic (-> builtin-fns vals set))) ; ToDo necessary? Why not just let it be = keywords-basic?
 (def builtin-type #{:int :string})
 
+;;; Binary operators.
 (def numeric-operators '{\% bi/%, \* bi/*, \+ bi/+, \- bi/-, \/ bi//}) ; :range is not one of these.
 (def comparison-operators '{:<= <=, :>= >=, :!= not=, \< <, \= =, \> >, "in" bi/in})
 (def boolean-operators '{:and and :or or})
 (def string-operators '{\& bi/&})
-(def path-operator '{\. bi/access})
+(def other-operators '{\. bi/access, "~>" bi/thread})
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
-(def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators path-operator))
+(def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
 (def ^:private syntactic ; chars that are valid tokens in themselves.
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \?})
 
 (def ^:private long-syntactic ; chars that COULD start a multi-character syntactic elements.
-  #{\<, \>, \=, \., \:, \/, \', \?}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
+  #{\<, \>, \=, \., \:, \/, \', \?, \~}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
 (defrecord JaVar [var-name bound?])
 (defrecord JaQueryVar [qvar-name])
@@ -173,7 +175,8 @@
                             (and (= c0 \>) (= c1 \=)) {:raw ">=" :tkn :>=}
                             (and (= c0 \=) (= c1 \=)) {:raw "==" :tkn :==}
                             (and (= c0 \.) (= c1 \.)) {:raw ".." :tkn :range}
-                            (and (= c0 \!) (= c1 \=)) {:raw "!=" :tkn :!=})]
+                            (and (= c0 \!) (= c1 \=)) {:raw "!=" :tkn :!=}
+                            (and (= c0 \~) (= c1 \>)) {:raw "~>" :tkn "~>"})]
       (assoc result :ws ws))))
 
 (defn position-break
@@ -189,6 +192,16 @@
           (syntactic c) n
           (#{\space \tab \newline} c) n
           :else (recur (inc n)))))))
+
+(defn var-types
+  "Return :$, :$$, :$$$, or a JaVar."
+  [id]
+  (cond (= id "$") :$
+        (= id "$$") :$$
+        (= id "$$$") :$$$
+        (str/starts-with? id "$$")
+        (throw (ex-info "Invalid variable name" {:id id}))
+        :else (->JaVar id nil)))
 
 (defn whitesp
   "Evaluates to whitespace at head of string or empty string if none."
@@ -217,10 +230,10 @@
            (or
             ;(and (builtin-fns word) {:ws ws :raw word :tkn word})
             (and (keywords word) {:ws ws :raw word :tkn (keyword word)})
-            (when-let [[_ id] (re-matches #"^([\$,a-zA-Z][A-Za-z0-9\_\?]*).*" word)] ; two types of 'identiers': fields, jvars
-              (if (str/starts-with? id "$")
-                {:ws ws :raw id :tkn (->JaVar id nil)}
-                {:ws ws :raw id :tkn (->JaField id)}))))
+            (when-let [[_ id] (re-matches #"^(\${1,3}[a-zA-Z]?[\$A-Za-z0-9\_]*).*" word)] ; jvar, $, $$, $$$.
+              {:ws ws :raw id :tkn (var-types id)})
+            (when-let [[_ id] (re-matches #"^([\$A-Za-z0-9\_]+).*" word)] ; jvar, $, $$, $$$.
+              {:ws ws :raw id :tkn (->JaField id)})))
          (throw (ex-info "Char starts no known token: " {:raw c :line line})))))
 
 (defn tokenize
@@ -425,7 +438,6 @@
          (or (not (contains? (s/registry) tag))
              (s/valid? tag (:result ?pstate))))))
 
-;;;========================= Implementation of Grammar ==========================
 (defn parse-list
   "Does parse parametrically for <open-char> [ <item> <char-sep>... ] <close-char>"
   ([pstate char-open char-close char-sep]
@@ -499,32 +511,21 @@
 (defparse-auto :ptag/builtin-op builtin-op)
 (defparse-auto :ptag/builtin-fn builtin-fns)
 
-(defn jvar? [x] (instance? JaVar x))
+(defn jvar? [x] (or (instance? JaVar x) (#{:$ :$$ :$$$} x)))
 (defn qvar? [x] (instance? JaQueryVar x))
 (defn triple-role? [x] (instance? JaTripleRole x))
 (defn field? [x] (instance? JaField x))
 
 ;;;=============================== Grammar ===============================
 (s/def ::CodeBlock (s/keys :req-un [::body]))
-;;; <code-block> ::= ( 'transform' <var> '{' <preamble> '}' )? ( '('  <global-params>* <obj>* ')' | <obj>* )
-(defrecord JaCodeBlock [name preamble bound-vars body])
+;;; <code-block> ::= '('  <global-params>* <obj>* ')' | <obj>* )
+(defrecord JaCodeBlock [bound-vars body])
 (defparse :ptag/code-block
   [pstate]
   (let [has-bindings? (atom nil)] ; <exp> wrapped in parentheses could just be a primary.
     (as-> pstate ?ps
-      (if (= :transform (:tkn ?ps))
-        (as-> ?ps ?ps1
-          (eat-token ?ps1 :transform)
-          (parse :ptag/var ?ps1)
-          (store ?ps1 :trans-name)
-          (eat-token ?ps1 \{)
-          (parse :ptag/preamble ?ps1)
-          (store ?ps1 :preamble)
-          (eat-token ?ps1 \})
-          (eat-token ?ps1 \;))
-        ?ps)
       (assoc-in ?ps [:local 0 :bound-vars] [])
-      (if (= \( (:tkn ?ps)) ; "let body" or primary
+      (if (= \( (:tkn ?ps)) ; "let body"
         (let [whole-tvec (token-vec ?ps)]
           (if-let [balance-pos (find-balanced-pos whole-tvec \))]
             (let [tvec (subvec whole-tvec 0 (inc balance-pos))]
@@ -544,9 +545,7 @@
       (parse :ptag/exp ?ps)
       (store ?ps :body)
       (if @has-bindings? (eat-token ?ps \)) ?ps)
-      (assoc ?ps :result (->JaCodeBlock (recall ?ps :trans-name)
-                                        (recall ?ps :preamble)
-                                        (recall ?ps :bound-vars)
+      (assoc ?ps :result (->JaCodeBlock (recall ?ps :bound-vars)
                                         (recall ?ps :body))))))
 
 ;;; id-type-pair ::= <jvar> ':=' <exp> ';'
@@ -707,42 +706,46 @@
   (-> next-tkns first binary-op?))
 
 ;;; ToDo: Rethink use of in-binary?
-;;; <exp> ::=  ( <delimited-exp> | <binary-exp> | (<builtin-un-op> <exp>) | <fn-call> | <literal> | <field> | <jvar> | <qvar>) ( '?' <conditional-tail> | <exp> )?
+;;; <exp> ::=  <base-exp> ( '?' <conditional-tail> | <exp> )?
 (defrecord JaBinOpExp [exp1 bin-op exp2])
 (defparse :ptag/exp
   [ps & {:keys [in-binary?]}]
-  (let [tkn   (:tkn ps)
-        tkn2  (look ps 1)
-        operand-look (operand-exp? ps)
-        base-ps (cond (and (not in-binary?) (#{\{ \[ \(} tkn)) (parse :ptag/delimited-exp ps),
-                      (delimited-next? operand-look)                              ; <delimited-exp>
-                      (parse :ptag/delimited-exp ps :operand-info operand-look),
-                      (and (not in-binary?) (binary-next? operand-look))          ; <binary-exp>
-                      (parse :ptag/binary-exp ps :operand-info operand-look),
-                      (builtin-un-op tkn) (parse :ptag/unary-op-exp ps),          ; <unary-op-exp>
-                      (= tkn :function)   (parse :ptag/fn-def ps),                ; <fn-def>
-                      (= tkn :query)      (parse :ptag/query-def ps),             ; <query-def>
-                      (= tkn :enforce)    (parse :ptag/enforce-def ps),           ; <enforce-def>
-                      (and (or (builtin-fns tkn) (jvar? tkn)) (= \( tkn2))        ; <fn-call>
-                      (parse :ptag/fn-call ps),
-                      (or (literal? tkn) (#{\[ \{} tkn))                          ; <literal>
-                      (parse :ptag/literal ps),
-                      (or (jvar? tkn) (qvar? tkn) (field? tkn))                   ; <field>, <jvar>, or <qvar>
-                      (as-> ps ?ps
-                        (assoc ?ps :result tkn)
-                        (eat-token ?ps)),
-                      :else
-                      (throw (ex-info "Expected a unary-op, (, {, [, fn-call, literal, $id, or path element."
-                                      {:got tkn :pstate ps})))]
+  (let [base-ps (parse :ptag/base-exp ps :in-binary? in-binary?)]
     (cond (and (= \? (:tkn base-ps)) (not in-binary?))
-          (parse :ptag/conditional-tail base-ps :predicate (:result base-ps))
-          (and #_(not in-binary?) (-> base-ps :tkn binary-op?)) ; (not in-binary?) is causing early termination.
+          (parse :ptag/conditional-tail base-ps :predicate (:result base-ps)),
+          (-> base-ps :tkn binary-op?) ; (and (not in-binary?)) is causing early termination.
           (as-> base-ps ?ps
             (store ?ps :operator :tkn)
             (eat-token ?ps)
             (parse :ptag/exp ?ps :in-binary? true)
-            (assoc ?ps :result (->JaBinOpExp (:result base-ps) (recall ?ps :operator) (:result ?ps))))
+            (assoc ?ps :result (->JaBinOpExp (:result base-ps) (recall ?ps :operator) (:result ?ps)))),
           :else base-ps)))
+
+;;; <base-exp> ::= <delimited-exp> | <binary-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <field> | <jvar> | <qvar>
+(defparse :ptag/base-exp
+  [ps & {:keys [in-binary?]}]
+  (let [tkn   (:tkn ps)
+        tkn2  (look ps 1)
+        operand-look (operand-exp? ps)]
+    (cond (and (not in-binary?) (#{\{ \[ \(} tkn)) (parse :ptag/delimited-exp ps),
+          (delimited-next? operand-look)                              ; <delimited-exp>
+          (parse :ptag/delimited-exp ps :operand-info operand-look),
+          (and (not in-binary?) (binary-next? operand-look))          ; <binary-exp>
+          (parse :ptag/binary-exp ps :operand-info operand-look),
+          (builtin-un-op tkn) (parse :ptag/unary-op-exp ps),          ; <unary-op-exp>
+          (#{:function :query :enforce} tkn)                          ; <construct-def>
+          (parse :ptag/construct-def ps)
+          (and (or (builtin-fns tkn) (jvar? tkn)) (= \( tkn2))        ; <fn-call>
+          (parse :ptag/fn-call ps),
+          (or (literal? tkn) (#{\[ \{} tkn))                          ; <literal>
+          (parse :ptag/literal ps),
+          (or (jvar? tkn) (qvar? tkn) (field? tkn))                   ; <field>, <jvar>, or <qvar>
+          (as-> ps ?ps
+            (assoc ?ps :result tkn)
+            (eat-token ?ps)),
+          :else
+          (throw (ex-info "Expected a unary-op, (, {, [, fn-call, literal, $id, ?id, or path element."
+                          {:got tkn :pstate ps})))))
 
 ;;; <binary-exp>  ::= <operand-exp> <binary-op> <exp>
 ;;; <operand-exp> ::= <field> | <var> | literal | <fn-call> | <delimited-exp> | <unary-op-exp>
@@ -996,3 +999,23 @@
     (store ?ps :body)
     (eat-token ?ps \})
     (assoc ?ps :result (->JaEnforceDef (recall ?ps :params) (recall ?ps :body)))))
+
+(defrecord JaImmediateUse [def args])
+;;; <construct-def> ::= ( <fn-def> | <query-def> | <enforce-def> )( '(' <exp>* ')' )?
+(defparse :ptag/construct-def
+  [ps]
+  (let [ps (case (:tkn ps)
+             :function  (parse :ptag/fn-def ps),         ; <fn-def>
+             :query     (parse :ptag/query-def ps),      ; <query-def>
+             :enforce   (parse :ptag/enforce-def ps))]   ; <enforce-def>
+    (if (and (= \( (:tkn ps)) (#{JaFnDef JaQueryDef} (-> ps :result type)))
+      ;; This part to wrap it in a JaImmediateuse
+      (as-> ps ?ps
+        (store ?ps :def)
+        (eat-token ?ps)
+        (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/exp)
+        (store ?ps :args)
+        (eat-token ?ps \))
+        (assoc ?ps :result (->JaImmediateUse (recall ?ps :def) (recall ?ps :args))))
+      ;; This if it is just a definition (which will be assigned to a $id).
+      ps)))

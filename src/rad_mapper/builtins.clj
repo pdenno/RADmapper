@@ -9,8 +9,8 @@
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
    [datahike.pull-api            :as dp]
-   [rad-mapper.query      :as qu]
-   [rad-mapper.util       :as util]
+   [rad-mapper.query             :as qu]
+   [rad-mapper.util              :as util]
    [clojure.string               :as str]))
 
 ;;; ToDo:
@@ -35,6 +35,7 @@
 
 (def $ "The JSONata context variable." (atom nil))
 (def $$ "The JSONata root variable." (atom nil))
+(def $$$ "The RADmapper mapping concept object." (atom nil))
 
 ;;; ToDo: No provisions for parameter destructuring. Okay?
 ;;; ToDo: This jumps through some hoops to avoid ns-qualified params. Is there another way?
@@ -133,13 +134,15 @@
   [obj prop]
   ;; Could be a vector of content but also could be a vector of vectors of content.
   ;; The latter because of JSONata's implicit 'map over' semantics. Don't go deeper.
-  (let [res (cond (fn? prop) (prop obj) ; $query is like this.
+  (let [res (cond (fn? prop) (prop obj) ; query is like this.
                   (and (vector? obj) (every? map? obj)) (mapv #(get % prop) (filter #(contains? % prop) obj)),
                   (map? obj) (get obj prop),
                   :else (throw (ex-info "Expected a map or vector of maps" {:got obj})))]
     (jsonata-flatten res)))
 
 (defn* access "JSONata . operator" [obj_ prop] (access-internal obj_ prop))
+
+(defmacro thread [x y] `(-> ~x ~y))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------
@@ -408,6 +411,8 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
 
+;;;------------------------- Mapping Context, query, enforce ------------------------
+
 ;;; Thoughts on schema""
 ;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
 ;;;   - One needs to to specify schema on $transform, even if it is {}
@@ -436,7 +441,6 @@
       :keys ~@(->> vars (map #(subs (str %) 1)) (map symbol))
       :where ~@(tp-aux body)])))
 
-(def diag (atom nil))
 ;;; (macroexpand-1 '(bi/query [$name], [[?e :name $name]]})
 ;;; ((bi/query [$name] [[?e :name $name]]} [{"name" "Bob"}] "Bob")
 
@@ -447,18 +451,20 @@
   'params' is an ordered vector parameters (jvars) that will be matched to 'args' used
    to parameterized the query form, thus producing a 'customized' query function.
 
-   Example usage: 
+   Example usage:
 
-   ( $queryCellByName := query($name)([?e 'name' $name]
-                                      [?e 'phoneNumberObjs' ?pn]
-                                      [?pn 'cell' ?cellNum])
-     $queryCellByName($data,'Bob') )."
+  ( $data := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
+    $q := query($type){[?class :rdf/type            $type]
+                       [?class :resource/iri        ?class-iri]
+                       [?class :resource/namespace  ?class-ns]
+                       [?class :resource/name       ?class-name]};
+    $q($data,'owl/Class') )"
   [params body]
-  `(fn [data# & args#]
-     (let [conn# (qu/db-for! data#)
+  `(fn [mc# & args#]
+     (let [conn# (qu/select-source-data mc#)
            ;; I can't find a way to code a syntax quote, so I'm doing substitutions at run time.
            param-subs# (zipmap '~params args#)]
-       (->> (d/q (reset! diag (qform-runtime-sub '~body param-subs#)) conn#)
+       (->> (d/q (qform-runtime-sub '~body param-subs#) conn#)
             ;; Remove binding sets that involve a schema entity.
             (remove (fn [bset#] (some (fn [bval#]
                                         (and (keyword? bval#)
@@ -466,53 +472,71 @@
                                       (vals bset#))))
             vec))))
 
-#_(defmacro query
-  "Evaluates to a function that takes data and returns binding sets.
-   The arg-map here is a map keyed by jvars that is used to parameterized the query form,
-   thus producing a 'customized' function for the query." 
-  [qform param-map]
-  `(fn [data#]
-     (let [conn# (qu/db-for! data#)]
-       ;; I can't find a way to code a syntax quote, so I'm with a function call.
-       (->> (d/q (qform-runtime-sub '~qform '~param-map) conn#)
-            ;; Remove binding sets that involve a schema entity.
-            (remove (fn [bset#] (some (fn [bval#]
-                                        (and (keyword? bval#)
-                                             (= "db" (namespace bval#))))
-                                      (vals bset#))))
-            vec))))
+;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
+(defn update-db
+  "DB is a DH database. Create a new one based on the existing one's content and the new data.
+   This entails updating the schema."
+  [db data]
+  (d/transact db data))
 
-#_(defmacro query
-  "Evaluates to a function that takes data and parameter values and returns binding sets.
-   The arg-map here is a map keyed by jvars that is used to parameterized the query form,
-   thus producing a 'customized' function for the query." 
-  [qform]
-  `(fn [data# arg-map#]
-     (let [conn# (qu/db-for! data#)]
-       ;; I can't find a way to code a syntax quote, so I'm with a function call.
-       (->> (d/q (qform-runtime-sub '~qform arg-map#) conn#)
-            ;; Remove binding sets that involve a schema entity.
-            (remove (fn [bset#] (some (fn [bval#]
-                                        (and (keyword? bval#)
-                                             (= "db" (namespace bval#))))
-                                      (vals bset#))))
-            vec))))
-
-(defn* $DBfor
-  "Serialize the triples DB for the given data."
-  [data_]
-  (let [conn (qu/db-for! data_)]
-    (dp/pull-many conn '[*] (range 1 (-> conn :max-eid inc)))))
-
-(defn get-from-bs [bs k]
+(defn get-from-bs
+  "Given a binding-set and ?query-var (key), return the map's value at that index."
+  [bs k]
   (when-not (contains? bs k)
     (throw (ex-info "Argument binding set does not contain the key provided"
                     {:binding-set bs :key k})))
   (get bs k))
 
-;;; - It returns a function usable by $reduce.
 ;;; - Binding the variables of the binding set is the work of the function; it can't be done by the macro.
-;;; - The problem I'm having is in avoiding eval. (Maybe live with it, banking on SCI working.)
-;;;   For example, I don't think letfn and then running it will work.
 (defn enforce [&keys [config body]]
-  `(destructure-bset '~body))
+  (:nyi))
+
+(defrecord ModelingContext [schema sources targets])
+(defn $MCnewContext
+  "Create a new modeling context object."
+  []
+  (map->ModelingContext {:schema {} :sources {} :targets {}}))
+
+(defn $MCaddSource
+  "Add source data to the argument modeling context.
+   If no name is provided for the source, a new one is created.
+   Default names follow in the series 'source-data-1', 'source-data-2'...
+   If the source already exists, the data is added, possibly updating the schema."
+  ([mc data] ($MCaddSource mc data (str "source-data-" (-> mc :sources count inc))))
+  ([mc data src-name]
+   (if (-> mc :sources (contains? src-name))
+     (update-in mc [:sources src-name] #(update-db % data))
+     (assoc-in  mc [:sources src-name] (qu/db-for! data)))))
+
+#_(defn $MCaddSource
+  "Add source data to the argument modeling context.
+   If no name is provided for the source, a new one is created.
+   Default names follow in the series 'data-source-1', 'data-source-2'...
+   If the source already exists, the data is added, possibly updating the schema."
+  ([mc data] ($MCaddSource mc data (->> mc :sources keys (util/default-name "data-source-"))))
+  ([mc data src-name]
+   (if (-> mc :sources (contains? src-name))
+     (update-in mc [:sources src-name] #(update-db % data))
+     (assoc-in  mc [:sources src-name] (qu/db-for! data)))))
+
+;;; ToDo: Currently this just does what $MDaddSource does.
+(defn $MCaddTarget
+  "Add target data to the argument modeling context.
+   This is used, for example, for in-place updating.
+   If no name is provided for the target, a new one is created.
+   Default names used when not provided follow in the series 'target-data-1', 'target-data-2'...
+   If the target already exists, the data is added, possibly updating the schema."
+  ([mc data] ($MCaddTarget mc data (->> mc :targets keys (util/default-name "data-targets-"))))
+  ([mc data src-name]
+   (if (-> mc :targets (contains? src-name))
+     (update-in mc [:targets src-name] #(update-db % data))
+     (assoc-in  mc [:targets src-name] (qu/db-for! data)))))
+
+(defn $MCaddSchema
+  "Add knowledge of schema to an existing DB.
+   This can be a computational expensive operation when the DB is large."
+  [mc schema-data db-name]
+  (let [type (cond (-> mc :sources (contains? db-name)) :sources
+                   (-> mc :targets (contains? db-name)) :targets
+                   :else (throw (ex-info "No such database:" {:db-name db-name})))]
+       (update-in mc [type db-name] #(update-db % schema-data))))

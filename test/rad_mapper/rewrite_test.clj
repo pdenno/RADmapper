@@ -51,6 +51,11 @@
       (is (= '(bi/$sum (bi/access $v "field"))                    (rew/rewrite* :ptag/exp "$sum($v.field)" :rewrite? true)))
       (is (= '(bi/$sum (bi/access (bi/access "a") "b"))           (rew/rewrite* :ptag/exp "$sum(a.b)" :rewrite? true)))
       (is (= '(bi/* (bi/access "A") (bi/access "B"))              (rew/rewrite* :ptag/exp "(A * B)" :rewrite? true)))
+      (is (= '(bi/thread 4 ($f))                                  (rew/rewrite* :ptag/exp "4 ~> $f()" :rewrite? true)))
+      (is (= 'bi/$                                                (rew/rewrite* :ptag/exp "$"   :rewrite? true)))
+      (is (= 'bi/$$                                               (rew/rewrite* :ptag/exp "$$"  :rewrite? true)))
+      (is (= 'bi/$$$                                              (rew/rewrite* :ptag/exp "$$$" :rewrite? true)))
+      (is (= '$foo                                                (rew/rewrite* :ptag/exp "$foo" :rewrite? true)))
 
       ;; Testing the synax reordering of map/filter on paths
       (is (= '(mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q"))) $var)

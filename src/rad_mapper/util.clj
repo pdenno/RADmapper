@@ -20,11 +20,18 @@
        (assoc :min-level [[#{"datahike.*"} :error]
                           [#{"*"} level]]))))
 
-;;; ToDo: Refactor: This stuff belongs in the "messaging plug-in". 
+;;; ToDo: Refactor: This stuff belongs in the "messaging plug-in".
 (defn nspaces
   "Return a string of n spaces."
   [n]
   (reduce (fn [s _] (str s " ")) "" (range n)))
+
+;;;(default-name "data-" ["data-1" "foo-2"]) => "data-2")
+(defn default-name
+  "Return a unique sequenced (-1, -2) name using the base."
+  [base-str used-names]
+  (let [regex (re-pattern (str base-str "\\d+"))]
+    (str base-str (->> (map str used-names) (filter #(re-matches regex %)) count inc))))
 
 (defn explicit-root-ns
   "Return argument x/element-nss map modified so that that the empty-string namespace is 'root' or whatever

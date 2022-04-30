@@ -80,15 +80,18 @@
 
 (defmulti rewrite-meth #'rewrite-dispatch)
 
+(def special-var? {:$ 'bi/$, :$$ 'bi/$$, :$$$ 'bi/$$$})
+
 (defn rewrite [obj & keys]
   (cond (map? obj)                  (rewrite-meth (:_type obj) obj keys)
         (seq? obj)                  (map  rewrite obj)
         (vector? obj)               (mapv rewrite obj)
+        (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords correspond to operators.
+        (special-var? obj)          (special-var? obj)
         (string? obj)               obj
         (number? obj)               obj
         (symbol? obj)               obj
         (nil? obj)                  obj                    ; for optional things like (-> m :where rewrite)
-        (par/binary-op?  obj)       (par/binary-op?  obj)  ; Certain keywords corespond to operators.
         (= java.util.regex.Pattern (type obj)) obj
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
@@ -204,8 +207,10 @@
     `(~'-> (~'fn ~(mapv rewrite (:vars m)) ~body)
       (~'with-meta {:params '~vars :body '~body}))))
 
-
 (defrewrite :JaTripleRole [m] (:role-name m))
+
+(defrewrite :JaImmediateUse [m]
+  `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
 ;;;---------------------------- Binary ops, precedence ordering, and paths --------------------------------------------------
 ;;; This one produces a :BFLAT structure.
@@ -375,6 +380,7 @@
    \=           {:assoc :none :val 800}
    :!=          {:assoc :none :val 800}
    :in          {:assoc :none :val 700}
+   "~>"         {:assoc :left :val 700} ; ToDo guessing
    \&           {:assoc :left :val 400} ; ToDo guessing
    \+           {:assoc :left :val 400}
    \-           {:assoc :left :val 400}
@@ -457,6 +463,8 @@
                       []
                       (range (count args))))))
 
+(def diag (atom nil))
+
 (defn rewrite-bvec-as-sexp
   "Process the :bvec of BVEC to a sexps conforming to
     (1) precedence rules (which are only a concern in languages that have C-language-like syntax).
@@ -464,6 +472,7 @@
   The result can have embedded un-rewritten stuff in it. Will hit that with be rewritten later."
   [bvec]
   (let [info (bvec2info bvec)]
+    (reset! diag {:info info})
     (s/assert ::info info)
     (as-> info ?info
       (reduce (fn [info pval]

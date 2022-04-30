@@ -6,10 +6,20 @@
 
 (deftest expr-evaluations true
   (testing "evaluation of small expressions"
+
+    ;; This tests use of $match
     (is (= {"match" "foo", "index" 2, "groups" []}
            (rew/rewrite* :ptag/exp "$match(\"bbfoovar\", /foo/)" :execute? true)))
+
+    ;; This tests use of $match
     (is (= {"match" "xababy", "index" 6, "groups" ["ab"]}
-           (rew/rewrite* :ptag/exp "$match(\"foobarxababy\",/\\d*x(ab)+y/)" :execute? true)))))
+           (rew/rewrite* :ptag/exp "$match(\"foobarxababy\",/\\d*x(ab)+y/)" :execute? true)))
+
+    ;; This tests 'immediate use' of a function
+    (is (= 4 (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :execute? true)))
+
+    ;; This is a test of another sort of immediate use, using the threading macro.
+    (is (= 5 (rew/rewrite* :ptag/exp "4 ~> function($x){$x+1}()" :execute? true)))))
 
 (deftest code-block-evaluations true
   (testing "evaluation of code bodies"

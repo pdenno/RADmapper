@@ -34,7 +34,7 @@
              :exp1 {:field-name "b", :_type :JaField}, :bin-op \., :exp2 {:_type :JaBinOpExp,
               :exp1 {:field-name "c", :_type :JaField}, :bin-op \., :exp2 {:_type :JaBinOpExp,
                :exp1 {:field-name "d", :_type :JaField}, :bin-op \., :exp2 {:field-name "e", :_type :JaField}}}}}
-             (rew/rewrite* :ptag/exp "a.b.c.d.e" :simplify? true)))))
+           (rew/rewrite* :ptag/exp "a.b.c.d.e" :simplify? true)))))
 
 (def q1
 "query(){[?class :rdf/type            'owl/Class']
@@ -71,3 +71,33 @@
               :rel {:_type :JaTripleRole, :role-name :resource/iri},
               :val-exp {:_type :JaQueryVar, :qvar-name "?class-iri"}}]}
            (rew/rewrite* :ptag/exp q1 :simplify? true)))))
+
+(deftest immediate-use
+  (testing "Testing expressions that start by defining an in-line, anonymous function or query."
+
+    ;; This tests parsing function as an immediate-use expression.
+    (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :simplify? true)
+    (is (= {:_type :JaImmediateUse,
+            :def {:_type :JaFnDef,
+                  :vars [{:_type :JaVar, :var-name "$x"}],
+                  :body {:_type :JaBinOpExp,
+                         :exp1 {:_type :JaVar, :var-name "$x"},
+                         :bin-op \+, :exp2 1}},
+            :args [3]}
+           (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :simplify? true)))
+
+    ;; This tests parsing query as an immediate-use expression.
+    (is (=
+         {:_type :JaImmediateUse,
+          :def
+          {:_type :JaQueryDef,
+           :params [{:_type :JaVar, :var-name "$name"}],
+           :triples [{:_type :JaTriple,
+                      :ent {:_type :JaQueryVar, :qvar-name "?e"},
+                      :rel {:_type :JaTripleRole, :role-name :name},
+                      :val-exp {:_type :JaVar, :var-name "$name"}}]},
+          :args [{:_type :JaSquareDelimitedExp,
+                  :exp [{:_type :JaCurlyDelimitedExp,
+                         :exp [{:_type :JaMapPair, :key "name", :val "Bob"}]}]}
+                 "Bob"]}
+         (rew/rewrite* :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')" :simplify? true)))))
