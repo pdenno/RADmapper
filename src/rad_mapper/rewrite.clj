@@ -87,7 +87,6 @@
         (seq? obj)                  (map  rewrite obj)
         (vector? obj)               (mapv rewrite obj)
         (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords correspond to operators.
-        (special-var? obj)          (special-var? obj)
         (string? obj)               obj
         (number? obj)               obj
         (symbol? obj)               obj
@@ -100,20 +99,17 @@
   `(~'let [~@(reduce (fn [res vdecl] (into res (rewrite vdecl))) [] (:bound-vars m))]
     ~(-> m :body rewrite)))
 
-(defrewrite :JaVarDecl [m]
-  (let [val (-> m :init-val rewrite)
-        jvar (if (special-var? (:var m))
-               (special-var? (:var m))
-               (-> m :var :var-name symbol))]
+(defrewrite :JaJvarDecl [m]
+  (let [val  (-> m :init-val rewrite)
+        jvar (-> m :var      rewrite)]
     (vector jvar (if (= :JaFnDef (:_type val)) (:form val) val))))
 
 (defrewrite :JaField [m] (-> m :field-name))
 
-(defrewrite :JaVar    [m] (-> m :var-name symbol)) ; ToDo Temporary?
-#_(defrewrite :JaVar [m]
-  (if (or (:bound? m) (= \$ (get (:var-name m) 0))) ; ToDo drop the :bound? part???
-    (-> m :var-name symbol)
-    (throw (ex-info "Expected an ID that started with a $." {:arg m}))))
+(defrewrite :JaJvar  [m]
+  (if (:special? m)
+    (->> m :jvar-name (symbol "bi"))
+    (-> m :jvar-name symbol)))
 
 (defn combined-map-translation [m]
   (let [sym (or bi/*test-sym* (gensym "x"))]
@@ -182,7 +178,7 @@
 
 (def ^:dynamic *in-enforce?* false)
 
-(defrewrite :JaQueryVar [m]
+(defrewrite :JaQvar [m]
   (if *in-enforce?*
     `(~'bi/get-from-bs
       ~'binding-set
@@ -204,7 +200,7 @@
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
 ;;; User functions also translate using this, but don't use the metadata.
 (defrewrite :JaFnDef [m]
-  (let [vars (mapv #(-> % :var-name symbol) (:vars m))
+  (let [vars (mapv #(-> % :jvar-name symbol) (:vars m))
         body (-> m :body rewrite)]
     `(~'-> (~'fn ~(mapv rewrite (:vars m)) ~body)
       (~'with-meta {:params '~vars :body '~body}))))
@@ -325,7 +321,7 @@
 ;;; [{:_type :JaField, :field-name "a"} \+ {:_type :JaField, :field-name "b"} \* {:_type :JaFnCall, :fn-name "$f"}]
 ;;;
 ;;; $sum($v.field)
-;;; [{:_type :JaVar :var-name "$v"} \. {:_type :JaField :field-name "field"}]
+;;; [{:_type :JaVar :jvar-name "$v"} \. {:_type :JaField :field-name "field"}]
 ;;;
 ;;; [{:_type :JaField :field-name "a"} \+ {:_type :JaField :field-name "b"} \* {:_type :JaFnCall :fn-name "$f"}]
 (defn connect-bvec-fields

@@ -5,6 +5,11 @@
    [rad-mapper.rewrite  :as rew]
    [clojure.test :refer  [deftest is testing]]))
 
+(deftest parsing-ToDos
+  (testing "Things that don't quite sit right!"
+    ;; See notes about the qvar/conditional expression dilemma.
+    (is true #_(= (try (par/tokenize "?") (catch Exception e_ :fix-me)) :fix-me))))
+
 (deftest tokenizer
   (testing "Testing various tokenizer challenges."
     (is (= [{:tkn "This is a string.", :line 1, :col 1} {:tkn :eof, :line 1, :col 20}]
@@ -53,23 +58,23 @@
 (deftest query-tests
   (testing "Testing that queries parse okay."
     (is (= {:_type :JaTriple,
-            :ent {:_type :JaQueryVar, :qvar-name "?x"},
+            :ent {:_type :JaQvar, :qvar-name "?x"},
             :rel {:_type :JaTripleRole, :role-name :rdf/type},
             :val-exp "owl/Class"}
            (rew/rewrite* :ptag/triple "[?x :rdf/type 'owl/Class']" :simplify? true)))
-    (is (= [{:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?x"},
+    (is (= [{:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?x"},
              :rel {:_type :JaTripleRole, :role-name :a}, :val-exp "one"}
-            {:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?y"},
+            {:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?y"},
              :rel {:_type :JaTripleRole, :role-name :b}, :val-exp "two"}]
            (rew/rewrite* :ptag/triples "[?x :a 'one'] [?y :b 'two']" :simplify? true)))
     (is (= {:_type :JaQueryDef,
             :params [],
             :triples
-            [{:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?class"},
+            [{:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
               :rel {:_type :JaTripleRole, :role-name :rdf/type}, :val-exp "owl/Class"}
-             {:_type :JaTriple, :ent {:_type :JaQueryVar, :qvar-name "?class"},
+             {:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
               :rel {:_type :JaTripleRole, :role-name :resource/iri},
-              :val-exp {:_type :JaQueryVar, :qvar-name "?class-iri"}}]}
+              :val-exp {:_type :JaQvar, :qvar-name "?class-iri"}}]}
            (rew/rewrite* :ptag/exp q1 :simplify? true)))))
 
 (deftest immediate-use
@@ -79,9 +84,9 @@
     (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :simplify? true)
     (is (= {:_type :JaImmediateUse,
             :def {:_type :JaFnDef,
-                  :vars [{:_type :JaVar, :var-name "$x"}],
+                  :vars [{:_type :JaJvar, :jvar-name "$x"}],
                   :body {:_type :JaBinOpExp,
-                         :exp1 {:_type :JaVar, :var-name "$x"},
+                         :exp1 {:_type :JaJvar, :jvar-name "$x"},
                          :bin-op \+, :exp2 1}},
             :args [3]}
            (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :simplify? true)))
@@ -91,11 +96,11 @@
          {:_type :JaImmediateUse,
           :def
           {:_type :JaQueryDef,
-           :params [{:_type :JaVar, :var-name "$name"}],
+           :params [{:_type :JaJvar, :jvar-name "$name"}],
            :triples [{:_type :JaTriple,
-                      :ent {:_type :JaQueryVar, :qvar-name "?e"},
+                      :ent {:_type :JaQvar, :qvar-name "?e"},
                       :rel {:_type :JaTripleRole, :role-name :name},
-                      :val-exp {:_type :JaVar, :var-name "$name"}}]},
+                      :val-exp {:_type :JaJvar, :jvar-name "$name"}}]},
           :args [{:_type :JaSquareDelimitedExp,
                   :exp [{:_type :JaCurlyDelimitedExp,
                          :exp [{:_type :JaMapPair, :key "name", :val "Bob"}]}]}
