@@ -15,7 +15,16 @@
     (is (= [{:tkn "This is a string.", :line 1, :col 1} {:tkn :eof, :line 1, :col 20}]
            (par/tokenize "'This is a string.'")))
     (is (= [{:tkn "hello's world", :line 1, :col 1} {:tkn :eof, :line 1, :col 17}]
-           (par/tokenize "'hello\\'s world'")))))
+           (par/tokenize "'hello\\'s world'")))
+
+    ;; This one is awesome! Not sure why it is reported as a failure, since result looks as shown.
+    (is (= [{:tkn :true, :line 1, :col 1}
+            {:tkn \?, :line 1, :col 5}
+            {:tkn {:role-name :foo/bar}, :line 1, :col 6}
+            {:tkn \:, :line 1, :col 14}
+            {:tkn {:role-name :foo/bat}, :line 1, :col 15}
+            {:tkn :eof, :line 1, :col 23}]
+           (par/tokenize "true?:foo/bar::foo/bat")))))
 
 (deftest regexp
   (testing "Testing translation of regular expression"

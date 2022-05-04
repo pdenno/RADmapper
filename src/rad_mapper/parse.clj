@@ -25,6 +25,8 @@
 ;;;   1) $.( and $.{    See http://docs.jsonata.org/sorting-grouping
 ;;;      Write a function to read in the context so you can use their data in testing,  such as shown:
 ;;;      Account.Order.Product { `Product Name`: $.{"Price": Price, "Qty": Quantity}}
+;;;   2) Write defparse :ptag/exp; it should have a spec naming all expressions.
+;;;      :ptag/code-block can essentially be treated as an expression. (Could even clear $, $$$ between calls.)
 
 (def ^:dynamic *debugging?* false)
 (util/config-log (if *debugging?* :debug :info))
@@ -198,6 +200,7 @@
   (if s (or (nth (re-matches #"(?s)(\s+).*$" s) 1) "") ""))
 
 ;;; https://www.regular-expressions.info/modifiers.html (?s) allows  .* to match all characters including line breaks.
+;;; ToDo: This parser can't parse things like "false?'a':'b'", which JSONata.try has no problem executing that.
 (defn token-from-string
   "Return a map with keys :ws, :raw and :tkn from the front of the argument string."
   [stream line]
@@ -516,7 +519,7 @@
 
 ;;;=============================== Grammar ===============================
 (s/def ::CodeBlock (s/keys :req-un [::body]))
-(defrecord JaCodeBlock [bound-vars body])
+(defrecord JaCodeBlock [body])
 
 ;;; ToDo: The block can have context (in the bi/access sense) as shown on that page "Invoice.(.....)"
 ;;; That means, at least, that <code-block> is an expression, (but then so is (a + b)).
@@ -533,7 +536,7 @@
            exprs []]
       (cond (= (:tkn ps) \))
             (as-> ps ?ps1
-              (assoc ?ps1 :result (->JaCodeBlock (butlast exprs) (last exprs)))
+              (assoc ?ps1 :result (->JaCodeBlock exprs))
               (eat-token ?ps1 \))),
             (= (:tkn ps) :eof)  (throw (ex-info "Runaway code block" {})),
             :else
@@ -810,7 +813,7 @@
 (defparse :ptag/literal
   [ps]
   (let [tkn (:tkn ps)]
-    (cond (literal? tkn) (-> ps (assoc :result tkn) eat-token),
+    (cond (literal? tkn) (-> ps (assoc :result tkn) eat-token), ; :true and :false will be rewritten
           (= tkn \{)     (parse :ptag/obj ps),
           (= tkn \[)     (parse :ptag/square-delimited-exp ps),
           :else (throw (ex-info "expected a literal string, number, 'true', 'false' regex, obj, range, or array."

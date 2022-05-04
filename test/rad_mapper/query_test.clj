@@ -7,7 +7,8 @@
    [owl-db-tools.resolvers :refer [pull-resource]]
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
-   [rad-mapper.rewrite     :as rew]))
+   [rad-mapper.rewrite     :as rew]
+   [rad-mapper.util :as util :refer [dgensym! reset-dgensym!]]))
 
 ;;;====================================================================================== NYI
 (def test-schema
@@ -194,34 +195,66 @@ query($type){[?class :rdf/type            $type]
              [?class :resource/namespace  ?class-ns]
              [?class :resource/name       ?class-name]}")
 
+(def owl-half
+"
+  (   // $$$ is an object containing settings.
+      $$$ := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
+
+      $qtype  := query($type)
+                   { [?class :rdf/type            $type]
+                     [?class :resource/iri        ?class-iri]
+                     [?class :resource/namespace  ?class-ns]
+                     [?class :resource/name       ?class-name]
+                   };  // Defines a higher-order function
+
+      $qClass := $qtype('owl/Class');
+      $qProp  := $qtype('owl/ObjectProperty');
+
+      $bsets := $qClass($$$.sources[0]); // Run query; return a collection of binding sets.
+  )
+")
+
 (def owl-full-example "The whole thing looks like this:"
 "
-  (    $$$ := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
-       $$$ ~>
-            query() // ToDo: First arg is ignored variable '_'?
-                { [?class :rdf/type            'owl/Class']
-                  [?class :resource/iri        ?class-iri]
-                  [?class :resource/namespace  ?class-ns]
-                  [?class :resource/name       ?class-name]
-                }  // Returns a collection of binding sets.
-       ~>
-            $reduce( enforce()
-                       {  {'instance-of'  : 'insert-row',
-                           'table'        : 'ObjectDefinition',
-                           'content'      : [{'resourceIRI'       : ?class-iri},
-                                             {'resourceNamespace' : ?class-ns},
-                                             {'resourceLabel'     : ?class-label}]}
-                       }
-                   )
+  (   // $$$ is an object containing settings.
+      $$$ := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
+
+      $qtype  := query($type)
+                   { [?class :rdf/type            $type]
+                     [?class :resource/iri        ?class-iri]
+                     [?class :resource/namespace  ?class-ns]
+                     [?class :resource/name       ?class-name]
+                   };  // Defines a higher-order function
+
+      $qClass := $qtype('owl/Class');
+      $qProp  := $qtype('owl/ObjectProperty');
+
+      $bsets := $qClass($$$.sources[0]); // Run query; return a collection of binding sets.
+                                         // Could use ~> here; instead, I'm passing $bsets.
+      $reduce($bsets,
+              enforce($bs)
+                 {  {'instance-of'  : 'insert-row',
+                     'table'        : 'ObjectDefinition',
+                     'content'      : [{'resourceIRI'       : ?class-iri},
+                                       {'resourceNamespace' : ?class-ns},
+                                       {'resourceLabel'     : ?class-label}]}
+                 }
+              )
    )")
+
+(def small-code-block-example "( $x := 1; $f($x) )")
+(def similar "( $$$ := 0; $x := 1; $f($x) )")
+
 
 (deftest owl-example-rewrite
   (testing "Test rewriting the OWL example in the spec."
 
+   (is false)
+
     ;; This is a minimal enforce code block.
     #_(is (= :ToDo
            (rew/rewrite* :ptag/code-block "($$$ := 1; enforce($$$) { 1 })")))
-    
+
     ;; This is a test of rewriting a query expression.
     (is (= '(bi/query [$type]
                       [[?class :rdf/type $type]
@@ -231,15 +264,15 @@ query($type){[?class :rdf/type            $type]
            (rew/rewrite* :ptag/exp owl-q1 :rewrite? true)))
 
     ;; This is a test of rewriting an enforce.
-    (is (= '(fn [binding-set bi/$$$]
-              (->  {}
-                   (assoc "instance-of" "insert-row")
-                   (assoc "table" "ObjectDefinition")
-                   (assoc
-                    "content"
-                    [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
-                     (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
-                     (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))])))
+    (is (= '(->
+             (fn [binding-set $$$]
+               (->  {}
+                    (assoc "instance-of" "insert-row")
+                    (assoc "table" "ObjectDefinition")
+                    (assoc "content" [(-> {} (assoc "resourceIRI"       (bi/get-from-bs binding-set :class-iri)))
+                                      (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+                                      (-> {} (assoc "resourceLabel"     (bi/get-from-bs binding-set :class-label)))])))
+             (with-meta {:params '[$$$]}))
            (rew/rewrite* :ptag/enforce-def
                          "enforce($$$)
                            {  {'instance-of'  : 'insert-row',
@@ -252,27 +285,40 @@ query($type){[?class :rdf/type            $type]
 
     ;; This is an example of rewriting the whole example.
     (is (= (rew/rewrite* :ptag/code-block owl-full-example :rewrite? true)
-           '(let [bi/$$$ (bi/thread (bi/$MCnewContext) (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn")))]
-              (bi/thread
-                (bi/thread bi/$$$ (bi/query []
-                                            [[?class :rdf/type "owl/Class"]
-                                             [?class :resource/iri ?class-iri]
-                                             [?class :resource/namespace ?class-ns]
-                                             [?class :resource/name ?class-name]]))
-                (bi/$reduce
-                 (fn
-                   [binding-set]
-                   (->
-                    {}
-                    (assoc "instance-of" "insert-row")
-                    (assoc "table" "ObjectDefinition")
-                    (assoc
-                     "content"
-                     [(-> {} (assoc "resourceIRI" (bi/get-from-bs binding-set :class-iri)))
-                      (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
-                      (-> {} (assoc "resourceLabel" (bi/get-from-bs binding-set :class-label)))]))))))))))
+           '(let [$mc (bi/thread
+                        (bi/$MCnewContext)
+                        (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn")))
+                  $q  (bi/query []
+                                [[?class :rdf/type "owl/Class"]
+                                 [?class :resource/iri ?class-iri]
+                                 [?class :resource/namespace ?class-ns]
+                                 [?class :resource/name ?class-name]])
+                  $bsets ($q $mc)]
+              (bi/$reduce $bsets
+                          (->
+                           (fn [binding-set $bc $data]
+                             (-> {}
+                                 (assoc "instance-of" "insert-row")
+                                 (assoc "table" "ObjectDefinition")
+                                 (assoc  "content"
+                                         [(-> {} (assoc "resourceIRI"       (bi/get-from-bs binding-set :class-iri)))
+                                          (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+                                          (-> {} (assoc  "resourceLabel"    (bi/get-from-bs binding-set :class-label)))])))
+                              (with-meta {:params '[$bc $data]}))))))))
 
 (def owl-q2
+"
+  (    $$$ := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
+       $q  := query()
+                { [?class :rdf/type            'owl/Class']
+                  [?class :resource/iri        ?class-iri]
+                  [?class :resource/namespace  ?class-ns]
+                  [?class :resource/name       ?class-name]
+                };  // Returns a function
+      $q($$$)
+  )")
+
+(def owl-q3 "Now I'm beginning to wonder whether $$$ is actually valuable. Why not just any jvar?"
 "
 ( $data := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
   $q := query($type){[?class :rdf/type            $type]
@@ -304,6 +350,9 @@ query($type){[?class :rdf/type            $type]
     (is (= [{:class 12, :class-iri "dol/endurant", :class-ns "dol", :class-name "endurant"}]
            (rew/rewrite* :ptag/code-block owl-q2 :execute? true)))
 
+    ;; This is similar to the test directly above, but with a query parameter, $type := 'owl/Class'.
+    (is (= [{:class 12, :class-iri "dol/endurant", :class-ns "dol", :class-name "endurant"}]
+           (rew/rewrite* :ptag/code-block owl-q2 :execute? true)))
 
     ;; This is a test of execute $map($query,enforce) against data from the example in the spec.
     #_(is (not= :todo ;<==================================================================================== ToDo
@@ -333,3 +382,24 @@ query($type){[?class :rdf/type            $type]
            {:owl/onProperty :dol/specific-constant-constituent, :owl/allValuesFrom [:dol/perdurant], :rdf/type :owl/Restriction}]}
          ;; Returns a sorted-map, thus str and read-string.
          (-> (pull-resource :dol/perdurant conn) (dissoc :rdfs/comment) str read-string)))))
+
+
+(defn tryme []
+  (let [$mc (bi/thread
+              (bi/$MCnewContext)
+              (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn")))
+        $q  (bi/query []
+                      [[?class :rdf/type "owl/Class"]
+                       [?class :resource/iri ?class-iri]
+                       [?class :resource/namespace ?class-ns]
+                       [?class :resource/name ?class-name]])
+        $bsets ($q $mc)]
+    (bi/$reduce $bsets
+                (fn [binding-set $bc $data]
+                  (-> {}
+                      (assoc "instance-of" "insert-row")
+                      (assoc "table" "ObjectDefinition")
+                      (assoc  "content"
+                              [(-> {} (assoc "resourceIRI"       (bi/get-from-bs binding-set :class-iri)))
+                               (-> {} (assoc "resourceNamespace" (bi/get-from-bs binding-set :class-ns)))
+                               (-> {} (assoc  "resourceLabel"    (bi/get-from-bs binding-set :class-label)))]))))))

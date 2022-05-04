@@ -37,6 +37,13 @@
 (def $$ "The JSONata root variable." (atom nil))
 (def $$$ "The RADmapper mapping concept object." (atom nil))
 
+(defn reset-special!
+  "Reset! an atom."
+  [atm v]
+  (when-not (instance? clojure.lang.Atom atm)
+    (throw (ex-info "In execution, expected an atom." {:got atm}))
+    (reset! atm v)))
+
 ;;; ToDo: No provisions for parameter destructuring. Okay?
 ;;; ToDo: This jumps through some hoops to avoid ns-qualified params. Is there another way?
 ;;; (macroexpand-1 `(defn* example "This is an example." [x y_] {:val (+ x y_)}))
@@ -142,6 +149,10 @@
 
 (defn* access "JSONata . operator" [obj_ prop] (access-internal obj_ prop))
 
+;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
+;;; [6+1, 3] ~> $sum()           ==> 10
+;;; 4 ~> function($x){$x+1}()    ==>  5
+;;; The only reason for keeping this around (rather than rewriting it as ->) is that it only takes two args.
 (defmacro thread [x y] `(-> ~x ~y))
 
 ;;; ToDo: Review value of meta in the following.
@@ -487,9 +498,8 @@
                     {:binding-set bs :key k})))
   (get bs k))
 
-;;; - Binding the variables of the binding set is the work of the function; it can't be done by the macro.
-(defn enforce [&keys [config body]]
-  (:nyi))
+;;; Currently there is no macro for bi/enforce. It is simply rewritten to a Clojure fn.
+#_(defmacro enforce [& {:keys [config body]}]  (:nyi))
 
 (defrecord ModelingContext [schema sources targets])
 (defn $MCnewContext

@@ -4,7 +4,7 @@
   (:require
    [rad-mapper.builtins :as bi]
    [rad-mapper.evaluate :as ev]
-   [rad-mapper.util :as util]
+   [rad-mapper.util :as util :refer [dgensym!]]
    [rad-mapper.parse  :as par]
    [clojure.pprint :refer [cl-format pprint]]
    [clojure.set    :as set]
@@ -90,29 +90,34 @@
         (string? obj)               obj
         (number? obj)               obj
         (symbol? obj)               obj
+        (= obj :true)               true
+        (= obj :false)              false
         (nil? obj)                  obj                    ; for optional things like (-> m :where rewrite)
         (= java.util.regex.Pattern (type obj)) obj
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
 (defrewrite :JaCodeBlock [m]
-  `(~'let [~@(reduce (fn [res vdecl] (into res (rewrite vdecl))) [] (:bound-vars m))]
-    ~(-> m :body rewrite)))
+  `(~'let [~@(mapcat rewrite (-> m :body butlast))]
+    ~(-> m :body last rewrite)))
 
 (defrewrite :JaJvarDecl [m]
-  (let [val  (-> m :init-val rewrite)
-        jvar (-> m :var      rewrite)]
-    (vector jvar (if (= :JaFnDef (:_type val)) (:form val) val))))
+  (if (-> m :var :special?)
+    `(~(dgensym!) (~'bi/reset-special! ~(->> m :var :jvar-name (symbol "bi"))
+                          ~(-> m :init-val rewrite)))
+    (let [val  (-> m :init-val rewrite)
+          jvar (-> m :var      rewrite)]
+      (vector jvar (if (= :JaFnDef (:_type val)) (:form val) val)))))
 
 (defrewrite :JaField [m] (-> m :field-name))
 
 (defrewrite :JaJvar  [m]
   (if (:special? m)
-    (->> m :jvar-name (symbol "bi"))
+    `(~'deref ~(->> m :jvar-name (symbol "bi")))
     (-> m :jvar-name symbol)))
 
 (defn combined-map-translation [m]
-  (let [sym (or bi/*test-sym* (gensym "x"))]
+  (let [sym (or bi/*test-sym* (dgensym!))]
     `(~'mapv (~'fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
       ~(-> m :operand rewrite))))
 
@@ -186,13 +191,12 @@
     (-> (:qvar-name m) symbol)))
 
 ;;; enforce is a function called (typically from $reduce) with a binding set.
-;;; ToDo: (:vars m) are not yet processed.
 (defrewrite :JaEnforceDef [m]
   (binding [*in-enforce?* true]
-    (let [result `(~'fn [~'binding-set ~@(-> m :params rewrite)]
-                   ~(-> m :body rewrite))]
-      (str "result =" result)
-      result)))
+    (let [params (-> m :params rewrite)]
+      `(~'-> (~'fn [~'binding-set ~@params]
+              ~(-> m :body rewrite))
+        (~'with-meta {:params '~params})))))
 
 (defn checking [arg]
   (println "checking: arg = " arg))
@@ -209,6 +213,13 @@
 
 (defrewrite :JaImmediateUse [m]
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
+
+;;; (rew/rewrite* :ptag/exp "true?'a':'b'" :simplify? true) ==>
+;;; {:_type :JaConditionalExp, :predicate :true, :exp1 "a", :exp2 "b"}
+(defrewrite :JaConditionalExp [m]
+  `(~'if ~(-> m :predicate rewrite)
+    ~(-> m :exp1 rewrite)
+    ~(-> m :exp2 rewrite)))
 
 ;;;---------------------------- Binary ops, precedence ordering, and paths --------------------------------------------------
 ;;; This one produces a :BFLAT structure.

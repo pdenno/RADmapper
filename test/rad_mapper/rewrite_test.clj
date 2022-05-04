@@ -57,6 +57,11 @@
       (is (= 'bi/$$$                                              (rew/rewrite* :ptag/exp "$$$" :rewrite? true)))
       (is (= '$foo                                                (rew/rewrite* :ptag/exp "$foo" :rewrite? true)))
 
+      ;; This one actually tests the tokenizer! \? and \: are problematic owing to use in qvars and triple roles.
+      (is (= '(if true "a" "b") (rew/rewrite* :ptag/exp "true?'a':'b'" :rewrite? true)))
+      ;; ToDo: This one doesn't work yet, but it tokenizes. I think the problem is that triple-roles are literals yet.
+      (is (= '(if true :foo/bar :foo/bat) (rew/rewrite* :ptag/exp "true?:foo/bar::foo/bat" :rewrite? true)))
+
       ;; Testing the synax reordering of map/filter on paths
       (is (= '(mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q"))) $var)
              (rew/rewrite* :ptag/exp "$var.(P * Q)" :rewrite? true)))
@@ -121,3 +126,27 @@
                 "PriceAmount"))
              (rew/rewrite* :ptag/exp "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"
                            :rewrite? true))))))
+
+(deftest code-block
+  (testing "Testing that code blocks handle binding and special jvars correctly"
+
+    ;; Simple test
+    (is (= '(do (let [$x 1] ($f $x) ($g $x)))
+           (rew/rewrite* :ptag/code-block  "( $x := 1; $f($x) $g($x) )" :rewrite? true)))
+
+    ;; Mix of specials and locals entails nesting
+    (is (= '(do (let [$x "foo" $xx "xfoo"]
+                  (bi/reset-special! bi/$$$ "bar")
+                  (let [$y "bat" $yy "ybat"])
+                  ($f $x $y)))
+           (rew/rewrite* :ptag/code-block
+                         "( $x   :=  'foo';
+                            $xx  := 'xfoo';
+                            $$$  := 'bar';
+                            $y   := 'bat';
+                           $yy  := 'ybat';
+                           $f($x, $y) )"
+                         :rewrite? true)))))
+              
+              
+
