@@ -40,9 +40,9 @@
 (defn reset-special!
   "Reset! an atom."
   [atm v]
-  (when-not (instance? clojure.lang.Atom atm)
-    (throw (ex-info "In execution, expected an atom." {:got atm}))
-    (reset! atm v)))
+  (when-not (#{$ $$ $$$} atm)
+    (throw (ex-info "In execution, expected an atom." {:got atm})))
+  (reset! atm v))
 
 ;;; ToDo: No provisions for parameter destructuring. Okay?
 ;;; ToDo: This jumps through some hoops to avoid ns-qualified params. Is there another way?
@@ -422,7 +422,7 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
 
-;;;------------------------- Mapping Context, query, enforce ------------------------
+;;;============================= Mapping Context, query, enforce ======================
 
 ;;; Thoughts on schema""
 ;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
@@ -434,6 +434,8 @@
    Note that this function does not make a guess at what the keys (db/key) are."
   [data_]
   (qu/learn-schema-walking data_))
+
+;;;--------------------------------- query ---------------------------------------
 
 ;;; I haven't been able to programmatically form a syntax quoted expression in the bi/query macro. Thus this.
 ;;; ToDo: Probably just wasn't warmed up. Try again.
@@ -452,17 +454,49 @@
       :keys ~@(->> vars (map #(subs (str %) 1)) (map symbol))
       :where ~@(tp-aux body)])))
 
-;;; (macroexpand-1 '(bi/query [$name], [[?e :name $name]]})
-;;; ((bi/query [$name] [[?e :name $name]]} [{"name" "Bob"}] "Bob")
+(defn immediate-query-fn
+  "Return a function that can be used immediately to make the query defined in body."
+  [body]
+  (fn [mc & args]
+     (let [conn (qu/select-source-data mc)
+           ;; I can't find a way to code a syntax quote, so I'm doing substitutions at run time.
+           param-subs (zipmap params args)]
+       (->> (d/q (qform-runtime-sub body param-subs) conn)
+            ;; Remove binding sets that involve a schema entity.
+            (remove (fn [bset] (some (fn [bval]
+                                        (and (keyword? bval)
+                                             (= "db" (namespace bval))))
+                                      (vals bset))))
+            vec))))
 
-;;; (macroexpand-1 '(bi/query [], [[?e :name "Bob"]]})
-;;; ((bi/query [] [[?e :name "Bob"]]} [{"name" "Bob"}] "Bob")
-(defmacro query
-  "Evaluates to a function that takes data and returns binding sets.
+
+(defn immediate-query-fn
+  "Return a function that can be called with parameters to return a function to m
+   the parameterizes query defined by body and params. (It's just a closure...)"
+  [body params]
+  (fn [mc & args]
+     (let [conn (qu/select-source-data mc)
+           ;; I can't find a way to code a syntax quote, so I'm doing substitutions at run time.
+           param-subs (zipmap params args)]
+       (->> (d/q (qform-runtime-sub body param-subs) conn)
+            ;; Remove binding sets that involve a schema entity.
+            (remove (fn [bset] (some (fn [bval]
+                                        (and (keyword? bval)
+                                             (= "db" (namespace bval))))
+                                      (vals bset))))
+            vec))))
+
+(defn query
+  "There are two uses scenarios for query:
+      (1) Calls to query where no parameters are specified return a function
+          that takes data and returns binding sets.
+      (2) Calls to query that provide parameters return a function that takes
+          values for those parameters and return a function of type (1).
+
   'params' is an ordered vector parameters (jvars) that will be matched to 'args' used
    to parameterized the query form, thus producing a 'customized' query function.
 
-   Example usage:
+   Example usage (of the second sort):
 
   ( $data := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
     $q := query($type){[?class :rdf/type            $type]
@@ -471,17 +505,10 @@
                        [?class :resource/name       ?class-name]};
     $q($data,'owl/Class') )"
   [params body]
-  `(fn [mc# & args#]
-     (let [conn# (qu/select-source-data mc#)
-           ;; I can't find a way to code a syntax quote, so I'm doing substitutions at run time.
-           param-subs# (zipmap '~params args#)]
-       (->> (d/q (qform-runtime-sub '~body param-subs#) conn#)
-            ;; Remove binding sets that involve a schema entity.
-            (remove (fn [bset#] (some (fn [bval#]
-                                        (and (keyword? bval#)
-                                             (= "db" (namespace bval#))))
-                                      (vals bset#))))
-            vec))))
+  (if (empty? params)
+    (immediate-query-fn body)
+    (higher-order-query-fn body params)))
+
 
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
 (defn update-db
@@ -501,33 +528,34 @@
 ;;; Currently there is no macro for bi/enforce. It is simply rewritten to a Clojure fn.
 #_(defmacro enforce [& {:keys [config body]}]  (:nyi))
 
-(defrecord ModelingContext [schema sources targets])
+; (defrecord ModelingContext [schema sources targets])
 (defn $MCnewContext
   "Create a new modeling context object."
   []
-  (map->ModelingContext {:schema {} :sources {} :targets {}}))
+  (reset! $$$ {"schemas" {} "sources" {} "targets" {}})
+  $$$)
 
 (defn $MCaddSource
   "Add source data to the argument modeling context.
    If no name is provided for the source, a new one is created.
    Default names follow in the series 'source-data-1', 'source-data-2'...
    If the source already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddSource mc data (str "source-data-" (-> mc :sources count inc))))
+  ([mc data] ($MCaddSource mc data (str "source-data-" (-> mc deref (get "sources") count inc))))
   ([mc data src-name]
-   (if (-> mc :sources (contains? src-name))
-     (update-in mc [:sources src-name] #(update-db % data))
-     (assoc-in  mc [:sources src-name] (qu/db-for! data)))))
+   (if (-> mc deref (get "sources") (contains? src-name))
+     (swap! mc #(update-in % ["sources" src-name] (update-db (-> mc deref (get "sources") (get src-name)) data)))
+     (swap! mc #(assoc-in  % ["sources" src-name] (qu/db-for! data))))))
 
 #_(defn $MCaddSource
   "Add source data to the argument modeling context.
    If no name is provided for the source, a new one is created.
    Default names follow in the series 'data-source-1', 'data-source-2'...
    If the source already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddSource mc data (->> mc :sources keys (util/default-name "data-source-"))))
+  ([mc data] ($MCaddSource mc data (->> mc "sources" keys (util/default-name "data-source-"))))
   ([mc data src-name]
-   (if (-> mc :sources (contains? src-name))
-     (update-in mc [:sources src-name] #(update-db % data))
-     (assoc-in  mc [:sources src-name] (qu/db-for! data)))))
+   (if (-> mc "sources" (contains? src-name))
+     (update-in mc ["sources" src-name] #(update-db % data))
+     (assoc-in  mc ["sources" src-name] (qu/db-for! data)))))
 
 ;;; ToDo: Currently this just does what $MDaddSource does.
 (defn $MCaddTarget
@@ -536,17 +564,17 @@
    If no name is provided for the target, a new one is created.
    Default names used when not provided follow in the series 'target-data-1', 'target-data-2'...
    If the target already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddTarget mc data (->> mc :targets keys (util/default-name "data-targets-"))))
+  ([mc data] ($MCaddTarget mc data (->> mc (get "targets") keys (util/default-name "data-targets-"))))
   ([mc data src-name]
-   (if (-> mc :targets (contains? src-name))
-     (update-in mc [:targets src-name] #(update-db % data))
-     (assoc-in  mc [:targets src-name] (qu/db-for! data)))))
+   (if (-> mc (get "targets") (contains? src-name))
+     (update-in mc ["targets" src-name] #(update-db % data))
+     (assoc-in  mc ["targets" src-name] (qu/db-for! data)))))
 
 (defn $MCaddSchema
   "Add knowledge of schema to an existing DB.
    This can be a computational expensive operation when the DB is large."
   [mc schema-data db-name]
-  (let [type (cond (-> mc :sources (contains? db-name)) :sources
-                   (-> mc :targets (contains? db-name)) :targets
+  (let [type (cond (-> mc (get "sources") (contains? db-name)) "sources"
+                   (-> mc (get "targets") (contains? db-name)) "targets"
                    :else (throw (ex-info "No such database:" {:db-name db-name})))]
        (update-in mc [type db-name] #(update-db % schema-data))))

@@ -2,6 +2,7 @@
   "supporting code for $query and $enforce"
   (:require
    [datahike.api                  :as d]
+   [rad-mapper.builtins           :as bi]
    [taoensso.timbre               :as log]))
 
 ;;; ToDo: Get some more types in here, and in implementation generally.
@@ -97,7 +98,7 @@
 (defn select-source-data
   "Return a connection to a source DB, as specified by the arguments."
   [mapping-context & [name]]
-  (let [srcs (:sources mapping-context)]
+  (let [srcs (get @bi/$$$ "sources")]
     (cond (== 1 (count srcs)) (-> srcs vals first),
           (and name (contains? srcs name)) (get srcs name),
           :else (throw (ex-info "The modeling context does not contain the source:" {:name name})))))

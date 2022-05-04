@@ -2,13 +2,13 @@
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    rewrite* is a top-level function for this."
   (:require
+   [clojure.pprint :refer [cl-format pprint]]
+   [clojure.set    :as set]
+   [clojure.spec.alpha :as s]
    [rad-mapper.builtins :as bi]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.util :as util :refer [dgensym!]]
    [rad-mapper.parse  :as par]
-   [clojure.pprint :refer [cl-format pprint]]
-   [clojure.set    :as set]
-   [clojure.spec.alpha :as s]
    [taoensso.timbre   :as log]))
 
 ;;; ToDo:
@@ -98,6 +98,7 @@
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
 (defrewrite :JaCodeBlock [m]
+  (util/reset-dgensym!)
   `(~'let [~@(mapcat rewrite (-> m :body butlast))]
     ~(-> m :body last rewrite)))
 
@@ -174,14 +175,16 @@
   `(~'range ~(rewrite (:start m)) (~'inc ~(rewrite (:stop m)))))
 
 (defrewrite :JaQueryDef [m]
-  `(~'bi/query ~(mapv rewrite (:params m)) ~(mapv rewrite (:triples m))))
+  `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:triples m))))
 
 (defrewrite :JaTriple [m]
   `[~(rewrite (:ent m))
     ~(rewrite (:rel m))
     ~(rewrite (:val-exp m))])
 
-(def ^:dynamic *in-enforce?* false)
+;;; ToDo: Binding fails me!
+;;; (def ^:dynamic *in-enforce?* false)
+(def ^:dynamic *in-enforce?* (atom false))
 
 (defrewrite :JaQvar [m]
   (if *in-enforce?*
@@ -192,11 +195,14 @@
 
 ;;; enforce is a function called (typically from $reduce) with a binding set.
 (defrewrite :JaEnforceDef [m]
-  (binding [*in-enforce?* true]
+  ;;(binding [*in-enforce?* true]
+  (try
+    (reset! *in-enforce?* true)
     (let [params (-> m :params rewrite)]
       `(~'-> (~'fn [~'binding-set ~@params]
               ~(-> m :body rewrite))
-        (~'with-meta {:params '~params})))))
+        (~'with-meta {:params '~params})))
+    (finally (reset! *in-enforce?* false))))
 
 (defn checking [arg]
   (println "checking: arg = " arg))

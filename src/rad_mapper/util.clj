@@ -166,5 +166,5 @@
                   (split-by pred ys))))))))
 
 (def dg-cnt (atom 0))
-(defn reset-dgensym! (reset! dg-cnt 0))
+(defn reset-dgensym! [] (reset! dg-cnt 0))
 (defn dgensym! [] (->> (swap! dg-cnt inc) (str "_x") symbol))
