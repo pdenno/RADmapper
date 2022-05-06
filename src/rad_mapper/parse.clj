@@ -62,10 +62,13 @@
                     "$each" bi/$each, "$keys" bi/$keys, "$spread" bi/$spread})
 (def datetime-fns '{"$fromMillis" bi/$fromMillis, "$millis" bi/$millis, "$now" bi/$now, "$toMillis" bi/$toMillis})
 (def higher-fns   '{"$filter" bi/$filter, "$map" bi/$map, "$reduce" bi/$reduce, "$sift" bi/$sift, "$single" bi/$single})
-(def extended-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet})
-(def mc-fns       '{"$MCaddSchema" bi/$MCaddSchema, "$MCaddSource" bi/$MCaddSource, "$MCaddTarget" bi/$MCaddTarget, "$MCnewContext" $MCnewContext})
 
-(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns extended-fns mc-fns))
+;;; Non-JSONata functions
+(def file-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet})
+(def mc-fns   '{"$MCaddSchema" bi/$MCaddSchema, "$MCaddSource" bi/$MCaddSource, "$MCaddTarget" bi/$MCaddTarget,
+                "$MCgetSource" bi/$MCgetSource, "$MCgetTarget" bi/$MCgetTarget, "$MCnewContext" $MCnewContext})
+
+(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns mc-fns))
 (def builtin? (-> builtin-fns keys (into ["$$$" "$$" "$"]) set))
 (def builtin-un-op #{\+, \- :not})
 
@@ -349,7 +352,7 @@
          (update ~pstate :call-count inc)
          (update ~pstate :stack conj ~tag)
          (update ~pstate :local #(into [{:locals-for ~tag}] %))
-         ~@body
+         (let [res# (do ~@body)] (if (seq? res#) (doall res#) res#))
          (if (not-empty (:stack ~pstate)) (update ~pstate :stack pop) ~pstate)
          (update ~pstate :local #(vec (rest %)))
          (do (when *debugging?* (cl-format *out* "~%~A<-- ~A   ~S"

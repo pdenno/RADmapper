@@ -225,12 +225,12 @@
 (defn $reduce
   "Signature: $reduce(array, function [, init])
 
-  Returns an aggregated value derived from applying the function parameter successively to each value in array in combination
-  with the result of the previous application of the function.
+  Returns an aggregated value derived from applying the function parameter successively to
+  each value in array in combination with the result of the previous application of the function.
 
-  The function must accept at least two arguments, and behaves like an infix operator between each value within the array.
-  The signature of this supplied function must be of the form:
-  myfunc($accumulator, $value[, $index[, $array]])
+  The function must accept at least two arguments, and behaves like an infix operator
+  between each value within the array. The signature of this supplied function must be of the form:
+  myfunc($accumulator, $value [, $index [, $array]])
 
   Example:   ( $product := function($i, $j){$i * $j};
                $reduce([1..5], $product)
@@ -422,9 +422,87 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
 
+;;;============================= JSONata mostly-one-liners ======================
+
+;;;------------- String
+;;; $trim
+;;; $uppercase
+;;; $length
+;;; $substringAfter
+;;; $substring
+;;; $base64encode
+;;; $encodeUrl
+;;; $eval
+;;; $string
+;;; $encodeUrlComponent
+;;; $contains
+;;; $join
+;;; $substringBefore
+;;; $base64decode
+;;; $split
+;;; $pad
+;;; $replace
+;;; $lowercase
+;;; $decodeUrl
+;;; $decodeUrlComponent
+
+;;;------------- Numeric
+;;; $abs
+;;; $floor
+;;; $parseInteger
+;;; $number
+;;; $formatInteger
+;;; $round
+;;; $formatBase
+;;; $formatNumber
+;;; $ceil
+;;; $random
+;;; $power
+;;; $average
+;;; $max
+;;; $min
+;;; $sum  (see above, start defining specs, drop all the throws.)
+;;; $sqrt
+
+;;;--------------- Logic
+;;; $boolean
+;;; $exists
+;;; $not
+
+;;;--------------- Collections
+;;; $append
+;;; $count
+;;; $distinct
+;;; $reverse
+;;; $shuffle
+;;; $sort
+;;; $zip
+
+;;;---------------- JSON Object
+;;; $type
+;;; $lookup
+;;; $merge
+;;; $assert
+;;; $sift
+;;; $error
+;;; $each
+;;; $keys
+;;; $spread
+
+;;;------------- DateTime
+;;; $fromMillis
+;;; $millis,
+;;; $now
+;;; $toMillis
+
+;;;-------------- Higher (the higher not yet defined)
+;;; $sift
+;;; $single
+
+
 ;;;============================= Mapping Context, query, enforce ======================
 
-;;; Thoughts on schema""
+;;; Thoughts on schema
 ;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
 ;;;   - One needs to to specify schema on $transform, even if it is {}
 ;;;   - What is provided as argument overrides what is learned in $query.
@@ -436,9 +514,6 @@
   (qu/learn-schema-walking data_))
 
 ;;;--------------------------------- query ---------------------------------------
-
-;;; I haven't been able to programmatically form a syntax quoted expression in the bi/query macro. Thus this.
-;;; ToDo: Probably just wasn't warmed up. Try again.
 (defn qform-runtime-sub
   "Return a DH query [:find...] form that substitutes values as though syntax quote were being used."
   [body param-val-map]
@@ -455,36 +530,33 @@
       :where ~@(tp-aux body)])))
 
 (defn immediate-query-fn
-  "Return a function that can be used immediately to make the query defined in body."
+    "Return a function that can be used immediately to make the query defined in body."
   [body]
-  (fn [mc & args]
-     (let [conn (qu/select-source-data mc)
-           ;; I can't find a way to code a syntax quote, so I'm doing substitutions at run time.
-           param-subs (zipmap params args)]
-       (->> (d/q (qform-runtime-sub body param-subs) conn)
-            ;; Remove binding sets that involve a schema entity.
-            (remove (fn [bset] (some (fn [bval]
-                                        (and (keyword? bval)
-                                             (= "db" (namespace bval))))
-                                      (vals bset))))
-            vec))))
+  (fn [mc]
+    (let [conn mc]
+      (->> (d/q (qform-runtime-sub body {}) conn)
+           ;; Remove binding sets that involve a schema entity.
+           (remove (fn [bset] (some (fn [bval]
+                                      (and (keyword? bval)
+                                           (= "db" (namespace bval))))
+                                    (vals bset))))
+           vec))))
 
-
-(defn immediate-query-fn
+(defn higher-order-query-fn
   "Return a function that can be called with parameters to return a function to m
    the parameterizes query defined by body and params. (It's just a closure...)"
   [body params]
-  (fn [mc & args]
-     (let [conn (qu/select-source-data mc)
-           ;; I can't find a way to code a syntax quote, so I'm doing substitutions at run time.
-           param-subs (zipmap params args)]
-       (->> (d/q (qform-runtime-sub body param-subs) conn)
-            ;; Remove binding sets that involve a schema entity.
-            (remove (fn [bset] (some (fn [bval]
-                                        (and (keyword? bval)
-                                             (= "db" (namespace bval))))
-                                      (vals bset))))
-            vec))))
+  (fn [& args]
+    (let [param-subs (zipmap params args)] ; the closure.
+      (fn [mc]
+         (let [conn mc]
+           (->> (d/q (qform-runtime-sub body param-subs) conn)
+                ;; Remove binding sets that involve a schema entity.
+                (remove (fn [bset] (some (fn [bval]
+                                           (and (keyword? bval)
+                                                (= "db" (namespace bval))))
+                                         (vals bset))))
+                vec))))))
 
 (defn query
   "There are two uses scenarios for query:
@@ -517,7 +589,7 @@
   [db data]
   (d/transact db data))
 
-(defn get-from-bs
+(defn get-from-b-set
   "Given a binding-set and ?query-var (key), return the map's value at that index."
   [bs k]
   (when-not (contains? bs k)
@@ -528,34 +600,22 @@
 ;;; Currently there is no macro for bi/enforce. It is simply rewritten to a Clojure fn.
 #_(defmacro enforce [& {:keys [config body]}]  (:nyi))
 
-; (defrecord ModelingContext [schema sources targets])
+;;; ToDo: Theses are always an atom, right?
 (defn $MCnewContext
   "Create a new modeling context object."
   []
-  (reset! $$$ {"schemas" {} "sources" {} "targets" {}})
-  $$$)
+  (atom {:schemas {} :sources {} :targets {}}))
 
 (defn $MCaddSource
   "Add source data to the argument modeling context.
    If no name is provided for the source, a new one is created.
    Default names follow in the series 'source-data-1', 'source-data-2'...
    If the source already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddSource mc data (str "source-data-" (-> mc deref (get "sources") count inc))))
+  ([mc data] ($MCaddSource mc data (str "source-data-" (-> mc deref :sources count inc))))
   ([mc data src-name]
-   (if (-> mc deref (get "sources") (contains? src-name))
-     (swap! mc #(update-in % ["sources" src-name] (update-db (-> mc deref (get "sources") (get src-name)) data)))
-     (swap! mc #(assoc-in  % ["sources" src-name] (qu/db-for! data))))))
-
-#_(defn $MCaddSource
-  "Add source data to the argument modeling context.
-   If no name is provided for the source, a new one is created.
-   Default names follow in the series 'data-source-1', 'data-source-2'...
-   If the source already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddSource mc data (->> mc "sources" keys (util/default-name "data-source-"))))
-  ([mc data src-name]
-   (if (-> mc "sources" (contains? src-name))
-     (update-in mc ["sources" src-name] #(update-db % data))
-     (assoc-in  mc ["sources" src-name] (qu/db-for! data)))))
+   (if (-> mc deref :sources (contains? src-name))
+     (swap! mc #(update-in % [:sources src-name] (update-db (-> mc deref :sources (get src-name)) data)))
+     (swap! mc #(assoc-in  % [:sources src-name] (qu/db-for! data))))))
 
 ;;; ToDo: Currently this just does what $MDaddSource does.
 (defn $MCaddTarget
@@ -564,17 +624,20 @@
    If no name is provided for the target, a new one is created.
    Default names used when not provided follow in the series 'target-data-1', 'target-data-2'...
    If the target already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddTarget mc data (->> mc (get "targets") keys (util/default-name "data-targets-"))))
+  ([mc data] ($MCaddTarget mc data (->> mc :targets keys (util/default-name "data-targets-"))))
   ([mc data src-name]
-   (if (-> mc (get "targets") (contains? src-name))
-     (update-in mc ["targets" src-name] #(update-db % data))
-     (assoc-in  mc ["targets" src-name] (qu/db-for! data)))))
+   (if (-> mc :targets (contains? src-name))
+     (update-in mc [:targets src-name] #(update-db % data))
+     (assoc-in  mc [:targets src-name] (qu/db-for! data)))))
+
+(defn $MCgetSource [mc name] (-> mc :sources mc (get name)))
+(defn $MCgetTarget [mc name] (-> mc :targets mc (get name)))
 
 (defn $MCaddSchema
   "Add knowledge of schema to an existing DB.
    This can be a computational expensive operation when the DB is large."
   [mc schema-data db-name]
-  (let [type (cond (-> mc (get "sources") (contains? db-name)) "sources"
-                   (-> mc (get "targets") (contains? db-name)) "targets"
+  (let [type (cond (-> mc :sources (contains? db-name)) :sources
+                   (-> mc :targets (contains? db-name)) :targets
                    :else (throw (ex-info "No such database:" {:db-name db-name})))]
        (update-in mc [type db-name] #(update-db % schema-data))))

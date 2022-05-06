@@ -92,13 +92,3 @@
       (d/transact conn-atm (learn-schema-walking data))
       (d/transact conn-atm data)
       @conn-atm)))
-
-;;; ToDo: Another idea for this is to return the MC with :using-source set to a DB connection.
-;;;       Thus far, this is only called by query.
-(defn select-source-data
-  "Return a connection to a source DB, as specified by the arguments."
-  [mapping-context & [name]]
-  (let [srcs (get @bi/$$$ "sources")]
-    (cond (== 1 (count srcs)) (-> srcs vals first),
-          (and name (contains? srcs name)) (get srcs name),
-          :else (throw (ex-info "The modeling context does not contain the source:" {:name name})))))

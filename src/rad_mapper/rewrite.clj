@@ -42,12 +42,14 @@
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
+;;; Note: The need for the doall below eluded me for a long time.
+;;;       It is necessary when using dynamic binding or want state in an atom to be seen.
 (defmacro defrewrite [tag [obj & keys-form] & body]
   `(defmethod rewrite-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
      (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
      (swap! tags #(conj % ~tag))
      (swap! locals #(into [{}] %))
-     (let [result# (try ~@body
+     (let [result# (try (let [res# (do ~@body)] (if (seq? res#) (doall res#) res#)) ; See note above.
                         (catch Exception e#
                           (log/error "Error rewriting:" e#)
                           (ex-message (.getMessage e#)) {:obj ~obj :rewrite-error? true}))]
@@ -182,30 +184,19 @@
     ~(rewrite (:rel m))
     ~(rewrite (:val-exp m))])
 
-;;; ToDo: Binding fails me!
-;;; (def ^:dynamic *in-enforce?* false)
-(def ^:dynamic *in-enforce?* (atom false))
+(def ^:dynamic in-enforce? false)
 
 (defrewrite :JaQvar [m]
-  (if *in-enforce?*
-    `(~'bi/get-from-bs
-      ~'binding-set
-      ~(-> (:qvar-name m) (subs 1) keyword))
-    (-> (:qvar-name m) symbol)))
+  (if in-enforce?
+    `(~'bi/get-from-b-set ~'_b-set ~(-> m :qvar-name (subs 1) keyword))
+    (-> m :qvar-name symbol)))
 
-;;; enforce is a function called (typically from $reduce) with a binding set.
 (defrewrite :JaEnforceDef [m]
-  ;;(binding [*in-enforce?* true]
-  (try
-    (reset! *in-enforce?* true)
+  (binding [in-enforce? true]
     (let [params (-> m :params rewrite)]
-      `(~'-> (~'fn [~'binding-set ~@params]
+      `(~'-> (~'fn [~'_accum ~'_b-set ~@params]
               ~(-> m :body rewrite))
-        (~'with-meta {:params '~params})))
-    (finally (reset! *in-enforce?* false))))
-
-(defn checking [arg]
-  (println "checking: arg = " arg))
+        (~'with-meta {:params '~(into '[_accum b-set] params)})))))
 
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
 ;;; User functions also translate using this, but don't use the metadata.
