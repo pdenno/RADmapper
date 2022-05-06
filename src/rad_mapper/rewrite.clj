@@ -101,8 +101,12 @@
 
 (defrewrite :JaCodeBlock [m]
   (util/reset-dgensym!)
-  `(~'let [~@(mapcat rewrite (-> m :body butlast))]
-    ~(-> m :body last rewrite)))
+  (if (> (-> m :body count) 1)
+    `(~'let [~@(mapcat rewrite (-> m :body butlast))]
+      ~(-> m :body last rewrite))
+    (if (= :JaJvarDecl (-> m :body first :_type))
+      `(~'let [~@(-> m :body first rewrite)])
+      (-> m :body first rewrite))))
 
 (defrewrite :JaJvarDecl [m]
   (if (-> m :var :special?)

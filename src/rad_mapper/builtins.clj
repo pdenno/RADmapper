@@ -6,20 +6,27 @@
    respectively for navigation to a property and concatenation)."
   (:refer-clojure :exclude [+ - * /])
   (:require
+   [clojure.spec.alpha           :as s]
+   [clojure.string               :as str]
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
-   [datahike.pull-api            :as dp]
+ #_[datahike.pull-api            :as dp]
    [rad-mapper.query             :as qu]
-   [rad-mapper.util              :as util]
-   [clojure.string               :as str]))
+   [rad-mapper.util              :as util]))
 
 ;;; ToDo:
 ;;;  -1) defn* should check for vec/scalar.
 ;;;   0) defn*s do not need to reset! $ (it is in the macro).
-;;;   1) Singleton wrapper (on defn* ?)
 ;;;   2) Implement dynamic var *advance* ???
 ;;;   3) Consider threading/binding instead of resetting the atom $.
 ;;;   4) Investigate Small Clojure Interpreter.
+
+(s/def ::number number?)
+(s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
+
+;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
+(defmacro singlize [expr]
+  `(let [val# ~expr] (if (vector? val#) val# (vector val#))))
 
 (defn jsonata-flatten
   "See http://docs.jsonata.org/processing section 'Sequences'"
@@ -66,7 +73,8 @@
                     :else (get param-map x x)))]
     `(defn ~fn-name ~doc-string
        (~abbrv-params (~fn-name ~@abbrv-args))
-       ([~@(vals param-map)] (reset! $ ~@(rewrite body)))))))
+       ([~@(vals param-map)]
+        (reset! $ (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#))))))))
 
 ;;;========================= JSONata built-ins  =========================================
 (defn* + "plus" [x_ y]
@@ -88,27 +96,6 @@
   (if (number? x_)
     (double (clojure.core// x_ y))
     (throw (ex-info "The left side of the '/' operator must evaluate to a number." {:op1 x_}))))
-
-(defn* $number
-  " * Numbers are unchanged
-    * Strings that contain a sequence of characters that represent a legal JSON number are converted to that number
-    * Boolean true casts to 1, Boolean false casts to 0
-    All other values cause an error to be thrown."
-  [v_]
-  (cond (number? v_) v_
-        (string? v_) (let [n (read-string v_)]
-                      (if (number? n)
-                        n
-                        (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
-        (boolean? v_) (if v_ 1 0)
-        :else (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
-
-(defn* $sum
-  "Sum returns the sum of the argument (a vector of numbers)."
-  [v_]
-  (if (and (vector? v_) (every? number? v_))
-    (apply + v_)
-    (throw (ex-info "In $sum, argument does not look like a vector of numbers." {:value v_}))))
 
 ;;; ToDo: $contains(), $split(), $replace()
 ;;; ToDo: flags on regular expressions. /regex/flags  (the only flags are 'i' and 'm' (case insenstive, multi-line)).
@@ -232,9 +219,14 @@
   between each value within the array. The signature of this supplied function must be of the form:
   myfunc($accumulator, $value [, $index [, $array]])
 
-  Example:   ( $product := function($i, $j){$i * $j};
+  Example 1:   ( $product := function($i, $j){$i * $j};
                $reduce([1..5], $product)
+               )
+
+  Exampel 2: ( $add := function($i, $j){$i + $j};
+               $reduce([1..5], $add, 100))
              )
+
   This multiplies all the values together in the array [1..5] to return 120.
 
   If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
@@ -361,6 +353,134 @@
        ;; Filter behavior
        (reset! $ (filterv (fn [arg#] (reset! $ arg#) ~pred|ix) obj#)))))
 
+;;;--------------------------- JSONata mostly-one-liners ------------------------------------
+
+;;;------------- String
+;;; $base64decode
+;;; $base64encode
+;;; $contains
+;;; $decodeUrl
+;;; $decodeUrlComponent
+;;; $encodeUrl
+;;; $encodeUrlComponent
+;;; $eval
+;;; $join
+;;; $length
+;;; $lowercase
+;;; $pad
+;;; $replace
+;;; $split
+;;; $string
+;;; $substring
+;;; $substringAfter
+;;; $substringBefore
+;;; $trim
+;;; $uppercase
+
+;;;------------- Numeric
+;;; $abs
+;;; $average
+;;; $ceil
+;;; $floor
+;;; $formatInteger
+;;; $round
+;;; $formatBase
+;;; $formatNumber
+
+;;; $number
+(defn* $number
+  " * Numbers are unchanged.
+    * Strings that contain a sequence of characters that represent a legal JSON number are converted to that number.
+    * Boolean true casts to 1, Boolean false casts to 0.
+    All other values cause an error to be thrown."
+  [v_]
+  (cond (number? v_) v_
+        (string? v_) (let [n (read-string v_)]
+                      (if (number? n)
+                        n
+                        (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
+        (boolean? v_) (if v_ 1 0)
+        :else (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
+
+;;; $power
+(defn* $power
+  "Return the largest the numeric argument (an array or singleton)."
+  [x_ y]
+  (s/assert ::number x_)
+  (s/assert ::number y)
+  (if (and (integer? x_) (pos-int? y))
+    (int (Math/pow x_ y))
+    (Math/pow x_ y)))
+
+;;; $max
+(defn* $max
+  "Return the largest the numeric argument (an array or singleton)."
+  [v_]
+  (let [v (singlize v_)]
+    (s/assert ::numbers v)
+    (apply max v)))
+
+;;; $min
+(defn* $min
+  "Return the smallest the numeric argument (an array or singleton)."
+  [v_]
+  (let [v (singlize v_)]
+    (s/assert ::numbers v)
+    (apply min v)))
+
+;;; $parseInteger
+;;; $random
+
+;;; $sum
+(defn* $sum
+  "Return the sum of the argument (a vector of numbers)."
+  [v_]
+  (let [v (singlize v_)]
+    (s/assert ::numbers v)
+    (apply clojure.core/+ v)))
+
+;;; $sqrt
+(defn* $sqrt
+  "Returns the square root of the argument."
+  [v_]
+  (s/assert ::number v_)
+  (Math/sqrt v_))
+
+;;;--------------- Logic
+;;; $boolean
+;;; $exists
+;;; $not
+
+;;;--------------- Collections
+;;; $append
+;;; $count
+;;; $distinct
+;;; $reverse
+;;; $shuffle
+;;; $sort
+;;; $zip
+
+;;;---------------- JSON Object
+;;; $type
+;;; $lookup
+;;; $merge
+;;; $assert
+;;; $sift
+;;; $error
+;;; $each
+;;; $keys
+;;; $spread
+
+;;;------------- DateTime
+;;; $fromMillis
+;;; $millis,
+;;; $now
+;;; $toMillis
+
+;;;-------------- Higher (the higher not yet defined)
+;;; $sift
+;;; $single
+
 ;;;=================== Non-JSONata functions ================================
 
 ;;; ToDo: Currently no JSON
@@ -422,83 +542,6 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
 
-;;;============================= JSONata mostly-one-liners ======================
-
-;;;------------- String
-;;; $trim
-;;; $uppercase
-;;; $length
-;;; $substringAfter
-;;; $substring
-;;; $base64encode
-;;; $encodeUrl
-;;; $eval
-;;; $string
-;;; $encodeUrlComponent
-;;; $contains
-;;; $join
-;;; $substringBefore
-;;; $base64decode
-;;; $split
-;;; $pad
-;;; $replace
-;;; $lowercase
-;;; $decodeUrl
-;;; $decodeUrlComponent
-
-;;;------------- Numeric
-;;; $abs
-;;; $floor
-;;; $parseInteger
-;;; $number
-;;; $formatInteger
-;;; $round
-;;; $formatBase
-;;; $formatNumber
-;;; $ceil
-;;; $random
-;;; $power
-;;; $average
-;;; $max
-;;; $min
-;;; $sum  (see above, start defining specs, drop all the throws.)
-;;; $sqrt
-
-;;;--------------- Logic
-;;; $boolean
-;;; $exists
-;;; $not
-
-;;;--------------- Collections
-;;; $append
-;;; $count
-;;; $distinct
-;;; $reverse
-;;; $shuffle
-;;; $sort
-;;; $zip
-
-;;;---------------- JSON Object
-;;; $type
-;;; $lookup
-;;; $merge
-;;; $assert
-;;; $sift
-;;; $error
-;;; $each
-;;; $keys
-;;; $spread
-
-;;;------------- DateTime
-;;; $fromMillis
-;;; $millis,
-;;; $now
-;;; $toMillis
-
-;;;-------------- Higher (the higher not yet defined)
-;;; $sift
-;;; $single
-
 
 ;;;============================= Mapping Context, query, enforce ======================
 
@@ -532,8 +575,8 @@
 (defn immediate-query-fn
     "Return a function that can be used immediately to make the query defined in body."
   [body]
-  (fn [mc]
-    (let [conn mc]
+  (fn [data|db]
+    (let [conn (if (= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
       (->> (d/q (qform-runtime-sub body {}) conn)
            ;; Remove binding sets that involve a schema entity.
            (remove (fn [bset] (some (fn [bval]
@@ -548,8 +591,8 @@
   [body params]
   (fn [& args]
     (let [param-subs (zipmap params args)] ; the closure.
-      (fn [mc]
-         (let [conn mc]
+      (fn [data|db]
+        (let [conn (if (= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
            (->> (d/q (qform-runtime-sub body param-subs) conn)
                 ;; Remove binding sets that involve a schema entity.
                 (remove (fn [bset] (some (fn [bval]
@@ -630,8 +673,8 @@
      (update-in mc [:targets src-name] #(update-db % data))
      (assoc-in  mc [:targets src-name] (qu/db-for! data)))))
 
-(defn $MCgetSource [mc name] (-> mc :sources mc (get name)))
-(defn $MCgetTarget [mc name] (-> mc :targets mc (get name)))
+(defn $MCgetSource [mc name] (-> mc :sources (get name)))
+(defn $MCgetTarget [mc name] (-> mc :targets (get name)))
 
 (defn $MCaddSchema
   "Add knowledge of schema to an existing DB.

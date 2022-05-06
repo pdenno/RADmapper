@@ -109,8 +109,8 @@
                 (bi/$map [1 2 3] $inc))
              (rew/rewrite* :ptag/code-block "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))" :rewrite? true)))
 
-      (is (= '(bi/$reduce (range 1 (inc 5)) $sum 100)
-             (rew/rewrite* :ptag/exp "$reduce([1..5], $sum, 100)" :rewrite? true)))
+      (is (= '(bi/$reduce (range 1 (inc 5)) (-> (fn [$x $y] (bi/+ $x $y)) (with-meta {:params '[$x $y], :body '(bi/+ $x $y)})) 100)
+             (rew/rewrite* :ptag/exp "$reduce([1..5], function($x,$y){$x + $y}, 100)" :rewrite? true)))
 
       (is (= '($fn1 (bi/access (bi/access ($fn2 $v) "a") "b"))
              (rew/rewrite* :ptag/exp "$fn1($fn2($v).a.b)" :rewrite? true)))
@@ -147,6 +147,3 @@
                            $yy  := 'ybat';
                            $f($x, $y) )"
                          :rewrite? true)))))
-              
-              
-

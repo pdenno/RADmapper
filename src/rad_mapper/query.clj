@@ -2,7 +2,6 @@
   "supporting code for $query and $enforce"
   (:require
    [datahike.api                  :as d]
-   [rad-mapper.builtins           :as bi]
    [taoensso.timbre               :as log]))
 
 ;;; ToDo: Get some more types in here, and in implementation generally.
