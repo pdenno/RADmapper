@@ -85,7 +85,7 @@
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \?})
 
 (def ^:private long-syntactic ; chars that COULD start a multi-character syntactic elements.
-  #{\<, \>, \=, \., \:, \/, \', \?, \~}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
+  #{\<, \>, \=, \., \:, \/, \', \?, \~, \@}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
 (defrecord JaJvar [jvar-name special?])
 (defrecord JaQvar [qvar-name])
@@ -143,7 +143,7 @@
   "read a query var"
   [st]
   (let [s (-> st str/split-lines first)]
-    (if-let [[_ matched] (re-matches #"(\?[a-z,A-Z][a-z,A-Z,\-,0-9]*).*" s)]
+    (if-let [[_ matched] (re-matches #"(\?[a-z,A-Z][a-zA-Z0-9\-\_]*).*" s)]
       {:raw matched :tkn (->JaQvar matched)}
       (throw (ex-info "String does not start a legal query variable:" {:string s})))))
 
@@ -152,7 +152,8 @@
   "read a triple role"
   [st]
   (let [s (-> st str/split-lines first)]
-    (if-let [[_ matched] (re-matches #"(\:[a-z,A-Z]+[a-z,A-Z,0-9,/]*).*" s)]
+    ;; ToDo: Only one '/' allowed!
+    (if-let [[_ matched] (re-matches #"(\:[a-zA-Z][a-zA-Z0-9/\-\_]*).*" s)]
       (if (or (> (-> (for [x matched :when (= x  \/)] x) count) 1)
               (= \/ (nth matched (-> matched count dec))))
         (throw (ex-info "String does not start a legal triple role:" {:string s}))
@@ -172,12 +173,13 @@
                             (= c0 \') (single-quoted-string st)
                             (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (read-qvar st),
                             (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (read-triple-role st),
-                            (and (= c0 \:) (= c1 \=)) {:raw ":=" :tkn :binding}
-                            (and (= c0 \<) (= c1 \=)) {:raw "<=" :tkn :<=}
-                            (and (= c0 \>) (= c1 \=)) {:raw ">=" :tkn :>=}
-                            (and (= c0 \=) (= c1 \=)) {:raw "==" :tkn :==}
-                            (and (= c0 \.) (= c1 \.)) {:raw ".." :tkn :range}
-                            (and (= c0 \!) (= c1 \=)) {:raw "!=" :tkn :!=}
+                            (= c0 \@) {:raw "@" :tkn :splice},
+                            (and (= c0 \:) (= c1 \=)) {:raw ":=" :tkn :binding},
+                            (and (= c0 \<) (= c1 \=)) {:raw "<=" :tkn :<=},
+                            (and (= c0 \>) (= c1 \=)) {:raw ">=" :tkn :>=},
+                            (and (= c0 \=) (= c1 \=)) {:raw "==" :tkn :==},
+                            (and (= c0 \.) (= c1 \.)) {:raw ".." :tkn :range},
+                            (and (= c0 \!) (= c1 \=)) {:raw "!=" :tkn :!=},
                             (and (= c0 \~) (= c1 \>)) {:raw "~>" :tkn "~>"})]
       (assoc result :ws ws))))
 
@@ -224,19 +226,15 @@
                word (subs s 0 (or pos (count s)))]
            (or ; We don't check for "builtin-fns"; as tokens they are just jvars.
             (and (keywords word)    {:ws ws :raw word :tkn (keyword word)})
-            (when-let [[_ id] (re-matches #"^([a-zA-Z0-9\_]+).*" word)]                   ; field.
+            (when-let [[_ id] (re-matches #"^([a-zA-Z0-9\_]+).*" word)]              ; field.
               {:ws ws :raw id :tkn (->JaField id)})
-            (when-let [[_ id] (re-matches #"^(\${1,3}[a-zA-Z]?[\$A-Za-z0-9\_]*).*" word)] ; jvar, $, $$, $$$.
-              {:ws ws :raw id :tkn (map->JaJvar {:jvar-name id :special? (#{"$" "$$" "$$$"} id)})})
-            (when-let [[_ id] (re-matches #"^(:[a-zA-Z]?[a-zA-Z0-9-]*).*" word)]          ; triple role
-              {:ws ws :raw id :tkn (->JaTripleRole id)}))
-           #_(or
-            ;(and (builtin-fns word) {:ws ws :raw word :tkn word})
-            (and (keywords word) {:ws ws :raw word :tkn (keyword word)})
-            (when-let [[_ id] (re-matches #"^(\${1,3}[a-zA-Z]?[\$A-Za-z0-9\_]*).*" word)] ; jvar, $, $$, $$$.
-              {:ws ws :raw id :tkn (var-types id)})
-            (when-let [[_ id] (re-matches #"^([\$A-Za-z0-9\_]+).*" word)] ; jvar, $, $$, $$$.
-              {:ws ws :raw id :tkn (->JaField id)})))
+            ;; ToDo: Handle $ and $$ separately! (Drop $$$ ?)
+            (when-let [[_ id] (re-matches #"^(\$[a-zA-Z][A-Za-z0-9\_]*).*" word)]    ; jvar
+              {:ws ws :raw id :tkn (map->JaJvar {:jvar-name id})})
+            (when-let [[_ id] (re-matches #"^(\${1,3}).*" word)]                     ; $, $$, $$$.             
+              {:ws ws :raw id :tkn (map->JaJvar {:jvar-name id :special? true})})
+            (when-let [[_ id] (re-matches #"^(:[a-zA-Z][a-zA-Z0-9\-\_]*).*" word)]   ; triple role
+              {:ws ws :raw id :tkn (->JaTripleRole id)})))
          (throw (ex-info "Char starts no known token: " {:raw c :line line})))))
 
 (defn tokenize

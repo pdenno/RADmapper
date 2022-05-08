@@ -72,7 +72,7 @@
                     (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
                     :else (get param-map x x)))]
     `(defn ~fn-name ~doc-string
-       (~abbrv-params (~fn-name ~@abbrv-args))
+      (~abbrv-params (~fn-name ~@abbrv-args))
        ([~@(vals param-map)]
         (reset! $ (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#))))))))
 
@@ -207,8 +207,48 @@
                 :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
                                       {:vars (-> func meta :params)}))))))
 
-;;; ToDo: Check whether $map can use bi/access.
-;;; Certainly "mapping" in the sense of  $.(<expr) can, but that's a different sort of thing.
+(defn reduce-body-enforce
+  "This is for reducing with an enforce function, where metadata on the
+   function directs various behaviors such as whether results are returned
+   or a database is updated." ; ToDo: That last part about the DB!
+  [coll func init]
+  (let [num-params (-> func meta :params count)]
+    (let [result (loop [c (rest coll),
+                        r init,
+                        i 0]
+                  (if (empty? c)
+                    r
+                    (recur (rest c),
+                           (case num-params
+                             3 (func r (first c) i)
+                             2 (func r (first c) i))
+                           (inc i))))]
+      ;; result is just the collection of results from body mechanically produced.
+      ;; They describe fact types that need to be organized according to the schema.
+      ;; (-> func meta :options) describes the schema, among other things.
+      (let [db (qu/db-for! result)]
+        ))))
+
+;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
+;;;       My doc-string below doesn't say.
+;;;       In the above I pass it the collection untouched every time.
+;;;       The JSONata documentation (http://docs.jsonata.org/higher-order-functions) doesn't say either!
+(defn reduce-body-typical
+  "This is for $reduce with JSONata semantics."
+  [coll func]
+  (let [num-params (-> func meta :params count)]
+    (reset! $ (loop [c (rest coll),
+                     r (first coll)
+                     i 0]
+                (if (empty? c)
+                  r
+                  (recur (rest c),
+                         (case num-params
+                           4 (func r (first c) i coll),
+                           3 (func r (first c) i),
+                           2 (func r (first c))),
+                         (inc i)))))))
+
 (defn $reduce
   "Signature: $reduce(array, function [, init])
 
@@ -219,44 +259,26 @@
   between each value within the array. The signature of this supplied function must be of the form:
   myfunc($accumulator, $value [, $index [, $array]])
 
+  
   Example 1:   ( $product := function($i, $j){$i * $j};
                $reduce([1..5], $product)
                )
 
-  Exampel 2: ( $add := function($i, $j){$i + $j};
+  Example 2: ( $add := function($i, $j){$i + $j};
                $reduce([1..5], $add, 100))
              )
 
-  This multiplies all the values together in the array [1..5] to return 120.
-
   If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
   If not supplied, the initial value is the first value in the array parameter"
-  ([coll func init] ($reduce (into (vector init) coll) func))
-  ([coll func]
-   (reset! $ (let [nvars  (-> func meta :params count)]
-               ;; Deal with the accumulator function having 2-4 arguments.
-               (cond
-                 (== nvars 4)
-                 (loop [c (rest coll), i 0, r (first coll)]
-                   (if (empty? c)
-                     r
-                     (let [val (func r (first c) i coll)]
-                       (recur (rest c), (inc i), val))))
-                 (== nvars 3)
-                 (loop [c (rest coll), i 0, r (first coll)]
-                   (if (empty? c)
-                     r
-                     (let [val (func r (first c) i)]
-                       (recur (rest c), (inc i), val))))
-                 (== nvars 2)
-                 (loop [c (rest coll), r (first coll)]
-                   (if (empty? c)
-                     r
-                     (let [val (func r (first c))]
-                       (recur (rest c) val))))
-                 :else
-                 (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
-                                 {:vars (-> func meta :params)})))))))
+  ([coll func init] (if (<= 2 (-> func meta :params count) 4)
+                      (if (-> func meta :enforce?)
+                        (reduce-body-enforce coll func init)
+                        ($reduce (into (vector init) coll) func))
+                       (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
+                                 {:vars (-> func meta :params)}))))
+  ([coll func] (if (-> func meta :enforce?)
+                 (reduce-body-enforce coll func [])
+                 (reduce-body-typical coll func))))
 
 (defn $single
   "See http://docs.jsonata.org/higher-order-functions
@@ -547,7 +569,6 @@
 
 ;;; Thoughts on schema
 ;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
-;;;   - One needs to to specify schema on $transform, even if it is {}
 ;;;   - What is provided as argument overrides what is learned in $query.
 ;;;   - $enforce could be with an argument schema.
 (defn* $schemaFor
@@ -569,7 +590,7 @@
                     (filter #(str/starts-with? % "?"))
                     distinct)]
     `[:find ~@vars
-      :keys ~@(->> vars (map #(subs (str %) 1)) (map symbol))
+      :keys ~@(map symbol vars)
       :where ~@(tp-aux body)])))
 
 (defn immediate-query-fn
@@ -577,7 +598,7 @@
   [body]
   (fn [data|db]
     (let [conn (if (= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
-      (->> (d/q (qform-runtime-sub body {}) conn)
+      (->> (d/q (qform-runtime-sub body {}) conn) ; This is possible because body is data to d/q.
            ;; Remove binding sets that involve a schema entity.
            (remove (fn [bset] (some (fn [bval]
                                       (and (keyword? bval)
@@ -623,6 +644,42 @@
   (if (empty? params)
     (immediate-query-fn body)
     (higher-order-query-fn body params)))
+
+;;; enforce (compared to query) is a macro because the splicing is 
+(defn enforce
+  "See query!!!" ; ToDo: a doc string...
+  [params body]
+  (if (empty? params)
+    ;; The immediate function.
+    (eval `(fn [res b-set]
+             (do (println "Running immediate, b-set = " b-set)
+                 (conj res (do ~body)))))
+    ;; The higher-order-fn
+    (eval `(fn [param-vals]
+             (let [~@(zipmap params para-vals
+    `(~'-> 
+      (~'fn [~'res ~'b-set]
+       (do #_(
+           (~'conj ~'res ~body)))
+      (~'with-meta {:params '[~'target-db ~'b-set]
+                    :enforce? true})) ; :enforce? is used by $reduce.
+    ;; The higher function.
+    (fn 
+        `(~'-> 
+      (~'fn [~'res ~'b-set]
+       (do #_(println "Running immediate, b-set = " ~'b-set)
+           (~'conj ~'res ~body)))
+      (~'with-meta {:params '[~'target-db ~'b-set]
+                    :enforce? true})) ; :enforce? is used by $reduce.
+
+    
+
+    
+                                        
+
+  (if (empty? params)
+    (immediate-enforce-fn body)
+    (higher-order-enforce-fn body params)))
 
 
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
@@ -683,4 +740,6 @@
   (let [type (cond (-> mc :sources (contains? db-name)) :sources
                    (-> mc :targets (contains? db-name)) :targets
                    :else (throw (ex-info "No such database:" {:db-name db-name})))]
-       (update-in mc [type db-name] #(update-db % schema-data))))
+    (update-in mc [type db-name] #(update-db % schema-data))))
+
+

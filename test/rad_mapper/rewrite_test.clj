@@ -99,7 +99,6 @@
       (is (= '(bi/$sum (mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q"))) (bi/access $v "a")))
              (rew/rewrite* :ptag/exp "$sum($v.a.(P * Q))" :rewrite? true)))
 
-      ;; ToDo: is with-meta sill useful here?
       ;; Miscellaneous other tests.
       (is (= '(-> (fn [$v $i $a] (< (bi/access $v "cbc_InvoicedQuantity") 0))
                   (with-meta {:params '[$v $i $a], :body '(< (bi/access $v "cbc_InvoicedQuantity") 0)}))

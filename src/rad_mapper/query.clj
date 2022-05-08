@@ -28,8 +28,8 @@
 
 (defn learn-schema-walking
   "Return DH schema objects for the data provided."
-  [data]
-  (let [learned (atom {})]
+  [data & {:keys [known-schema] :or {known-schema {}}}]
+  (let [learned (atom known-schema)]
     (letfn [(update-learned! [k v]
               (let [typ  (-> @learned k :db/valueType)
                     card (-> @learned k :db/cardinality)
@@ -82,12 +82,12 @@
 (defn db-for!
   "Create a database for the argument data and return a connection to it.
    Called by builtins for query and enforce, for example."
-  [data & {:keys [db-name] :or {db-name "temp"}}]
+  [data & {:keys [known-schema db-name] :or {known-schema {} db-name "temp"}}]
   (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}
         data (-> (if (vector? data) data (vector data)) clj-like)]
     (when (d/database-exists? db-cfg) (d/delete-database db-cfg))
     (d/create-database db-cfg)
     (let [conn-atm (d/connect db-cfg)]
-      (d/transact conn-atm (learn-schema-walking data))
+      (d/transact conn-atm (learn-schema-walking data :known-schema known-schema))
       (d/transact conn-atm data)
       @conn-atm)))

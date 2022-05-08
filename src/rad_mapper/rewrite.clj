@@ -188,19 +188,17 @@
     ~(rewrite (:rel m))
     ~(rewrite (:val-exp m))])
 
-(def ^:dynamic in-enforce? false)
+(def ^:dynamic in-enforce? "While inside an enforce, qvar references are wrapped." false)
 
 (defrewrite :JaQvar [m]
-  (if in-enforce?
-    `(~'bi/get-from-b-set ~'_b-set ~(-> m :qvar-name (subs 1) keyword))
+  (if in-enforce? ; b-set is an argument passed into the enforce function.
+    `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
     (-> m :qvar-name symbol)))
 
 (defrewrite :JaEnforceDef [m]
   (binding [in-enforce? true]
-    (let [params (-> m :params rewrite)]
-      `(~'-> (~'fn [~'_accum ~'_b-set ~@params]
-              ~(-> m :body rewrite))
-        (~'with-meta {:params '~(into '[_accum b-set] params)})))))
+    `(~'bi/enforce {:options ~(-> m :params rewrite)
+                    :body    '~(-> m :body rewrite)})))
 
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
 ;;; User functions also translate using this, but don't use the metadata.
@@ -215,14 +213,12 @@
 (defrewrite :JaImmediateUse [m]
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
-;;; (rew/rewrite* :ptag/exp "true?'a':'b'" :simplify? true) ==>
-;;; {:_type :JaConditionalExp, :predicate :true, :exp1 "a", :exp2 "b"}
 (defrewrite :JaConditionalExp [m]
   `(~'if ~(-> m :predicate rewrite)
     ~(-> m :exp1 rewrite)
     ~(-> m :exp2 rewrite)))
 
-;;;---------------------------- Binary ops, precedence ordering, and paths --------------------------------------------------
+;;;----------- Binary ops, precedence ordering, and paths. Half the work of rewriting! -----------------
 ;;; This one produces a :BFLAT structure.
 (defrewrite :JaBinOpExp [m]
   (let [preprocess (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps)]
