@@ -2,14 +2,15 @@
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    rewrite* is a top-level function for this."
   (:require
-   [clojure.pprint :refer [cl-format pprint]]
-   [clojure.set    :as set]
-   [clojure.spec.alpha :as s]
+   [clojure.java.io     :as io]
+   [clojure.pprint      :refer [cl-format pprint]]
+   [clojure.set         :as set]
+   [clojure.spec.alpha  :as s]
    [rad-mapper.builtins :as bi]
    [rad-mapper.evaluate :as ev]
-   [rad-mapper.util :as util :refer [dgensym!]]
-   [rad-mapper.parse  :as par]
-   [taoensso.timbre   :as log]))
+   [rad-mapper.util     :as util :refer [dgensym!]]
+   [rad-mapper.parse    :as par]
+   [taoensso.timbre     :as log]))
 
 ;;; ToDo:
 ;;;   - Look into why you can't do (defrewriter \. ...) That is, use something other than a keyword for the tag.
@@ -20,8 +21,37 @@
 (def locals (atom [{}]))
 (declare map-simplify remove-nils rewrite make-runnable)
 (declare binops2bvecs walk-for-bvecs reorder-for-delimited-exps connect-bvec-fields rewrite-bvec-as-sexp precedence)
+(def diag (atom nil))
 
 (defn rewrite*
+  "A top-level function for all phases of translation.
+   parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
+   With no opts it rewrites without debug output."
+  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? verbose?] :as opts}]
+  simplify? rewrite? ; ToDo Avoid Kondo warning
+  (let [kopts (-> opts keys set)
+        simplify? (not-empty (set/intersection #{:print? :rewrite? :simplify?} kopts))
+        rewrite?  (not-empty (set/intersection #{:print? :rewrite?} kopts))]
+    (binding [*debugging?* debug?
+              par/*debugging?* debug-parse?]
+      (if (or *debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
+      (let [ps (with-open [rdr (io/reader (if file? str (char-array str)))]
+                 (as-> (par/make-pstate rdr) ?ps
+                   (par/parse tag ?ps)
+                   (reset! diag (dissoc ?ps :line-seq)) ; dissoc so you can print it.
+                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))))]
+        (if (= :ok (:parse-status ps))
+          (as-> (:result ps) ?r
+            (if simplify? (map-simplify ?r) ?r)
+            (if rewrite?  (rewrite ?r) ?r)
+            (if execute?  (ev/user-eval ?r :verbose? verbose?) ?r)
+            (if (:rewrite-error? ?r)
+              (throw (ex-info "Error in rewriting" {:result (with-out-str (pprint ?r))}))
+              ?r))
+          (case (:parse-status ps)
+            :premature-end (log/error "Parse ended prematurely")))))))
+
+#_(defn rewrite*
   "A top-level function for all phases of translation.
    parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it rewrites without debug output."
@@ -469,8 +499,6 @@
                               (conj o (nth args pos))))                         ;; no change
                       []
                       (range (count args))))))
-
-(def diag (atom nil))
 
 (defn rewrite-bvec-as-sexp
   "Process the :bvec of BVEC to a sexps conforming to

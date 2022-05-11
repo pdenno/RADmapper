@@ -619,22 +619,6 @@
                           (rw-ast ?o))) ; If here actual-type probably turned it into a primitive.
         :else o))
 
-#_(defn unbox
-  "The argument has two keys, one of which is rel-form/table-type,
-   the is the value we want to unbox. Same situation with the boxed value."
-  [o]
-  (let [k  (->> o   keys (remove #(= % :table/type)) first)
-        bk (->> o k keys (remove #(= % :table/type)) first)]
-    (assoc o k (-> o k bk))))
-
-#_(defn unbox2
-  "The argument has two keys, one of which is rel-form/table-type,
-   the is the value we want to unbox. Same situation with the boxed value."
-  [o attr]
-  (let [k  (->> o   keys (remove #(= % :table/type)) first)
-        bk (->> o k keys (remove #(= % :table/type)) first)]
-    (assoc o k (-> o k bk))))
-
 ;;; ToDo: :FnCall/fn-name needs this but doesn't work like the others!
 (defn adjust-exp
   "Correct a few annoying things about rw-ast: vars and fields define strings;
@@ -687,8 +671,7 @@
         (vector? obj)  (mapv #(assoc %   :table/toplevel-exp? true) obj)
         :else (throw (ex-info "Toplevel is a primitive type?" {:obj obj}))))
 
-;;;(def scott-result (rew/rewrite* :ptag/exp scott/scott-example :simplify? true))
-(def scott-result (-> "data/testing/map-examples/scott-result.edn" slurp read-string))
+(def scott-result (rew/rewrite* :ptag/exp "data/testing/map-examples/shipped-item-instance-clean.json" :file? true :simplify? true))
 
 (defn tryme
   []

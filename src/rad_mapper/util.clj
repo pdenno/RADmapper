@@ -168,3 +168,9 @@
 (def dg-cnt (atom 0))
 (defn reset-dgensym! [] (reset! dg-cnt 0))
 (defn dgensym! [] (->> (swap! dg-cnt inc) (str "_x") symbol))
+
+(defn class-name
+  "Return a keyword representing the class of the object.
+  For example (class-name 1) ==> :Long. Class name is not namespace-qualified."
+  [obj]
+  (->> obj type str (re-matches #"^.+\.(.*)$") second keyword))
