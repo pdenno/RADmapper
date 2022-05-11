@@ -52,7 +52,8 @@
      (let [result# (try (let [res# (do ~@body)] (if (seq? res#) (doall res#) res#)) ; See note above.
                         (catch Exception e#
                           (log/error "Error rewriting:" e#)
-                          (ex-message (.getMessage e#)) {:obj ~obj :rewrite-error? true}))]
+                          (ex-message (.getMessage e#))
+                          {:obj ~obj :rewrite-error? true}))]
      (swap! tags #(-> % rest vec))
      (swap! locals #(-> % rest vec))
      (do (when *debugging?* (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
@@ -386,7 +387,7 @@
    \=           {:assoc :none :val 800}
    :!=          {:assoc :none :val 800}
    :in          {:assoc :none :val 700}
-   "~>"         {:assoc :left :val 700} ; ToDo guessing
+   :thread      {:assoc :left :val 700} ; ToDo guessing
    \&           {:assoc :left :val 400} ; ToDo guessing
    \+           {:assoc :left :val 400}
    \-           {:assoc :left :val 400}

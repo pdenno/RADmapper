@@ -77,7 +77,7 @@
 (def comparison-operators '{:<= <=, :>= >=, :!= not=, \< <, \= =, \> >, "in" bi/in})
 (def boolean-operators '{:and and :or or})
 (def string-operators '{\& bi/&})
-(def other-operators '{\. bi/access, "~>" bi/thread})
+(def other-operators '{\. bi/access, :thread bi/thread})
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
@@ -85,7 +85,7 @@
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \?})
 
 (def ^:private long-syntactic ; chars that COULD start a multi-character syntactic elements.
-  #{\<, \>, \=, \., \:, \/, \', \?, \~, \@}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
+  #{\<, \>, \=, \., \:, \/, \', \?, \~, \!}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
 (defrecord JaJvar [jvar-name special?])
 (defrecord JaQvar [qvar-name])
@@ -173,14 +173,13 @@
                             (= c0 \') (single-quoted-string st)
                             (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (read-qvar st),
                             (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (read-triple-role st),
-                            (= c0 \@) {:raw "@" :tkn :splice},
                             (and (= c0 \:) (= c1 \=)) {:raw ":=" :tkn :binding},
                             (and (= c0 \<) (= c1 \=)) {:raw "<=" :tkn :<=},
                             (and (= c0 \>) (= c1 \=)) {:raw ">=" :tkn :>=},
                             (and (= c0 \=) (= c1 \=)) {:raw "==" :tkn :==},
                             (and (= c0 \.) (= c1 \.)) {:raw ".." :tkn :range},
                             (and (= c0 \!) (= c1 \=)) {:raw "!=" :tkn :!=},
-                            (and (= c0 \~) (= c1 \>)) {:raw "~>" :tkn "~>"})]
+                            (and (= c0 \~) (= c1 \>)) {:raw "~>" :tkn :thread})]
       (assoc result :ws ws))))
 
 (defn position-break
@@ -679,7 +678,7 @@
     (parse :ptag/exp ?ps #_#_:in-binary? true) ; in-binary? so that the caller can consume \?, and other reasons.
     (assoc ?ps :result (->JaBinOpExp (recall ?ps :exp1) (recall ?ps :op) (:result ?ps)))))
 
-;;; ToDo This one needs some explaining!
+;;; ToDo: This one needs some explaining!
 ;;; <delimited-exp> ::= <operand-exp> ( ('.' <paren-delimited-exp>) | ('.' <curly-delimited-exp>) | <square-delimited-exp> )
 (defparse :ptag/delimited-exp
   [ps & {:keys [operand-info]}]

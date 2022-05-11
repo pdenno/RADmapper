@@ -259,7 +259,7 @@
   between each value within the array. The signature of this supplied function must be of the form:
   myfunc($accumulator, $value [, $index [, $array]])
 
-  
+
   Example 1:   ( $product := function($i, $j){$i * $j};
                $reduce([1..5], $product)
                )
@@ -645,8 +645,8 @@
     (immediate-query-fn body)
     (higher-order-query-fn body params)))
 
-;;; enforce (compared to query) is a macro because the splicing is 
-(defn enforce
+;;; enforce (compared to query) is a macro because the splicing is
+#_(defn enforce
   "See query!!!" ; ToDo: a doc string...
   [params body]
   (if (empty? params)
@@ -657,30 +657,31 @@
     ;; The higher-order-fn
     (eval `(fn [param-vals]
              (let [~@(zipmap params para-vals
-    `(~'-> 
+    `(~'->
       (~'fn [~'res ~'b-set]
        (do #_(
            (~'conj ~'res ~body)))
       (~'with-meta {:params '[~'target-db ~'b-set]
                     :enforce? true})) ; :enforce? is used by $reduce.
     ;; The higher function.
-    (fn 
-        `(~'-> 
+    (fn
+        `(~'->
       (~'fn [~'res ~'b-set]
        (do #_(println "Running immediate, b-set = " ~'b-set)
            (~'conj ~'res ~body)))
       (~'with-meta {:params '[~'target-db ~'b-set]
                     :enforce? true})) ; :enforce? is used by $reduce.
 
-    
 
-    
-                                        
+
+
+
 
   (if (empty? params)
     (immediate-enforce-fn body)
-    (higher-order-enforce-fn body params)))
+    (higher-order-enforce-fn body params)))))])))))
 
+(defn enforce [& _ignore] :nyi)
 
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
 (defn update-db
@@ -741,5 +742,3 @@
                    (-> mc :targets (contains? db-name)) :targets
                    :else (throw (ex-info "No such database:" {:db-name db-name})))]
     (update-in mc [type db-name] #(update-db % schema-data))))
-
-

@@ -18,3 +18,7 @@ resources/database
 target
 .cpcache
 .clj-kondo/.cache
+data/schema
+data/testing/map-examples
+data/testing/messages
+data/testing/spreadsheets

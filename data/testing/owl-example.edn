@@ -1,4 +1,6 @@
 [
+
+
 {:resource/iri :dol/endurant,
  :resource/name "endurant",
  :resource/namespace "dol",
@@ -6,6 +8,7 @@
  :rdf/type :owl/Class,
  :rdfs/comment ["The main characteristic of endurants is ..."],
  :rdfs/subClassOf :dol/spatio-temporal-particular}
+
 
 {:resource/iri :dol/participant,
  :resource/name "participant",
@@ -16,6 +19,7 @@
  :rdfs/domain :dol/perdurant,
  :rdfs/range :dol/endurant,
  :rdfs/subPropertyOf :dol/immediate-relation}
+
 
 {:resource/iri :dol/participant-in,
  :resource/name "participant-in",

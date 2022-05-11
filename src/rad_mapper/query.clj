@@ -39,7 +39,7 @@
                                 :db.cardinality/many
                                 :db.cardinality/one)]
                 (if (and typ (not= typ this-typ))
-                  (log/warn "Different types:" k)
+                  (log/warn "Different types:" k "first:" typ "second:" this-typ)
                   (swap! learned #(-> %
                                       (assoc-in [k :db/cardinality] this-card)
                                       (assoc-in [k :db/valueType] this-typ))))))
@@ -81,7 +81,8 @@
 
 (defn db-for!
   "Create a database for the argument data and return a connection to it.
-   Called by builtins for query and enforce, for example."
+   Called by builtins for query and enforce, for example.
+   The argument known-schema takes a map indexed by db/ident (not a vector)."
   [data & {:keys [known-schema db-name] :or {known-schema {} db-name "temp"}}]
   (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}
         data (-> (if (vector? data) data (vector data)) clj-like)]

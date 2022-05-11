@@ -334,7 +334,7 @@
                                 (-> {} (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))]))})
                           []))
            (rew/rewrite* :ptag/code-block owl-full-immediate :rewrite? true)))))
-           
+
 
 (def owl-query-immediate
 "
@@ -431,14 +431,14 @@
   []
   (let [_b-sets   [{:?ent 1 :?word-1 "Hello" :?word-2 "world!"}
                    {:?ent 2 :?word-1 "Nice"  :?word-2 "day!"}]
-        ;; Same thing produced by running a query with in-line data. 
+        ;; Same thing produced by running a query with in-line data.
         b-sets (rew/rewrite* :ptag/exp
                              "query(){[?ent :greeting/word-1 ?word-1] [?ent :greeting/word-2 ?word-2]}
                                        ([{'greeting/word-1' : 'Hello', 'greeting/word-2' : 'world!'}
                                          {'greeting/word-1' : 'Nice',  'greeting/word-2' : 'day!'}])"
                              :execute? true)
         ;; Body will be used by bi/enforce to define a function and associate metadata with it.
-        _e-fn (bi/enforce {:options [],
+        _e-fn :nyi #_(bi/enforce {:options [],
                            :body (-> {}
                                      (assoc "target/word-1" (bi/get-from-b-set b-set :?word-1))
                                      (assoc "target/word-2" (bi/get-from-b-set b-set :?word-2)))})
@@ -453,32 +453,31 @@
 (deftest basic-enforce
   (testing "Testing basic enforce operation."
     (is (=
-         (enforce-demo)
+         (enforce-demo) :nyi))))
 
-
-(->
+#_(->
  (fn [res b-set]
    (conj res (-> {}
                  (assoc "target/word-1" (bi/get-from-b-set b-set :?word-1))
                  (assoc "target/word-2" (bi/get-from-b-set b-set :?word-2)))))
- (with-meta {:params '[target-db b-set], :enforce? true, :options options}))         
+ (with-meta {:params '[target-db b-set], :enforce? true, :options options}))
 
 ;;; In some respects, $table isn't any different than ?class-iri
 ;;;   1) I should write the body to wrap the value of the $jvars similar to how I wrap $qvars.
-;;;      The body would inject the params values into the binding-set. 
+;;;      The body would inject the params values into the binding-set.
 ;;;         OR
-;;;   2) The call to a parametric enforce could create a closure.
+;;;   2) The call to a parametric enforce could SOMEHOW? create a closure.
 (def owl-full-enforce-extra
   "In this one, which is what I think should be in the spec, I'm not bothering with MCs."
 "
 ( $data := $readFile('data/testing/owl-example.edn');
 
-  $qtype  := query($rdfType, $extraRows)
+  $qtype  := query($rdfType, $extraTrips)
                { [?class :rdf/type            $rdfType]
                  [?class :resource/iri        ?class-iri]
                  [?class :resource/namespace  ?class-ns]
                  [?class :resource/name       ?class-name]
-                 @$extraRows
+                 $extraTrips
                };  // Defines a higher-order function, a template of sorts.
 
   $etype  := enforce($tableType)
@@ -487,16 +486,18 @@
                   'content'      : [{'resourceIRI'       : ?class-iri},
                                     {'resourceNamespace' : ?class-ns},
                                     {'resourceLabel'     : ?class-name}]}
-                           }; // Likewise, for an enforce template. 
+                           }; // Likewise, for an enforce template.
                               // The target tables for objects and relations a very similar.
 
-  $quClass := $qtype('owl/Class');     // Use the template, here and the next thee lines.
-  $quProp  := $qtype('owl/ObjectProperty',[[?class :rdfs/domain ?domain] [?class :rdfs/range ?range]])
+  $quClass := $qtype('owl/Class');     // Use the template, here and the next three assignments.
+
+  // This one doesn't just specify a value for $rdfType, but for $extraTrips.
+  $quProp  := $qtype('owl/ObjectProperty',queryTriples{[?class :rdfs/domain ?domain] [?class :rdfs/range ?range]});
   $enClassTable := $etype('ClassDefinition');
   $enPropTable  := $etype('PropertyDefinition');
 
   // Run the class query; return a collection of binding sets about classes.
-  $clasBsets := $quClass($data); 
+  $clasBsets := $quClass($data);
 
   // We start enforcing with no data, thus the third argument is [].
   $tar_data := $reduce($clasBsets, $enClassTable, []);
@@ -504,17 +505,17 @@
   // Get bindings sets for the ObjectProperties and make similar tables.
   $propBsets := $qProp($data);
 
-  // We pass in the target data created so far. 
+  // We pass in the target data created so far.
   $reduce($propBsets, $enPropTable, $tar_data) // The code block returns the target data.
 )")
 
-(deftest owl-enforce
+#_(deftest owl-enforce
   (testing "Testing basic enforce behavior."
     (is (= :todo
            (rew/rewrite* :ptag/code-block owl-full-enforce :execute? true)))))
 
 
-(defn tryme []
+#_(defn tryme []
   (let [$mc (bi/thread (bi/$MCnewContext) (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn") "owl-source"))
         $qtype (bi/query '[$type] '[[?class :rdf/type $type]
                                     [?class :resource/iri ?class-iri]
@@ -545,3 +546,165 @@
                                             (-> {} (assoc "resourceLabel" (bi/get-from-b-set _b-set :class-name)))])))
                     (with-meta {:params '[_accum b-set $bs], :enforce? true}))
                 $tar_data)))
+
+
+;;;====================== Temporary, work on AST idea ===================================
+(def diag (atom nil))
+(declare rw-ast)
+
+(def type2name
+  {:JaConditionalExp "Conditional"
+   :JaField          "FieldAccess"
+   :JaFnCall         "FnCall"
+   :JaBinOpExp       "BinaryExp"
+   :JaFnDef          "FnDef"
+   :JaJvar           "VarDef"
+   :JaMapPair        "KVpair"
+
+   :ArrayConstruction    "Array"
+   :ObjectConstruction   "Object"
+   :JaParenDelimitedExp  "ELIMINATED?"})
+
+(def needs-analysis? #{:JaSquareDelimitedExp :JaCurlyDelimitedExp :JaParenDelimitedExp})
+
+(defn actual-type
+  "The objects for which needs-analysis? is true are rewritten to see what
+  is actually being done."
+  [m]
+  (case (:_type m)
+    :JaSquareDelimitedExp (if (:operand m)
+                            (assoc m :_type :FilterExp)
+                            (assoc m :_type :ArrayConstruction))
+    :JaParenDelimitedExp  (if (:operand m)
+                            (assoc m :_type :MapExp)
+                            (:exp m)) ; It is a "primary"
+    :JaCurlyDelimitedExp  (assoc m :_type :ObjectConstruction)))
+
+(def char2op
+  {\. :field-access
+   \& :str-concat
+   \> :>
+   \< :<
+   \= :equality
+   \+ :plus
+   \- :minus
+   \* :times
+   \/ :divide})
+
+(defn lookup-op [c]
+  (if (contains? char2op c)
+    (char2op c)
+    (keyword (str "unknown-op" c))))
+
+(defn rw-ast
+  "Rewrite the AST (or more accurately concrete syntax tree) to
+    (1) box primitives and regular expressions,
+    (2) determine the actual type of xDelimtedExps, and
+    (3) rename keys."
+  [o]
+  (cond (string? o)                           {:table/type :BoxedStr :BoxedStr/val o},
+        (number? o)                           {:table/type :BoxedNum :BoxedNum/val o},
+        (instance? java.util.regex.Pattern o) {:table/type :RegExp   :RegExp/val (str o)},
+        (char?   o)                           (lookup-op o),
+        (vector? o) (mapv rw-ast o),
+        (map?    o) (as-> o ?o
+                        (if (needs-analysis? (:_type ?o)) (actual-type ?o) ?o)
+                        (if-let [obj-type (-> ?o :_type type2name)]
+                          (reduce-kv (fn [m k v]
+                                       (if (= k :_type)
+                                         (assoc m :table/type (keyword obj-type))
+                                         (assoc m (keyword obj-type (name k)) (rw-ast v))))
+                                     {}
+                                     ?o)
+                          (rw-ast ?o))) ; If here actual-type probably turned it into a primitive.
+        :else o))
+
+#_(defn unbox
+  "The argument has two keys, one of which is rel-form/table-type,
+   the is the value we want to unbox. Same situation with the boxed value."
+  [o]
+  (let [k  (->> o   keys (remove #(= % :table/type)) first)
+        bk (->> o k keys (remove #(= % :table/type)) first)]
+    (assoc o k (-> o k bk))))
+
+#_(defn unbox2
+  "The argument has two keys, one of which is rel-form/table-type,
+   the is the value we want to unbox. Same situation with the boxed value."
+  [o attr]
+  (let [k  (->> o   keys (remove #(= % :table/type)) first)
+        bk (->> o k keys (remove #(= % :table/type)) first)]
+    (assoc o k (-> o k bk))))
+
+;;; ToDo: :FnCall/fn-name needs this but doesn't work like the others!
+(defn adjust-exp
+  "Correct a few annoying things about rw-ast: vars and fields define strings;
+   they don't have to be boxed."
+  [o]
+  (let [typ (:table/type o)]
+    (cond (and (map? o) (#{:VarDef :FieldAccess :FnCall} typ))
+          (->> (case typ
+                 :FnCall (assoc o :FnCall/fn-name (-> o :FnCall/fn-name :BoxedStr/val))
+                 :VarDef (-> o
+                             (assoc  :VarDef/var-name (-> o :VarDef/jvar-name :BoxedStr/val))
+                             (dissoc :VarDef/jvar-name))
+                 :FieldAccess (assoc o :FieldAccess/field-name (-> o :FieldAccess/field-name :BoxedStr/val)))
+               (reduce-kv (fn [m k v] (assoc m k (adjust-exp v))) {})),
+          (map? o)      (reduce-kv (fn [m k v] (assoc m k (adjust-exp v))) {} o)
+          (vector? o)   (mapv adjust-exp o)
+          :else o)))
+
+;;;  {:table/type :FnCall,
+;;;   :FnCall/fn-name {:table/type :BoxedStr, :BoxedStr/val "$string"},
+;;;   :FnCall/args
+;;;        [{:table/type :BinaryExp,
+;;;          :BinaryExp/exp1 {:table/type :VarDef, :VarDef/jvar-name "$payload01"},
+;;;          :BinaryExp/bin-op :field-access,
+;;;          :BinaryExp/exp2 {:table/type :FieldAccess, :FieldAccess/field-name {:table/type :BoxedStr, :BoxedStr/val "RetailerGLN"}}}]}
+(defn set-indexes
+  "A few object types, such as function calls and arrays, hold an ordered collection of elements.
+   This returns the object with the elements of those sub-objects indexed."
+  [o]
+  (letfn [(updat [obj attr attr-ix]
+            (update obj
+                    attr
+                    #(mapv (fn [e i] (assoc e attr-ix i))
+                           %
+                           (range 1 (-> % count inc)))))]
+    (let [typ (:table/type o)]
+      (cond (and (map? o) (#{:Array :FnCall :Object} typ))
+            (->> (case typ
+                   :Array  (updat o :Array/exp     :Array-elem/index)
+                   :FnCall (updat o :FnCall/args   :FnCall-args/index)
+                   :Object (updat o :Object/exp    :Object-kvpair/index))
+                 (reduce-kv (fn [m k v] (assoc m k (set-indexes v))) {})),
+            (map? o)      (reduce-kv (fn [m k v] (assoc m k (set-indexes v))) {} o),
+            (vector? o)   (mapv set-indexes o),
+            :else o))))
+
+(defn mark-toplevel
+  [obj]
+  (cond (map? obj)            (assoc obj :table/toplevel-exp? true)
+        (vector? obj)  (mapv #(assoc %   :table/toplevel-exp? true) obj)
+        :else (throw (ex-info "Toplevel is a primitive type?" {:obj obj}))))
+
+;;;(def scott-result (rew/rewrite* :ptag/exp scott/scott-example :simplify? true))
+(def scott-result (-> "data/testing/map-examples/scott-result.edn" slurp read-string))
+
+(defn tryme
+  []
+  (-> scott-result
+      rw-ast
+      mark-toplevel
+      adjust-exp
+      set-indexes
+      qu/db-for!))
+
+(defn tryme-2
+  []
+  (-> scott-result
+      rw-ast
+      mark-toplevel
+      adjust-exp
+      set-indexes
+      qu/learn-schema-walking
+      #_qu/db-for!))
