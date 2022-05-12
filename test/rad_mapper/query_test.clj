@@ -574,11 +574,17 @@
   (case (:_type m)
     :JaSquareDelimitedExp (if (:operand m)
                             (assoc m :_type :FilterExp)
-                            (assoc m :_type :ArrayConstruction))
+                            (-> m
+                                (assoc :_type :ArrayConstruction)
+                                (assoc :elem (:exp m))
+                                (dissoc :exp)))
     :JaParenDelimitedExp  (if (:operand m)
                             (assoc m :_type :MapExp)
                             (:exp m)) ; It is a "primary"
-    :JaCurlyDelimitedExp  (assoc m :_type :ObjectConstruction)))
+    :JaCurlyDelimitedExp  (-> m
+                              (assoc :_type :ObjectConstruction)
+                              (assoc :kv-pair (:exp m))
+                              (dissoc :exp))))
 
 (def char2op
   {\. :field-access
@@ -637,13 +643,6 @@
           (vector? o)   (mapv adjust-exp o)
           :else o)))
 
-;;;  {:table/type :FnCall,
-;;;   :FnCall/fn-name {:table/type :BoxedStr, :BoxedStr/val "$string"},
-;;;   :FnCall/args
-;;;        [{:table/type :BinaryExp,
-;;;          :BinaryExp/exp1 {:table/type :VarDef, :VarDef/jvar-name "$payload01"},
-;;;          :BinaryExp/bin-op :field-access,
-;;;          :BinaryExp/exp2 {:table/type :FieldAccess, :FieldAccess/field-name {:table/type :BoxedStr, :BoxedStr/val "RetailerGLN"}}}]}
 (defn set-indexes
   "A few object types, such as function calls and arrays, hold an ordered collection of elements.
    This returns the object with the elements of those sub-objects indexed."
@@ -657,15 +656,16 @@
     (let [typ (:table/type o)]
       (cond (and (map? o) (#{:Array :FnCall :Object} typ))
             (->> (case typ
-                   :Array  (updat o :Array/exp     :Array-elem/index)
-                   :FnCall (updat o :FnCall/args   :FnCall-args/index)
-                   :Object (updat o :Object/exp    :Object-kvpair/index))
+                   :Array  (updat o :Array/elem     :Array-elem/index)
+                   :FnCall (updat o :FnCall/args    :FnCall-args/index)
+                   :Object (updat o :Object/kv-pair :Object-kvpair/index))
                  (reduce-kv (fn [m k v] (assoc m k (set-indexes v))) {})),
             (map? o)      (reduce-kv (fn [m k v] (assoc m k (set-indexes v))) {} o),
             (vector? o)   (mapv set-indexes o),
             :else o))))
 
 (defn mark-toplevel
+  "Mark the toplevel expression as such."
   [obj]
   (cond (map? obj)            (assoc obj :table/toplevel-exp? true)
         (vector? obj)  (mapv #(assoc %   :table/toplevel-exp? true) obj)
@@ -691,3 +691,34 @@
       set-indexes
       qu/learn-schema-walking
       #_qu/db-for!))
+
+(defn resolve-obj
+  "Resolve :db/id in the argument map."
+  [m conn & {:keys [keep-db-ids?]}]
+  (letfn [(subobj [x]
+            (cond (and (map? x) (contains? x :resource/iri)) (:resource/iri x),          ; It is a whole resource, return ref.
+                  (and (map? x) (contains? x :db/id) (== (count x) 1))                 ; It is an object ref...
+                  (or (and (map? x)
+                           (contains? x :db/id)
+                           (d/q `[:find ?id . :where [~(:db/id x) :resource/iri ?id]] conn)) ; ...return keyword if it is a resource...
+                      (subobj (dp/pull conn '[*] (:db/id x)))),                             ; ...otherwise it is some other structure.
+                  (map? x) (reduce-kv
+                            (fn [m k v] (if (and (= k :db/id) (not keep-db-ids?)) m (assoc m k (subobj v))))
+                            {} x),
+                  (vector? x) (mapv subobj x),
+                  :else x))]
+    (-> (reduce-kv (fn [m k v] (assoc m k (subobj v))) {} m)
+        (dissoc :db/id))))
+
+(defn get-schema
+  "Return the db schema."
+  [db]
+  (->> (dp/pull-many
+        db
+        '[*]
+        (d/q '[:find [?eid ...] :where [?eid :db/ident ?id]] db))
+       (sort-by #(-> % :db/ident namespace))))
+
+(defn create-table
+  [db-ident]
+  

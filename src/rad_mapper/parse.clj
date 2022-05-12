@@ -1,7 +1,7 @@
 (ns rad-mapper.parse
   "Parse the JSONata-like message mapping language."
   (:require
-   [clojure.pprint       :as pp :refer [cl-format]]
+   [clojure.pprint :as pp :refer [cl-format]]
    [clojure.string :as str]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
@@ -293,7 +293,6 @@
              (and min-tkn (>= cnt min-tkn))         ps,
              (and (not min-tkn) (not (zero? cnt)))  ps,
              :else (recur (tokenize ps)))))))
-
 
 ;;; ============ Parser Utilities ============================================================
 (defn line-msg
