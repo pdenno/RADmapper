@@ -6,7 +6,7 @@
 
 (deftest expr-evaluations true
   (testing "evaluation of small expressions"
-    (is false) ; Needed for recent versions of CIDER!
+    #_(is false) ; Needed for recent versions of CIDER!
 
     ;; This tests use of $match
     (is (= {"match" "foo", "index" 2, "groups" []}
@@ -24,6 +24,9 @@
 
     ;; This tests mapping and the singleton behavior.
     (is (= [100 100 100] (rew/rewrite* :ptag/exp "['a', 'b', 'c'].$sum(100)" :execute? true)))
+
+    ;; This tests binary precedence and use of the context variable.
+    (is (= 11 (rew/rewrite* :ptag/code-block "($ := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; a + b * c + d)" :execute? true)))
 
     ;; This tests reduce.
     (is (= 15 (rew/rewrite* :ptag/exp "$reduce([1..5], function($i, $j){$i + $j})" :execute? true)))

@@ -30,8 +30,8 @@
   [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? verbose?] :as opts}]
   simplify? rewrite? ; ToDo Avoid Kondo warning
   (let [kopts (-> opts keys set)
-        simplify? (not-empty (set/intersection #{:print? :rewrite? :simplify?} kopts))
-        rewrite?  (not-empty (set/intersection #{:print? :rewrite?} kopts))]
+        simplify? (not-empty (set/intersection #{:rewrite? :simplify? :execute?} kopts))
+        rewrite?  (not-empty (set/intersection #{:rewrite? :execute?} kopts))]
     (binding [*debugging?* debug?
               par/*debugging?* debug-parse?]
       (if (or *debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
@@ -51,25 +51,6 @@
           (case (:parse-status ps)
             :premature-end (log/error "Parse ended prematurely")))))))
 
-#_(defn rewrite*
-  "A top-level function for all phases of translation.
-   parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
-   With no opts it rewrites without debug output."
-  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? verbose?] :as opts}]
-  simplify? rewrite? ; ToDo Avoid Kondo warning
-  (let [kopts (-> opts keys set)
-        simplify? (not-empty (set/intersection #{:execute? :rewrite? :simplify?} kopts))
-        rewrite?  (not-empty (set/intersection #{:execute? :rewrite?} kopts))]
-    (binding [*debugging?* debug?
-              par/*debugging?* debug-parse?]
-      (as-> (:result (par/parse-string tag (if file? (slurp str) str))) ?r
-        (if simplify? (map-simplify ?r) ?r)
-        (if rewrite?  (rewrite ?r) ?r)
-        (if execute?  (ev/user-eval ?r :verbose? verbose?) ?r)
-        (if (:rewrite-error? ?r)
-          (log/error "Error in rewriting: result = " (with-out-str (pprint ?r)))
-          ?r)))))
-
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
 ;;; Note: The need for the doall below eluded me for a long time.
@@ -80,7 +61,8 @@
      (swap! tags #(conj % ~tag))
      (swap! locals #(into [{}] %))
      (let [result# (try (let [res# (do ~@body)] (if (seq? res#) (doall res#) res#)) ; See note above.
-                        (catch Exception e#
+                        ;; I don't think that I would typically want to catch these!
+                        #_(catch Exception e#
                           (log/error "Error rewriting:" e#)
                           (ex-message (.getMessage e#))
                           {:obj ~obj :rewrite-error? true}))]
@@ -119,7 +101,7 @@
   (cond (map? obj)                  (rewrite-meth (:_type obj) obj keys)
         (seq? obj)                  (map  rewrite obj)
         (vector? obj)               (mapv rewrite obj)
-        (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords correspond to operators.
+        (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords and chars correspond to operators.
         (string? obj)               obj
         (number? obj)               obj
         (symbol? obj)               obj
@@ -149,10 +131,18 @@
 
 (defrewrite :JaField [m] (-> m :field-name))
 
+(def ^:dynamic in-enforce? "While inside an enforce, qvar references are wrapped." false)
+
+;;; ToDo: Jvars and qvars can be local# ?
 (defrewrite :JaJvar  [m]
   (if (:special? m)
     `(~'deref ~(->> m :jvar-name (symbol "bi")))
     (-> m :jvar-name symbol)))
+
+(defrewrite :JaQvar [m]
+  (if in-enforce? ; b-set is an argument passed into the enforce function.
+    `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
+    (-> m :qvar-name symbol)))
 
 (defn combined-map-translation [m]
   (let [sym (or bi/*test-sym* (dgensym!))]
@@ -205,8 +195,9 @@
   `(~(-> m :uni-op str symbol)
     ~(-> m :exp rewrite)))
 
-(defrewrite :or  [m] (par/binary-op? m))
-(defrewrite :and [m] (par/binary-op? m))
+;;; ToDo: Taken care of by defn rewrite above, right?
+(defrewrite :or  [m] #_(par/binary-op? m) (throw (ex-info ":or ???" {})))
+(defrewrite :and [m] #_(par/binary-op? m) (throw (ex-info ":and ???" {})))
 
 (defrewrite :JaRangeExp [m]
   `(~'range ~(rewrite (:start m)) (~'inc ~(rewrite (:stop m)))))
@@ -219,17 +210,9 @@
     ~(rewrite (:rel m))
     ~(rewrite (:val-exp m))])
 
-(def ^:dynamic in-enforce? "While inside an enforce, qvar references are wrapped." false)
-
-(defrewrite :JaQvar [m]
-  (if in-enforce? ; b-set is an argument passed into the enforce function.
-    `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
-    (-> m :qvar-name symbol)))
-
 (defrewrite :JaEnforceDef [m]
-  (binding [in-enforce? true]
-    `(~'bi/enforce {:options ~(-> m :params rewrite)
-                    :body    '~(-> m :body rewrite)})))
+    `(~'bi/enforce {:params ~(-> m :params rewrite)
+                    :body ~(binding [in-enforce? true] (-> m :body rewrite))}))
 
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
 ;;; User functions also translate using this, but don't use the metadata.
@@ -249,7 +232,22 @@
     ~(-> m :exp1 rewrite)
     ~(-> m :exp2 rewrite)))
 
-;;;----------- Binary ops, precedence ordering, and paths. Half the work of rewriting! -----------------
+(defn tryme []
+  (let [m {:_type :JaBinOpExp,
+           :exp1 {:_type :JaSquareDelimitedExp,
+                  :exp ["a" "b" "c"]},
+           :bin-op \.,
+           :exp2 {:_type :JaFnCall, :fn-name "$sum", :args [100]}}]
+    (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps)))
+
+(defn step1 [m] (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps))
+(defn step2 [m] (-> m :bf connect-bvec-fields rewrite-bvec-as-sexp))
+
+;;; {:_type :JaBinOpExp,
+;;;  :exp1 {:_type :JaSquareDelimitedExp, :exp ["a" "b" "c"]},
+;;;  :bin-op \.,
+;;;  :exp2 {:_type :JaFnCall, :fn-name "$sum", :args [100]}}
+;;;----------- Binary ops precedence ordering; half the work of rewriting! -----------------
 ;;; This one produces a :BFLAT structure.
 (defrewrite :JaBinOpExp [m]
   (let [preprocess (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps)]
@@ -326,35 +324,69 @@
                       :JaSquareDelimitedExp :FILTER,
                       :JaCurlyDelimitedExp  :CONSTRUCT})
 
+(defn bvec?
+  "Returns true if the argument has the form of a bvec.
+   A bvec has operators interposed between operands."
+  [bvec]
+  (and (vector? bvec)
+       (loop [bv bvec
+              ix 0]
+         (let [elem (first bv)]
+           (cond (empty? bv) true
+                 (and (even? ix) (not (and (map? elem) (contains? elem :_type)))) false, 
+                 (and (odd? ix)  (not (par/binary-op? elem)))                     false,
+                 :else (recur (rest bv) (inc ix)))))))
+
+(def spec-ops (-> par/binary-op? vals set)) ; ToDo: Not necessary?
+
+(s/check-asserts true) ; See also *compile-asserts*
+(s/def ::op spec-ops)
+(s/def ::pos  (s/and integer? pos?)) ; I *think* pos?
+(s/def ::prec (s/and integer? pos?))
+(s/def ::info-op  (s/keys :req-un [::pos ::op ::prec]))
+(s/def ::operators (s/coll-of ::info-op :kind vector?))
+(s/def ::info (s/keys :req-un [::args ::operators]))
+(s/def ::bvec #(bvec? %))
+
+;;; ToDo: I think this needs to be rethought.
+;;;   (1) Why does split-with have special provisions for \.
+;;;   (2) I think the quirk is about putting the final \. on and then ignoring it.
+;;;   (3) In what sense does this reorder? It doesn't concern precedence.
+;;;   (4) Maybe less weird that this would be to let
+;;;        \. do mapping (uninvolved)
+;;;        (), [], and {} define functions here. 
 (defn reorder-for-delimited-exps
   "The operand of things in JaDelimitedExp are things lexically prior to the delimiter exp.
    This function transforms a JaDelimitedExps (three kinds; I use the term as an abstraction over the three)
    by walking backwards over a BFLAT from the JaDelimitedExp while the expression leading to it are
    path navigations. These become the argument to the MAP/FILTER/CONSTRUCT. In the case of the FILTER,
    the builtin function determines whether it is intended as array indexing or actual filtering.
-   One more quirk is addressed here: Owing to the way parsing is implemented (currently?) the
-   JaDelimitedExp has an attribute that is the last operand encountered. This is put into the BFLAT
-   separated by one more \\."
+  
+   One more quirk is addressed here:
+   Owing to the way parsing is implemented (currently?)
+   the JaDelimitedExp has an attribute that is the last operand encountered.
+   This is put into the BFLAT separated by one more \\."
   [bflat]
   (let [[p1 p2] (split-with #(not (type? % JaDelimitedExp?)) (:bf bflat))]
-    (if (empty? p2)
-      bflat
-      (let [[p1-1-r p1-2-r] (split-with #(not (and (par/binary-op? %) (not= \. %))) (reverse p1))
-            p1-1 (reverse p1-2-r)
-            p1-2 (reverse p1-1-r)
-            [JaDE & others] p2
-            primary (assoc JaDE :operand (-> {:_type :BFLAT
-                                              :bf (-> p1-2 butlast vec (conj \.) ; put stuff from p1-1
-                                                      (conj (:operand JaDE)))}   ; in front of what you had.
-                                             reorder-for-delimited-exps))]       ; Then go deeper.
-        ;(println "p1-2=" p1-2 "\n")
-        ;(println "JaDE=" JaDE "\n")
-        ;(println "p1-1=" p1-1 "\n")
-        ;(println "others=" others "\n")
-        ;(println "primary=" primary "\n")
-        (-> bflat
-            (assoc  :bf (conj (vec p1-1) primary))
-            (update :bf into (-> {:_type :BFLAT :bf (vec others)} reorder-for-delimited-exps :bf)))))))
+    (cond (empty? p2)  bflat,                 ; Nothing more to do. 
+          (empty? p1)  bflat,                 ; Nothing in front of the DE. (It might be an array, for example).
+          :else
+          (let [[p1-1-r p1-2-r] (split-with #(-> % par/binary-op? not) (reverse p1))
+                p1-1 (reverse p1-2-r)
+                p1-2 (reverse p1-1-r)
+                [JaDE & others] p2
+                primary (assoc JaDE :operand (-> {:_type :BFLAT
+                                                  :bf (-> p1-2 butlast vec           ; put stuff from p1-1
+                                                          (conj (:operand JaDE)))}   ; in front of what you had.
+                                                 reorder-for-delimited-exps))]       ; Then go deeper.
+            ;(println "p1-2=" p1-2 "\n")
+            ;(println "JaDE=" JaDE "\n")
+            ;(println "p1-1=" p1-1 "\n")
+            ;(println "others=" others "\n")
+            ;(println "primary=" primary "\n")
+            (-> bflat
+                (assoc  :bf (conj (vec p1-1) primary))
+                (update :bf into (-> {:_type :BFLAT :bf (vec others)} reorder-for-delimited-exps :bf)))))))
 
 ;;; Here it makes sense to wrap both of the fields: "a + b * f()"
 ;;; [{:_type :JaField, :field-name "a"} \+ {:_type :JaField, :field-name "b"} \* {:_type :JaFnCall, :fn-name "$f"}]
@@ -370,6 +402,7 @@
    This leaves some fields, the ones preceded by a \\., to be processed by rewrite-bvec-as-sexp.
    These others (they start new accesses into context variable) are wrapped in 1-arg bi/access here."
   [bvec]
+  (s/assert ::bvec bvec)
   (loop [bv bvec
          res []
          start? true]
@@ -431,16 +464,6 @@
   (if (contains? op-precedence-tbl op)
     (-> op op-precedence-tbl :val)
     100))
-
-(def spec-ops (-> par/binary-op? vals set))
-
-(s/check-asserts true)
-(s/def ::op spec-ops)
-(s/def ::pos  (s/and integer? pos?)) ; I *think* pos?
-(s/def ::prec (s/and integer? pos?))
-(s/def ::info-op  (s/keys :req-un [::pos ::op ::prec]))
-(s/def ::operators (s/coll-of ::info-op :kind vector?))
-(s/def ::info (s/keys :req-un [::args ::operators]))
 
 (defn bvec2info
   "Using the bin-op-vec (at any level of processing), create a map containing information about it."
@@ -507,7 +530,6 @@
   The result can have embedded un-rewritten stuff in it. Will hit that with be rewritten later."
   [bvec]
   (let [info (bvec2info bvec)]
-    (reset! diag {:info info})
     (s/assert ::info info)
     (as-> info ?info
       (reduce (fn [info pval]
@@ -536,3 +558,4 @@
               ?info
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
+

@@ -6,6 +6,7 @@
    [rad-mapper.parse    :as par]
    [rad-mapper.rewrite  :as rew]))
 
+;;; See also rewrite_test.clj
 (defn test-tokenize
   "Run the tokenizer on the argument string."
   [s]

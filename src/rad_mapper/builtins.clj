@@ -8,6 +8,7 @@
   (:require
    [clojure.spec.alpha           :as s]
    [clojure.string               :as str]
+   [clojure.walk                 :refer [keywordize-keys]]
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
  #_[datahike.pull-api            :as dp]
@@ -42,12 +43,11 @@
 
 (def $ "The JSONata context variable." (atom nil))
 (def $$ "The JSONata root variable." (atom nil))
-(def $$$ "The RADmapper mapping concept object." (atom nil))
 
 (defn reset-special!
   "Reset! an atom."
   [atm v]
-  (when-not (#{$ $$ $$$} atm)
+  (when-not (#{$ $$} atm)
     (throw (ex-info "In execution, expected an atom." {:got atm})))
   (reset! atm v))
 
@@ -74,7 +74,7 @@
     `(defn ~fn-name ~doc-string
       (~abbrv-params (~fn-name ~@abbrv-args))
        ([~@(vals param-map)]
-        (reset! $ (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#))))))))
+        (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
 
 ;;;========================= JSONata built-ins  =========================================
 (defn* + "plus" [x_ y]
@@ -123,18 +123,27 @@
   "Return the argument as a string."
   [s_] (str s_))
 
+;;; ToDo: Rename this "dot-map-internal".  
 (defn access-internal
   "The JSONata . operator; it does an implicit map over the property."
-  [obj prop]
+  [obj prop|fn]
   ;; Could be a vector of content but also could be a vector of vectors of content.
   ;; The latter because of JSONata's implicit 'map over' semantics. Don't go deeper.
-  (let [res (cond (fn? prop) (prop obj) ; query is like this.
-                  (and (vector? obj) (every? map? obj)) (mapv #(get % prop) (filter #(contains? % prop) obj)),
-                  (map? obj) (get obj prop),
-                  :else (throw (ex-info "Expected a map or vector of maps" {:got obj})))]
+  (let [obj (if (vector? obj) obj (vector obj))
+        res (cond (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
+                                                      (filterv identity)),
+                  (fn? prop|fn)                  (->> (mapv prop|fn obj)
+                                                      (filterv identity)),
+                  :else (throw (ex-info "Expected function to map over" {:got prop|fn})))]
     (jsonata-flatten res)))
 
-(defn* access "JSONata . operator" [obj_ prop] (access-internal obj_ prop))
+;;; ToDo: Rename this "dot-map".  
+(defn* access
+  "This implements the JSONata . operator,  <operand> . <function>.
+   To the left of the dot is an operand; to the right, a function (including field access).
+   It maps over operand with the function."
+  [obj_ prop|fn]
+  (access-internal obj_ prop|fn))
 
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
@@ -210,24 +219,17 @@
 (defn reduce-body-enforce
   "This is for reducing with an enforce function, where metadata on the
    function directs various behaviors such as whether results are returned
-   or a database is updated." ; ToDo: That last part about the DB!
-  [coll func init]
-  (let [num-params (-> func meta :params count)]
-    (let [result (loop [c (rest coll),
-                        r init,
-                        i 0]
-                  (if (empty? c)
-                    r
-                    (recur (rest c),
-                           (case num-params
-                             3 (func r (first c) i)
-                             2 (func r (first c) i))
-                           (inc i))))]
+   or a database is updated."
+  [coll func init] ; ToDo: Collection could be a DB (e.g. from $MCgetSource()).
+  (let [result (->> (loop [c coll,
+                           r init]
+                      (if (empty? c) r (recur (rest c), (conj r (func (first c))))))
+                    (mapv keywordize-keys))
+        db (qu/db-for! result)]
       ;; result is just the collection of results from body mechanically produced.
       ;; They describe fact types that need to be organized according to the schema.
       ;; (-> func meta :options) describes the schema, among other things.
-      (let [db (qu/db-for! result)]
-        ))))
+      result))
 
 ;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
 ;;;       My doc-string below doesn't say.
@@ -270,12 +272,12 @@
 
   If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
   If not supplied, the initial value is the first value in the array parameter"
-  ([coll func init] (if (<= 2 (-> func meta :params count) 4)
-                      (if (-> func meta :enforce?)
-                        (reduce-body-enforce coll func init)
-                        ($reduce (into (vector init) coll) func))
-                       (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
-                                 {:vars (-> func meta :params)}))))
+  ([coll func init]  (if (-> func meta :enforce?)
+                       (reduce-body-enforce coll func init)
+                       (if (<= 2 (-> func meta :params count) 4)
+                         ($reduce (into (vector init) coll) func)
+                         (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
+                                         {:vars (-> func meta :params)})))))
   ([coll func] (if (-> func meta :enforce?)
                  (reduce-body-enforce coll func [])
                  (reduce-body-typical coll func))))
@@ -645,43 +647,18 @@
     (immediate-query-fn body)
     (higher-order-query-fn body params)))
 
-;;; enforce (compared to query) is a macro because the splicing is
-#_(defn enforce
+(defmacro enforce
   "See query!!!" ; ToDo: a doc string...
-  [params body]
+  [& {:keys [params body]}]
   (if (empty? params)
     ;; The immediate function.
-    (eval `(fn [res b-set]
-             (do (println "Running immediate, b-set = " b-set)
-                 (conj res (do ~body)))))
-    ;; The higher-order-fn
-    (eval `(fn [param-vals]
-             (let [~@(zipmap params para-vals
-    `(~'->
-      (~'fn [~'res ~'b-set]
-       (do #_(
-           (~'conj ~'res ~body)))
-      (~'with-meta {:params '[~'target-db ~'b-set]
-                    :enforce? true})) ; :enforce? is used by $reduce.
-    ;; The higher function.
-    (fn
-        `(~'->
-      (~'fn [~'res ~'b-set]
-       (do #_(println "Running immediate, b-set = " ~'b-set)
-           (~'conj ~'res ~body)))
-      (~'with-meta {:params '[~'target-db ~'b-set]
-                    :enforce? true})) ; :enforce? is used by $reduce.
-
-
-
-
-
-
-  (if (empty? params)
-    (immediate-enforce-fn body)
-    (higher-order-enforce-fn body params)))))])))))
-
-(defn enforce [& _ignore] :nyi)
+    `(->    
+      (fn [~'b-set] ~body)
+      (with-meta {:params '[~'b-set] :enforce? true}))
+    `(fn [~@params]
+       (->    
+        (fn [~'b-set] ~body)
+        (with-meta {:params '[~'b-set] :enforce? true})))))
 
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
 (defn update-db

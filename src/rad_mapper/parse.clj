@@ -203,6 +203,7 @@
   [s] ; https://stackoverflow.com/questions/15020669/clojure-multiline-regular-expression
   (if s (or (nth (re-matches #"(?s)(\s+).*$" s) 1) "") ""))
 
+;;; ToDo: See split-at.
 (defn get-more
   "Update :string-block and :line-seq by getting more lines from the line-seq lazy seq."
   [pstate]
@@ -210,7 +211,7 @@
     (assoc  ?ps :string-block (->> ?ps :line-seq (take block-size) (map #(str % "\n")) (apply str)))
     (update ?ps :line-seq #(drop block-size %))))
 
-(def *debugging-tokenizer?* false)
+(def ^:dynamic *debugging-tokenizer?* false)
 
 ;;; ToDo:  This is going to need work for multi-line tokens such as comments and strings.
 ;;; https://www.regular-expressions.info/modifiers.html (?s) allows  .* to match all characters including line breaks.

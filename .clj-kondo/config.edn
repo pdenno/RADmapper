@@ -1,5 +1,6 @@
 ;;; https://github.com/borkdude/clj-kondo/blob/master/doc/config.md
 {:lint-as {rad-mapper.builtins/defn*      clojure.core/defn
+           rad-mapper.builtins/enforce    clojure.core/defmacro
            rad-mapper.parse/defparse      clojure.core/defn
            rad-mapper.rewrite/defrewrite  clojure.core/defn
            
