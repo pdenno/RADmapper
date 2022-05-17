@@ -586,7 +586,6 @@
         $propBsets ($quProp $data)]
     (bi/$reduce $propBsets $enPropTable $tar_data)))
 
-
 ;;;====================== Temporary, work on AST idea ===================================
 (def diag (atom nil))
 (declare rw-ast)
@@ -626,7 +625,7 @@
                               (dissoc :exp))))
 
 (def char2op
-  {\. :field-access
+  {\. :dot-map
    \& :str-concat
    \> :>
    \< :<

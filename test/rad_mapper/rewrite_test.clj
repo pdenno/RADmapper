@@ -48,9 +48,9 @@
       (is (= '(bi/+ 1 2)                                          (rew/rewrite* :ptag/exp "1 + 2"  :rewrite? true)))
       (is (= '(range 1 (inc 5))                                   (rew/rewrite* :ptag/exp "[1..5]" :rewrite? true)))
       (is (= '(bi/filter-aref $A 1)                               (rew/rewrite* :ptag/exp "$A[1]"  :rewrite? true)))
-      (is (= '(bi/$sum (bi/access $v "field"))                    (rew/rewrite* :ptag/exp "$sum($v.field)" :rewrite? true)))
-      (is (= '(bi/$sum (bi/access (bi/access "a") "b"))           (rew/rewrite* :ptag/exp "$sum(a.b)" :rewrite? true)))
-      (is (= '(bi/* (bi/access "A") (bi/access "B"))              (rew/rewrite* :ptag/exp "(A * B)" :rewrite? true)))
+      (is (= '(bi/$sum (bi/dot-map $v "field"))                   (rew/rewrite* :ptag/exp "$sum($v.field)" :rewrite? true)))
+      (is (= '(bi/$sum (bi/dot-map (bi/dot-map "a") "b"))         (rew/rewrite* :ptag/exp "$sum(a.b)" :rewrite? true)))
+      (is (= '(bi/* (bi/dot-map "A") (bi/dot-map "B"))            (rew/rewrite* :ptag/exp "(A * B)" :rewrite? true)))
       (is (= '(bi/thread 4 ($f))                                  (rew/rewrite* :ptag/exp "4 ~> $f()" :rewrite? true)))
       (is (= '(deref bi/$)                                        (rew/rewrite* :ptag/exp "$"   :rewrite? true)))
       (is (= '(deref bi/$$)                                       (rew/rewrite* :ptag/exp "$$"  :rewrite? true)))
@@ -64,47 +64,47 @@
       #_(is (= '(if true :foo/bar :foo/bat) (rew/rewrite* :ptag/exp "true?:foo/bar::foo/bat" :rewrite? true)))
 
       ;; Testing the synax reordering of map/filter on paths
-      (is (= '(mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q"))) $var)
+      (is (= '(mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) $var)
              (rew/rewrite* :ptag/exp "$var.(P * Q)" :rewrite? true)))
 
-      (is (= '(mapv (fn [foo] (bi/* (bi/access foo "A") (bi/access foo "B"))) $data)
+      (is (= '(mapv (fn [foo] (bi/* (bi/dot-map foo "A") (bi/dot-map foo "B"))) $data)
              (rew/rewrite* :ptag/exp "$data.(A * B)" :rewrite? true)))
       
-      (is (= '(bi/+ (bi/access (bi/access (bi/access (bi/access "a") "b") "c") "d") (bi/access (bi/access "e") "f"))
+      (is (= '(bi/+ (bi/dot-map (bi/dot-map (bi/dot-map (bi/dot-map "a") "b") "c") "d") (bi/dot-map (bi/dot-map "e") "f"))
              (rew/rewrite* :ptag/exp "a.b.c.d + e.f" :rewrite? true)))
 
-      (is (= '(bi/+ (bi/access "a") (bi/* (bi/access "b") ($f (bi/+ (bi/access "c") (bi/access "d")))))
+      (is (= '(bi/+ (bi/dot-map "a") (bi/* (bi/dot-map "b") ($f (bi/+ (bi/dot-map "c") (bi/dot-map "d")))))
              (rew/rewrite* :ptag/exp "a + b * $f(c + d)" :rewrite? true)))
 
-      (is (= '(bi/+ (bi/access $var "a")
-                    (mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q")))
-                          (bi/access (bi/access "b") "c")))
+      (is (= '(bi/+ (bi/dot-map $var "a")
+                    (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q")))
+                          (bi/dot-map (bi/dot-map "b") "c")))
              (rew/rewrite* :ptag/exp "$var.a + b.c.(P * Q)" :rewrite? true)))
 
-;;; Wrong  '(bi/+ (bi/access $var "a") (bi/access (bi/access "b") (mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q"))) (bi/access "c"))))
+;;; Wrong  '(bi/+ (bi/dot-map $var "a") (bi/dot-map (bi/dot-map "b") (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) (bi/dot-map "c"))))
 
-      (is (= '(bi/+ (bi/+ (bi/access $var "a")
-                          (mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q")))
-                                (bi/access (bi/access "b") "c")))
-                    (bi/access "d"))
+      (is (= '(bi/+ (bi/+ (bi/dot-map $var "a")
+                          (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q")))
+                                (bi/dot-map (bi/dot-map "b") "c")))
+                    (bi/dot-map "d"))
              (rew/rewrite* :ptag/exp "$var.a + b.c.(P * Q) + d" :rewrite? true)))
 
-      (is (= '(bi/+ (bi/+ (bi/access $var "a")
-                          (mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q")))
-                                (bi/access (bi/access "b") "c")))
-                    (mapv (fn [foo] (bi/* (bi/access foo "M") (bi/access foo "N")))
-                          (bi/access "d")))
+      (is (= '(bi/+ (bi/+ (bi/dot-map $var "a")
+                          (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q")))
+                                (bi/dot-map (bi/dot-map "b") "c")))
+                    (mapv (fn [foo] (bi/* (bi/dot-map foo "M") (bi/dot-map foo "N")))
+                          (bi/dot-map "d")))
              (rew/rewrite* :ptag/exp "$var.a + b.c.(P * Q) + d.(M * N)" :rewrite? true)))
 
-      (is (= '(mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q"))) (bi/access (bi/access (bi/access $var "a") "b") "c"))
+      (is (= '(mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) (bi/dot-map (bi/dot-map (bi/dot-map $var "a") "b") "c"))
              (rew/rewrite* :ptag/exp "$var.a.b.c.(P * Q)" :rewrite? true)))
 
-      (is (= '(bi/$sum (mapv (fn [foo] (bi/* (bi/access foo "P") (bi/access foo "Q"))) (bi/access $v "a")))
+      (is (= '(bi/$sum (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) (bi/dot-map $v "a")))
              (rew/rewrite* :ptag/exp "$sum($v.a.(P * Q))" :rewrite? true)))
 
       ;; Miscellaneous other tests.
-      (is (= '(-> (fn [$v $i $a] (< (bi/access $v "cbc_InvoicedQuantity") 0))
-                  (with-meta {:params '[$v $i $a], :body '(< (bi/access $v "cbc_InvoicedQuantity") 0)}))
+      (is (= '(-> (fn [$v $i $a] (< (bi/dot-map $v "cbc_InvoicedQuantity") 0))
+                  (with-meta {:params '[$v $i $a], :body '(< (bi/dot-map $v "cbc_InvoicedQuantity") 0)}))
              (rew/rewrite* :ptag/fn-def "function($v,$i,$a) { $v.cbc_InvoicedQuantity < 0 }" :rewrite? true)))
 
       (is (= '(let [$inc (-> (fn [$v] (bi/+ $v 1)) (with-meta {:params '[$v], :body '(bi/+ $v 1)}))]
@@ -114,16 +114,16 @@
       (is (= '(bi/$reduce (range 1 (inc 5)) (-> (fn [$x $y] (bi/+ $x $y)) (with-meta {:params '[$x $y], :body '(bi/+ $x $y)})) 100)
              (rew/rewrite* :ptag/exp "$reduce([1..5], function($x,$y){$x + $y}, 100)" :rewrite? true)))
 
-      (is (= '($fn1 (bi/access (bi/access ($fn2 $v) "a") "b"))
+      (is (= '($fn1 (bi/dot-map (bi/dot-map ($fn2 $v) "a") "b"))
              (rew/rewrite* :ptag/exp "$fn1($fn2($v).a.b)" :rewrite? true)))
 
       (is (= '(bi/$sum
-               (bi/access
-                (bi/access
+               (bi/dot-map
+                (bi/dot-map
                  (bi/$filter
-                  (bi/access $v "InvoiceLine")
-                  (-> (fn [$v $i $a] (< (bi/access $v "Quantity") 0))
-                      (with-meta {:params '[$v $i $a], :body '(< (bi/access $v "Quantity") 0)})))
+                  (bi/dot-map $v "InvoiceLine")
+                  (-> (fn [$v $i $a] (< (bi/dot-map $v "Quantity") 0))
+                      (with-meta {:params '[$v $i $a], :body '(< (bi/dot-map $v "Quantity") 0)})))
                  "Price")
                 "PriceAmount"))
              (rew/rewrite* :ptag/exp "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"

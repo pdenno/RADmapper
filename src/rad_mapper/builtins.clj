@@ -1,7 +1,7 @@
 (ns rad-mapper.builtins
   "Built-in functions implementing the expression language of the mapping language.
    Functions with names beginning with a '$' are available to the user (e.g. $filter).
-   Others (such as bi/access and bi/strcat) implement other parts of the expression language
+   Others (such as bi/dot-map and bi/strcat) implement other parts of the expression language
    but are not available directly to the user except through the operators (e.g. the dot, and &
    respectively for navigation to a property and concatenation)."
   (:refer-clojure :exclude [+ - * /])
@@ -25,8 +25,31 @@
 (s/def ::number number?)
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
+(def $ "The JSONata context variable.
+        The variable with no name refers to the context value at any point in the input JSON hierarchy.
+        See http://docs.jsonata.org/programming for examples."
+  (atom nil))
+
+(def $$ "The root of the input JSON.
+         Only needed if you need to break out of the current context to temporarily navigate down a different path.
+         E.g. for cross-referencing or joining data. See http://docs.jsonata.org/programming for examples."
+  (atom nil))
+
+(def advance "An atom something like $ used internally."
+  (atom nil))
+
+(defn reset-special!
+  "Reset! an atom."
+  [atm v]
+  (when-not (#{$ $$} atm)
+    (throw (ex-info "In execution, expected an atom." {:got atm})))
+  (reset! atm v))
+
+
 ;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
-(defmacro singlize [expr]
+(defn singlize [v] (if (vector? v) v (vector v)))
+
+#_(defmacro singlize [expr]
   `(let [val# ~expr] (if (vector? val#) val# (vector val#))))
 
 (defn jsonata-flatten
@@ -41,19 +64,7 @@
         :else res))
     s))
 
-(def $ "The JSONata context variable." (atom nil))
-(def $$ "The JSONata root variable." (atom nil))
 
-(defn reset-special!
-  "Reset! an atom."
-  [atm v]
-  (when-not (#{$ $$} atm)
-    (throw (ex-info "In execution, expected an atom." {:got atm})))
-  (reset! atm v))
-
-;;; ToDo: No provisions for parameter destructuring. Okay?
-;;; ToDo: This jumps through some hoops to avoid ns-qualified params. Is there another way?
-;;; (macroexpand-1 `(defn* example "This is an example." [x y_] {:val (+ x y_)}))
 (defmacro defn*
   "Define two function arities using the body:
      (1) the ordinary one, that has the usual arguments for the built-in, and,
@@ -123,9 +134,8 @@
   "Return the argument as a string."
   [s_] (str s_))
 
-;;; ToDo: Rename this "dot-map-internal".  
-(defn access-internal
-  "The JSONata . operator; it does an implicit map over the property."
+(defn dot-map-internal
+  "The JSONata . operator; it does an implicit map over the property, advancing the context $."
   [obj prop|fn]
   ;; Could be a vector of content but also could be a vector of vectors of content.
   ;; The latter because of JSONata's implicit 'map over' semantics. Don't go deeper.
@@ -137,19 +147,38 @@
                   :else (throw (ex-info "Expected function to map over" {:got prop|fn})))]
     (jsonata-flatten res)))
 
-;;; ToDo: Rename this "dot-map".  
-(defn* access
-  "This implements the JSONata . operator,  <operand> . <function>.
+(defn* dot-map
+  "This implements the JSONata implicit mapping over what I've been calling a 'field'.
    To the left of the dot is an operand; to the right, a function (including field access).
    It maps over operand with the function."
   [obj_ prop|fn]
-  (access-internal obj_ prop|fn))
+  (dot-map-internal obj_ prop|fn))
+
+(defn get-field
+  "This is same as dot-map, implementing implicit mapping over a field, but because this
+   is used inside a mapping expression in the sense of Product.(price * quantity), the
+   fields are alway provided (as string) and there is no implementation but the 2-arg one."
+  [obj prop-str]
+  (dot-map-internal obj prop-str))
+
+;;; ToDo: Ignoring first arg???
+(defn* apply-map
+  "Applies mapping to context.last-operand-step." 
+  [_context_ last-operand-step fn]
+  (reset! $ (-> (mapv fn last-operand-step)
+                jsonata-flatten)))
 
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
 ;;; 4 ~> function($x){$x+1}()    ==>  5
 ;;; The only reason for keeping this around (rather than rewriting it as ->) is that it only takes two args.
-(defmacro thread [x y] `(-> ~x ~y))
+(defmacro thread "Implements JSONata ~>"
+  [x y]
+  `(-> ~x ~y))
+
+(defmacro clj-thread
+  "Implements navigation in the sense of 'a.b.c'; set the context variable."
+  [x y] `(reset! $ (-> ~x ~y)))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------
@@ -225,7 +254,7 @@
                            r init]
                       (if (empty? c) r (recur (rest c), (conj r (func (first c))))))
                     (mapv keywordize-keys))
-        db (qu/db-for! result)]
+        _db (qu/db-for! result)]
       ;; result is just the collection of results from body mechanically produced.
       ;; They describe fact types that need to be organized according to the schema.
       ;; (-> func meta :options) describes the schema, among other things.
@@ -327,7 +356,7 @@
 ;;; N.B. filter-fn below calls eval.
 (defn sym-bi-access
   "When doing mapping such as '$.(A * B)' the expressions A and B
-   were rewritten (bi/access 'A'). There needs to be a first argument
+   were rewritten (bi/get-field 'A'). There needs to be a first argument
    to that, before the 'A'. This function inserts the argument symbol
    in such forms so that they can be wrapped in (fn [<that symbol>] ...)
    and called in map/filter/reduce settings."
@@ -335,7 +364,7 @@
   (letfn [(sba-aux [form]
             (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
                   (vector? form) (mapv sba-aux form)
-                  (seq? form) (if (and (= (first form) 'bi/access) (== 2 (count form)))
+                  (seq? form) (if (and (= (first form) 'bi/get-field) (== 2 (count form)))
                                  `(~(first form) ~sym ~@(map sba-aux (rest form)))
                                  (map sba-aux form))
                   :else form))]
@@ -456,7 +485,15 @@
 ;;; $random
 
 ;;; $sum
-(defn* $sum
+(defn $sum
+  "Return the sum of the argument (a vector of numbers)."
+  ([v]
+   (let [v (singlize v)]
+     (s/assert ::numbers v)
+     (apply clojure.core/+ v)))
+  ([_ignore v] ($sum v)))
+
+#_(defn* $sum
   "Return the sum of the argument (a vector of numbers)."
   [v_]
   (let [v (singlize v_)]
