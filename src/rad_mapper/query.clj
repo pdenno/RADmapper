@@ -53,7 +53,7 @@
       (reduce-kv (fn [res k v] (conj res (assoc v :db/ident k))) [] @learned))))
 
 (defn json-like
-  "Return the object with its map values that were keys replaced with strings.
+  "Return the object with its map keys replaced with strings.
   :ab ==> 'ab'; :ns/ab ==> 'ns/ab'."
   [obj]
   (cond (map? obj) (reduce-kv (fn [m k v]

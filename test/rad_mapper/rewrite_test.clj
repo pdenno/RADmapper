@@ -5,40 +5,6 @@
    [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]))
 
-;;; {:_type :JaSquareDelimitedExp,
-;;;  :operand {:_type :JaSquareDelimitedExp, :exp ["a" "b" "c"]}
-;;;  :exp {:_type :JaFnCall, :fn-name $sum, :args [100]}}, 
-
-
-
-;;; An important thing to note here is that a :bf has par/binary-op? interposed between :_type things.
-;;; There is now a s/def :rew/bvec to verify this. (It is used in connect-bvec-fields, at least.)
-(deftest binary-reordering
-  (testing "Testing that we reorder infix to prefix syntax correctly."
-    (let [bflat {:_type :BFLAT, ; This is "$var.a + b.c.(P * Q)"  (assumes b is in $)
-                 :bf [{:_type :JaVar, :var-name "$var"}
-                      \.
-                      {:_type :JaField, :field-name "a"}
-                      \+
-                      {:_type :JaField, :field-name "b"}
-                      \.
-                      {:_type :JaParenDelimitedExp,  ; This is mapping. (:operand is applied to :exp.)
-                       :exp {:_type :BFLAT,
-                             :bf [{:_type :JaField, :field-name "P"}
-                                  \*
-                                  {:_type :JaField, :field-name "Q"}]},
-                       :operand {:_type :JaField, :field-name "c"}}]}] ; :operand is applied to :exp.
-      (is (= {:_type :BFLAT,
-              :bf
-              [{:_type :JaVar, :var-name "$var"}
-               \.
-               {:_type :JaField, :field-name "a"}
-               \+
-               {:_type :JaParenDelimitedExp, ; :operand is applied to :exp b.c
-                :exp {:_type :BFLAT, :bf [{:_type :JaField, :field-name "P"} \* {:_type :JaField, :field-name "Q"}]},
-                :operand {:_type :BFLAT, :bf [{:_type :JaField, :field-name "b"} \. {:_type :JaField, :field-name "c"}]}}]}
-             (rew/reorder-for-delimited-exps bflat))))))
-
 ;;; (not= #"abc" #"abc") so don't bother testing things containing regular expressions.
 (deftest expression-rewrites
   (testing "Some :ptag/exp translations to clj"
@@ -145,3 +111,9 @@
                             $yy  := 'ybat';
                             $f($x, $y) )"
                          :rewrite? true)))))
+
+(deftest nav-compression
+  (testing "Testing compression of naviagation"
+    (is (= '(bi/+ (bi/step-> ?tl (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "c"))
+                  (bi/step-> ?tl (bi/dot-map "d") (bi/dot-map "e") (bi/dot-map "f")))
+           (rew/rewrite* :ptag/exp "a.b.c + d.e.f" :rewrite? true :skip-top? true)))))

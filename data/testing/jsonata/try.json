@@ -1,4 +1,3 @@
-( $ORDERS :=
 {
   "Account": {
     "Account Name": "Firefly",
@@ -72,7 +71,3 @@
     ]
   }
 }
-
-  $ORDERS.Account.Order.Product.ProductID.$string()
-
-)

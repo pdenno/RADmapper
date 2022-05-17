@@ -6,6 +6,7 @@
    respectively for navigation to a property and concatenation)."
   (:refer-clojure :exclude [+ - * /])
   (:require
+   [clojure.data.json            :as json]
    [clojure.spec.alpha           :as s]
    [clojure.string               :as str]
    [clojure.walk                 :refer [keywordize-keys]]
@@ -16,41 +17,17 @@
    [rad-mapper.util              :as util]))
 
 ;;; ToDo:
-;;;  -1) defn* should check for vec/scalar.
-;;;   0) defn*s do not need to reset! $ (it is in the macro).
-;;;   2) Implement dynamic var *advance* ???
-;;;   3) Consider threading/binding instead of resetting the atom $.
-;;;   4) Investigate Small Clojure Interpreter.
+;;;   1) defn* go away?
+;;;   2) Investigate Small Clojure Interpreter.
 
+(defn make-state-obj [] {:_type ::state-object})
+
+(s/def ::state-obj (s/and map? #(= ::state-obj (:_type %))))
 (s/def ::number number?)
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
-(def $ "The JSONata context variable.
-        The variable with no name refers to the context value at any point in the input JSON hierarchy.
-        See http://docs.jsonata.org/programming for examples."
-  (atom nil))
-
-(def $$ "The root of the input JSON.
-         Only needed if you need to break out of the current context to temporarily navigate down a different path.
-         E.g. for cross-referencing or joining data. See http://docs.jsonata.org/programming for examples."
-  (atom nil))
-
-(def advance "An atom something like $ used internally."
-  (atom nil))
-
-(defn reset-special!
-  "Reset! an atom."
-  [atm v]
-  (when-not (#{$ $$} atm)
-    (throw (ex-info "In execution, expected an atom." {:got atm})))
-  (reset! atm v))
-
-
 ;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
 (defn singlize [v] (if (vector? v) v (vector v)))
-
-#_(defmacro singlize [expr]
-  `(let [val# ~expr] (if (vector? val#) val# (vector val#))))
 
 (defn jsonata-flatten
   "See http://docs.jsonata.org/processing section 'Sequences'"
@@ -63,7 +40,6 @@
         (== 1 len) (first res)
         :else res))
     s))
-
 
 (defmacro defn*
   "Define two function arities using the body:
@@ -134,11 +110,8 @@
   "Return the argument as a string."
   [s_] (str s_))
 
-(defn dot-map-internal
-  "The JSONata . operator; it does an implicit map over the property, advancing the context $."
+(defn dot-map
   [obj prop|fn]
-  ;; Could be a vector of content but also could be a vector of vectors of content.
-  ;; The latter because of JSONata's implicit 'map over' semantics. Don't go deeper.
   (let [obj (if (vector? obj) obj (vector obj))
         res (cond (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
                                                       (filterv identity)),
@@ -147,26 +120,13 @@
                   :else (throw (ex-info "Expected function to map over" {:got prop|fn})))]
     (jsonata-flatten res)))
 
-(defn* dot-map
-  "This implements the JSONata implicit mapping over what I've been calling a 'field'.
-   To the left of the dot is an operand; to the right, a function (including field access).
-   It maps over operand with the function."
-  [obj_ prop|fn]
-  (dot-map-internal obj_ prop|fn))
-
-(defn get-field
-  "This is same as dot-map, implementing implicit mapping over a field, but because this
-   is used inside a mapping expression in the sense of Product.(price * quantity), the
-   fields are alway provided (as string) and there is no implementation but the 2-arg one."
-  [obj prop-str]
-  (dot-map-internal obj prop-str))
-
-;;; ToDo: Ignoring first arg???
-(defn* apply-map
-  "Applies mapping to context.last-operand-step." 
-  [_context_ last-operand-step fn]
-  (reset! $ (-> (mapv fn last-operand-step)
-                jsonata-flatten)))
+(defn apply-map
+  "Navigates one more step from the argument and executes fn." 
+  [obj last-operand-step fn]
+  (->>
+   (dot-map obj last-operand-step)
+   (mapv fn)
+   jsonata-flatten))
 
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
@@ -175,10 +135,6 @@
 (defmacro thread "Implements JSONata ~>"
   [x y]
   `(-> ~x ~y))
-
-(defmacro clj-thread
-  "Implements navigation in the sense of 'a.b.c'; set the context variable."
-  [x y] `(reset! $ (-> ~x ~y)))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------
@@ -364,8 +320,8 @@
   (letfn [(sba-aux [form]
             (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
                   (vector? form) (mapv sba-aux form)
-                  (seq? form) (if (and (= (first form) 'bi/get-field) (== 2 (count form)))
-                                 `(~(first form) ~sym ~@(map sba-aux (rest form)))
+                  (seq? form) (if (and (= (first form) :sys/$) (== 2 (count form)))
+                                sym
                                  (map sba-aux form))
                   :else form))]
     (sba-aux form)))
@@ -484,21 +440,14 @@
 ;;; $parseInteger
 ;;; $random
 
+;;; ToDo: This is bogus!
 ;;; $sum
 (defn $sum
   "Return the sum of the argument (a vector of numbers)."
-  ([v]
-   (let [v (singlize v)]
-     (s/assert ::numbers v)
-     (apply clojure.core/+ v)))
-  ([_ignore v] ($sum v)))
-
-#_(defn* $sum
-  "Return the sum of the argument (a vector of numbers)."
-  [v_]
-  (let [v (singlize v_)]
-    (s/assert ::numbers v)
-    (apply clojure.core/+ v)))
+  [obj v]
+  (let [v (singlize v)]
+    (-> (mapv #(let [_ignore %] (apply clojure.core/+ v)) obj)
+        jsonata-flatten)))
 
 ;;; $sqrt
 (defn* $sqrt
@@ -543,16 +492,15 @@
 ;;; $single
 
 ;;;=================== Non-JSONata functions ================================
-
-;;; ToDo: Currently no JSON
 (defn $readFile
   "Read a file of JSON or XML, creating a map."
   ([fname] ($readFile fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([fname opts]
    (let [type (second (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname))]
      (case (or (get opts "type") type "xml")
-       "xml" (reset! $ (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml))
-       "edn" (reset! $ (-> fname slurp read-string qu/json-like)))))) ; Great for testing!
+       "json" (-> fname slurp json/read-str)
+       "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
+       "edn"  (-> fname slurp read-string qu/json-like))))) ; Great for testing!
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to

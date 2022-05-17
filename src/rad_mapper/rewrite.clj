@@ -8,25 +8,22 @@
    [clojure.spec.alpha  :as s]
    [rad-mapper.builtins :as bi]
    [rad-mapper.evaluate :as ev]
-   [rad-mapper.util     :as util :refer [dgensym!]]
+   [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
    [rad-mapper.parse    :as par]
    [taoensso.timbre     :as log]))
-
-;;; ToDo:
-;;;   - All this stuff belongs in a library!
 
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
 (def locals (atom [{}]))
 (declare map-simplify remove-nils rewrite make-runnable)
-(declare binops2bvecs walk-for-bvecs rewrite-bvec-as-sexp precedence)
+(declare binops2bvecs walk-for-bvecs rewrite-bvec-as-sexp precedence rewrite-nav)
 (def diag (atom nil))
 
 (defn rewrite*
   "A top-level function for all phases of translation.
    parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it rewrites without debug output."
-  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? verbose?] :as opts}]
+  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? skip-top? verbose?] :as opts}]
   simplify? rewrite? ; ToDo Avoid Kondo warning
   (let [kopts (-> opts keys set)
         simplify? (not-empty (set/intersection #{:rewrite? :simplify? :execute?} kopts))
@@ -42,7 +39,9 @@
         (if (= :ok (:parse-status ps))
           (as-> (:result ps) ?r
             (if simplify? (map-simplify ?r) ?r)
-            (if rewrite?  (rewrite ?r) ?r)
+            (if rewrite?
+              (->> (if skip-top? ?r {:_type :toplevel :top ?r}) rewrite rewrite-nav)
+              ?r)
             (if execute?  (ev/user-eval ?r :verbose? verbose?) ?r)
             (if (:rewrite-error? ?r)
               (throw (ex-info "Error in rewriting" {:result (with-out-str (pprint ?r))}))
@@ -111,42 +110,42 @@
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
+(defrewrite :toplevel [m]
+  (if (= :JaCodeBlock (-> m :top :_type))
+    `(~'as-> (~'bi/make-state-obj) ~'?tl ~@(->> m :top :body (map rewrite) rewrite-nav)),
+    `(~'as-> (~'bi/make-state-obj) ~'?tl ~(->> m :top rewrite rewrite-nav))))
+
 ;;; ToDo: There is the possibility that the code-block/primary/map-exp distinction can disappear.
 ;;; ToDo: Likewise (and perhaps even more likely) the reduce-exp/construction distinction.
 (defrewrite :JaCodeBlock [m]
   (util/reset-dgensym!)
-  (if (> (-> m :body count) 1)
-    `(~'let [~@(mapcat rewrite (-> m :body butlast))]
-      ~(-> m :body last rewrite))
-    (if (= :JaJvarDecl (-> m :body first :_type))
-      `(~'let [~@(-> m :body first rewrite)])
-      (-> m :body first rewrite))))
+  (->> m :body (map rewrite)))
 
 (defrewrite :JaPrimary [m]
   (-> m :exp rewrite))
 
 (defrewrite :JaJvarDecl [m]
-  (if (-> m :var :special?)
-    `(~(dgensym!) (~'bi/reset-special! ~(->> m :var :jvar-name (symbol "bi"))
-                          ~(-> m :init-val rewrite)))
-    (let [val  (-> m :init-val rewrite)
-          jvar (-> m :var      rewrite)]
-      (vector jvar (if (= :JaFnDef (:_type val)) (:form val) val)))))
+  (let [ns (if (-> m :var :special?) "sys" "user")]
+    `(~'assoc ~'?tl
+            ~(->> m :var :jvar-name (keyword ns))
+            ~(-> m :init-val rewrite))))
 
-(def ^:dynamic inside-map? false)
+(def ^:dynamic inside-delim?
+  "When true, modify rewriting behavior inside 'delimited expressions'."
+  false)
+
+(def ^:dynamic in-enforce?
+  "While inside an enforce, qvar references are wrapped."
+  false)
 
 (defrewrite :JaField [m]
-  (if inside-map?
-      `(~'bi/get-field ~(-> m :field-name))
-      `(~'bi/dot-map ~(-> m :field-name))))
+  (if inside-delim?
+    (-> m :field-name)
+    `(~'bi/dot-map (:sys/$ ~'?tl) ~(-> m :field-name))))
 
-(def ^:dynamic in-enforce? "While inside an enforce, qvar references are wrapped." false)
-
-;;; ToDo: Jvars and qvars can be local# ?
+;;; ToDo: If a reference, this is either (:sys/$ ?tl) or (:user/foo ?tl).
 (defrewrite :JaJvar  [m]
-  (if (:special? m)
-    `(~'deref ~(->> m :jvar-name (symbol "bi")))
-    (-> m :jvar-name symbol)))
+    (-> m :jvar-name symbol))
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
@@ -154,10 +153,11 @@
     (-> m :qvar-name symbol)))
 
 (defrewrite :JaMapExp [m]
-  (let [sym (or bi/*test-sym* (dgensym!))
-        body (binding [inside-map? true]
-               `(~'fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym))))]
-    `(~'bi/apply-map ~(-> m :operand rewrite) ~body)))
+  (reset-dgensym!)
+  (let [sym (dgensym!)
+        body `(~'fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
+        operand (binding [inside-delim? true] (-> m :operand rewrite doall))]
+    `(~'bi/apply-map ~operand ~body)))
 
 ;;; ToDo: This should follow the pattern of JaMapExp above.
 (defrewrite :JaFilterExp [m]
@@ -329,14 +329,14 @@
    :!=          {:assoc :none :val 800}
    :in          {:assoc :none :val 700}
    :thread      {:assoc :left :val 700} ; ToDo guessing
-   'bi/&           {:assoc :left :val 400} ; ToDo guessing
-   'bi/+           {:assoc :left :val 400}
-   'bi/-           {:assoc :left :val 400}
+   'bi/&        {:assoc :left :val 400} ; ToDo guessing
+   'bi/+        {:assoc :left :val 400}
+   'bi/-        {:assoc :left :val 400}
    :range       {:assoc :left :val 400} ; ToDo guessing
-   'bi/*           {:assoc :left :val 300}
-   'bi/%           {:assoc :left :val 300}
-   'bi//           {:assoc :left :val 300}
-   'bi/clj-thread {:assoc :left :val 150}})
+   'bi/*        {:assoc :left :val 300}
+   'bi/%        {:assoc :left :val 300}
+   'bi//        {:assoc :left :val 300}
+   'bi/step->   {:assoc :left :val 150}}) ; It will be replaced by ->
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)
@@ -437,3 +437,46 @@
               ?info
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
+
+(defn compress-nav
+  "Iteratively walk a complex expression rewriting nested bi/step-> expression."
+  [exp]
+  (let [progress? (atom true)]
+    (letfn [(one-step [exp]
+              (cond (and (-> progress? deref not)
+                         (seq? exp)
+                         (= 'bi/step-> (first exp))
+                         (= 'bi/step-> (-> exp second first)))
+                    (do (reset! progress? true)
+                        `(~'bi/step-> ~@(-> exp second rest) ~@(-> exp rest rest)))
+                    (vector? exp) (->> exp (map compress-nav) doall vec)
+                    (seq? exp)    (->> exp (map compress-nav) doall)
+                    (map? exp) (reduce-kv (fn [m k v] (assoc m k (compress-nav v))) {} exp)
+                    :else exp))]
+      (loop [exp exp]
+        (if (-> progress? deref not) exp
+            (do (reset! progress? false)
+                (recur (one-step exp))))))))
+
+;;; ToDo: A smarter rewrite would obviate this.
+;;; Currently bi/step-> is inserted in bflat processing.
+(defn drop-topic
+  "Transform by dropping first arg from so bi/dot-map topic can be threaded
+   and replacing bi/step-> with clojure.core/-> ."
+  [exp]
+  (cond (and (seq? exp) (= 'bi/step-> (first exp)))
+        `(~'->
+          (:sys/$ ~'?tl)
+          ~@(map #(if (and (seq? %) (= 'bi/dot-map (first %)))
+                    (list 'bi/dot-map (nth % 2))
+                    %)
+                 (rest exp))),
+        (seq? exp) (map drop-topic exp)
+        (vector? exp) (mapv drop-topic exp)
+        (map? exp) (reduce-kv (fn [m k v] (assoc m k (drop-topic v))) {} exp)
+        :else exp))
+
+(defn rewrite-nav
+  "Rewrite a form with sequences of bi/step nav to wrap in bi/navigate."
+  [exp]
+  (-> exp compress-nav drop-topic))
