@@ -710,7 +710,6 @@
         :else (throw (ex-info "Toplevel is a primitive type?" {:obj obj}))))
 
 (def scott-result (rew/rewrite* :ptag/exp "data/testing/map-examples/shipped-item-instance-clean.json" :file? true :simplify? true))
-
 (defn tryme
   []
   (-> scott-result

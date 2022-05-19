@@ -20,11 +20,42 @@
 ;;;   1) defn* go away?
 ;;;   2) Investigate Small Clojure Interpreter.
 
-(defn make-state-obj [] {:_type ::state-object})
+(def $$
+  "The root context data, like in JSONata."
+  (atom nil))
 
-(s/def ::state-obj (s/and map? #(= ::state-obj (:_type %))))
+(def user-established-context
+  "In evaluating code, $ := ... or use of $ 'out of the blue' might occur.
+   This is used to find the value of :sys/$ set by those means.
+   It is only valid before the action starts; after that, only the threaded
+   state object matters."
+  (atom nil))
+
+;;; ToDo: Write some documentation once you figure it out!
+;;; So far, this is called by step->, but I think there may be other forms where it makes sense to do.
+(defn init-state-obj
+  ([] (init-state-obj @user-established-context))
+  ([val] {:sys/$ val
+          :advance? false}))
+
+(defn establish-context
+  "Intialize the state object and set the value of :sys/$."
+  [val]
+  (reset! user-established-context val))
+
+(defn reset-env
+  "Clean things up just prior to running user code."
+  []
+  (reset! user-established-context nil))
+
+(s/def ::state-obj (s/keys :req_un [:advance?] :req [:sys/$]))
 (s/def ::number number?)
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
+
+(defn finish
+  "This is called last in user code to account for the difference between a.b and a.b.$"
+  [obj]
+  (if (s/valid? ::state-obj obj) (:sys/$ obj) obj))
 
 ;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
 (defn singlize [v] (if (vector? v) v (vector v)))
@@ -41,45 +72,23 @@
         :else res))
     s))
 
-(defmacro defn*
-  "Define two function arities using the body:
-     (1) the ordinary one, that has the usual arguments for the built-in, and,
-     (2) a function where the missing argument will be assumed to be the context variable, $.
-   The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
-   Additionally, reset the context variable to the value returned by the function.
-   doc-string is required."
-  [fn-name doc-string [& params] & body]
-  (let [param-map (zipmap params (map #(symbol nil (name %)) params))
-        abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
-        abbrv-args (mapv #(if (str/ends-with? (str %) "_") '@$ %) (vals param-map))
-        fn-name (symbol nil (name fn-name))]
-    (letfn [(rewrite [x]
-              (cond (seq? x)    (map  rewrite x)
-                    (vector? x) (mapv rewrite x)
-                    (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
-                    :else (get param-map x x)))]
-    `(defn ~fn-name ~doc-string
-      (~abbrv-params (~fn-name ~@abbrv-args))
-       ([~@(vals param-map)]
-        (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
-
 ;;;========================= JSONata built-ins  =========================================
-(defn* + "plus" [x_ y]
+(defn + "plus" [x_ y]
   (if (number? x_)
     (clojure.core/+ x_ y)
     (throw (ex-info "The left side of the '+' operator must evaluate to a number." {:op1 x_}))))
 
-(defn* - "minus" [x_ y]
+(defn - "minus" [x_ y]
   (if (number? x_)
     (clojure.core/- x_ y)
     (throw (ex-info "The left side of the '-' operator must evaluate to a number." {:op1 x_}))))
 
-(defn* * "times"  [x_ y]
+(defn * "times"  [x_ y]
     (if (number? x_)
     (clojure.core/* x_ y)
     (throw (ex-info "The left side of the '*' operator must evaluate to a number." {:op1 x_}))))
 
-(defn* / "divide" [x_ y]
+(defn / "divide" [x_ y]
   (if (number? x_)
     (double (clojure.core// x_ y))
     (throw (ex-info "The left side of the '/' operator must evaluate to a number." {:op1 x_}))))
@@ -87,7 +96,7 @@
 ;;; ToDo: $contains(), $split(), $replace()
 ;;; ToDo: flags on regular expressions. /regex/flags  (the only flags are 'i' and 'm' (case insenstive, multi-line)).
 ;;; (re-find #"foo" "foovar")
-(defn* $match
+(defn $match
   "Return a JSONata-like map for the result of regex mapping.
    Pattern is a Clojure regex."
   [s_ pattern]
@@ -106,27 +115,34 @@
       (mapv match-aux s_)
       (match-aux s_))))
 
-(defn* $string
+(defn $string
   "Return the argument as a string."
   [s_] (str s_))
 
 (defn dot-map
-  [obj prop|fn]
-  (let [obj (if (vector? obj) obj (vector obj))
-        res (cond (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
-                                                      (filterv identity)),
-                  (fn? prop|fn)                  (->> (mapv prop|fn obj)
-                                                      (filterv identity)),
-                  :else (throw (ex-info "Expected function to map over" {:got prop|fn})))]
-    (jsonata-flatten res)))
+  "Perform the mapping activity of the 'a' in $.a, for example.
+   This function is called with the state object. It returns either:
+   (1) if :advance? is true, the state object with :sys/$ updated
+   (2) if :advance? is false, the effect of mapping 'a' directly."
+  [sobj prop|fn]
+  (s/assert ::state-obj sobj)
+  (let [obj (if (-> sobj :sys/$ vector?) (:sys/$ sobj) (-> sobj :sys/$ vector))
+        res (jsonata-flatten
+             (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
+                   (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
+                                                       (filterv identity)),
+                   (fn? prop|fn)                  (->> (mapv prop|fn obj)
+                                                       (filterv identity)),
+                   :else (throw (ex-info "Expected function to map over" {:got prop|fn}))))]
+    (if (:advance? sobj) (assoc sobj :sys/$ res) res)))
 
 (defn apply-map
-  "Navigates one more step from the argument and executes fn." 
+  "Navigates one more step from the argument and executes fn."
   [obj last-operand-step fn]
-  (->>
-   (dot-map obj last-operand-step)
-   (mapv fn)
-   jsonata-flatten))
+  (let [obj (if (state-obj? obj) (:sys/$ obj) obj)]
+    (->> (dot-map obj last-operand-step)
+         (mapv fn)
+         jsonata-flatten)))
 
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
@@ -135,6 +151,22 @@
 (defmacro thread "Implements JSONata ~>"
   [x y]
   `(-> ~x ~y))
+
+(defmacro step->
+  "Update :sys/$ by performing navigation.
+   The topic provided is either the state-obj or something that can serve as
+   the state object's :sys/$, in which case a state object is initialized to that value.
+   This latter case is (at least) for initialization when the code being evaluated
+   starts with an object. For example, {'a' : {'b' : 123}}.a.b ."
+  [topic & body]
+  `(let [top# ~topic
+         top# (if (s/valid? ::state-obj top#) top# (init-state-obj top#))]
+     (let [res# (-> top#
+                    (assoc :advance? true)
+                    ~@body)]
+       (if (s/valid? ::state-obj res#)
+         (assoc res# :advance? false)
+         res#))))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------
@@ -153,34 +185,33 @@
 
    Example: $map([1..5], $string) => ['1', '2', '3', '4', '5']"
   [coll func]
-  (reset! $
-          (let [nvars  (-> func meta :params count)]
-            (cond
-              (== nvars 3)
-              (loop [c coll, i 0, r []]
-                (if (empty? c)
-                  r
-                  (recur (rest c) (inc i) (conj r (func (first c) i coll)))))
-              (== nvars 2)
-              (loop [c coll, i 0, r []]
-                (if (empty? c)
-                  r
-                  (recur (rest c) (inc i) (conj r (func (first c) i)))))
-              (== nvars 1)
-              (loop [c coll, r []]
-                (if (empty? c)
-                  r
-                  (recur (rest c) (conj r (func (first c))))))
-              :else (throw (ex-info "$map expects a function of 1 to 3 parameters:"
-                                    {:vars (-> func meta :params)}))))))
+  (let [nvars  (-> func meta :params count)]
+    (cond
+      (== nvars 3)
+      (loop [c coll, i 0, r []]
+        (if (empty? c)
+          r
+          (recur (rest c) (inc i) (conj r (func (first c) i coll)))))
+      (== nvars 2)
+      (loop [c coll, i 0, r []]
+        (if (empty? c)
+          r
+          (recur (rest c) (inc i) (conj r (func (first c) i)))))
+      (== nvars 1)
+      (loop [c coll, r []]
+        (if (empty? c)
+          r
+          (recur (rest c) (conj r (func (first c))))))
+      :else (throw (ex-info "$map expects a function of 1 to 3 parameters:"
+                            {:vars (-> func meta :params)})))))
 
 ;;; (bi/$filter [1 2 3 4] (with-meta (fn [v i a] (when (even? v) v)) {:params {:val-var 'v :index-var 'i :array-var 'a}}))
-(defn* $filter
+(defn $filter
   "Return a function for the argument form."
   [coll_ func]
-  (reset! $ (let [nvars (-> func meta :params count)]
-              (cond
-                (== nvars 3)
+  (let [nvars (-> func meta :params count)]
+    (cond
+      (== nvars 3)
                 (loop [c coll_, i 0, r []]
                   (if (empty? c)
                     r
@@ -199,7 +230,7 @@
                     (let [val (when (func (first c)) (first c))]
                       (recur (rest c) (if val (conj r val) r)))))
                 :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
-                                      {:vars (-> func meta :params)}))))))
+                                      {:vars (-> func meta :params)})))))
 
 (defn reduce-body-enforce
   "This is for reducing with an enforce function, where metadata on the
@@ -320,9 +351,9 @@
   (letfn [(sba-aux [form]
             (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
                   (vector? form) (mapv sba-aux form)
-                  (seq? form) (if (and (= (first form) :sys/$) (== 2 (count form)))
-                                sym
-                                 (map sba-aux form))
+                  (seq? form) (if (and (= (first form) 'bi/dot-map) (== 2 (count form)))
+                                (list 'bi/dot-map sym (second form))
+                                (map sba-aux form))
                   :else form))]
     (sba-aux form)))
 
@@ -333,7 +364,7 @@
   (let [sym (or *test-sym* (gensym "x"))]
     (eval `(fn [~sym] ~(sym-bi-access form sym)))))
 
-;;; ToDo I don't think this is a candidate for defn*. [<exp>] returns the value of <exp> (which in JSONata is same as a singleton array).
+;;; ToDo I don't think this is a candidate for defn. [<exp>] returns the value of <exp> (which in JSONata is same as a singleton array).
 (defmacro filter-aref
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
     (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
@@ -397,7 +428,7 @@
 ;;; $formatNumber
 
 ;;; $number
-(defn* $number
+(defn $number
   " * Numbers are unchanged.
     * Strings that contain a sequence of characters that represent a legal JSON number are converted to that number.
     * Boolean true casts to 1, Boolean false casts to 0.
@@ -412,7 +443,7 @@
         :else (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
 
 ;;; $power
-(defn* $power
+(defn $power
   "Return the largest the numeric argument (an array or singleton)."
   [x_ y]
   (s/assert ::number x_)
@@ -422,7 +453,7 @@
     (Math/pow x_ y)))
 
 ;;; $max
-(defn* $max
+(defn $max
   "Return the largest the numeric argument (an array or singleton)."
   [v_]
   (let [v (singlize v_)]
@@ -430,7 +461,7 @@
     (apply max v)))
 
 ;;; $min
-(defn* $min
+(defn $min
   "Return the smallest the numeric argument (an array or singleton)."
   [v_]
   (let [v (singlize v_)]
@@ -450,7 +481,7 @@
         jsonata-flatten)))
 
 ;;; $sqrt
-(defn* $sqrt
+(defn $sqrt
   "Returns the square root of the argument."
   [v_]
   (s/assert ::number v_)
@@ -497,10 +528,10 @@
   ([fname] ($readFile fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([fname opts]
    (let [type (second (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname))]
-     (case (or (get opts "type") type "xml")
-       "json" (-> fname slurp json/read-str)
-       "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-       "edn"  (-> fname slurp read-string qu/json-like))))) ; Great for testing!
+     (reset! $$ (case (or (get opts "type") type "xml")
+                  "json" (-> fname slurp json/read-str)
+                  "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
+                  "edn"  (-> fname slurp read-string qu/json-like)))))) ; Great for testing!
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -538,7 +569,7 @@
   "Read the .xlsx and make a clojure map for each row. No fancy names, just :A,:B,:C,...!"
   ([filename sheet-name] ($readSpreadsheet filename sheet-name false))
   ([filename sheet-name invert?]
-   (reset! $ (when-let [sheet (->> (ss/load-workbook filename) (ss/select-sheet sheet-name))]
+   (reset! $$ (when-let [sheet (->> (ss/load-workbook filename) (ss/select-sheet sheet-name))]
                (let [row1 (mapv ss/read-cell (-> sheet ss/row-seq first ss/cell-seq ss/into-seq))
                      len  (loop [n (dec (-> sheet ss/row-seq first .getLastCellNum))]
                             (cond (= n 0) 0,
@@ -558,7 +589,7 @@
 ;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
 ;;;   - What is provided as argument overrides what is learned in $query.
 ;;;   - $enforce could be with an argument schema.
-(defn* $schemaFor
+(defn $schemaFor
   "Study the argument data and heuristically suggest the types and multiplicity of data.
    Note that this function does not make a guess at what the keys (db/key) are."
   [data_]
@@ -637,11 +668,11 @@
   [& {:keys [params body]}]
   (if (empty? params)
     ;; The immediate function.
-    `(->    
+    `(->
       (fn [~'b-set] ~body)
       (with-meta {:params '[~'b-set] :enforce? true}))
     `(fn [~@params]
-       (->    
+       (->
         (fn [~'b-set] ~body)
         (with-meta {:params '[~'b-set] :enforce? true})))))
 

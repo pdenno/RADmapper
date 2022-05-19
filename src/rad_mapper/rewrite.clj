@@ -111,9 +111,12 @@
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
 (defrewrite :toplevel [m]
-  (if (= :JaCodeBlock (-> m :top :_type))
-    `(~'as-> (~'bi/make-state-obj) ~'?tl ~@(->> m :top :body (map rewrite) rewrite-nav)),
-    `(~'as-> (~'bi/make-state-obj) ~'?tl ~(->> m :top rewrite rewrite-nav))))
+  (let [typ (-> m :top :_type)]
+    (cond (= typ :JaCodeBlock )
+          `(~'-> (~'bi/make-state-obj) ~@(->> m :top :body (map rewrite) rewrite-nav)),
+          (= typ :JaBinOpExp)
+          `(-> ~(->> m :top rewrite rewrite-nav) bi/finish)
+          (= typ :JaField) :NYI)))
 
 ;;; ToDo: There is the possibility that the code-block/primary/map-exp distinction can disappear.
 ;;; ToDo: Likewise (and perhaps even more likely) the reduce-exp/construction distinction.
@@ -125,10 +128,22 @@
   (-> m :exp rewrite))
 
 (defrewrite :JaJvarDecl [m]
-  (let [ns (if (-> m :var :special?) "sys" "user")]
-    `(~'assoc ~'?tl
-            ~(->> m :var :jvar-name (keyword ns))
-            ~(-> m :init-val rewrite))))
+  (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
+        `(bi/establish-context ~(-> m :init-val rewrite)),
+        ;; ToDo: Is setting this a legit user activity
+        (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
+        `(reset! bi/$$ ~(-> m :init-val rewrite)),
+        :else
+        `(~'assoc
+          ~(->> m :var :jvar-name (keyword "user"))
+          ~(-> m :init-val rewrite))))
+
+(defrewrite :JaJvar  [m]
+  (cond (and (:special? m) (= "$" (:jvar-name m)))
+        :sys/$
+        (and (:special? m) (= "$$" (:jvar-name m)))
+        `(->  bi/$$ deref)
+        :else (-> m :jvar-name symbol)))
 
 (def ^:dynamic inside-delim?
   "When true, modify rewriting behavior inside 'delimited expressions'."
@@ -141,11 +156,7 @@
 (defrewrite :JaField [m]
   (if inside-delim?
     (-> m :field-name)
-    `(~'bi/dot-map (:sys/$ ~'?tl) ~(-> m :field-name))))
-
-;;; ToDo: If a reference, this is either (:sys/$ ?tl) or (:user/foo ?tl).
-(defrewrite :JaJvar  [m]
-    (-> m :jvar-name symbol))
+    `(~'bi/dot-map  ~(-> m :field-name))))
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
@@ -277,7 +288,7 @@
   (or (string? exp)
       (number? exp)
       (keyword? exp)
-      (and (map? exp) (#{:JaField :JaVar} (:_type exp)))))
+      (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
 ;;;**** Walk the structure. When you encounter a BVEC, call collect-bvec.
 ;;;     Note: collect-bvec calls this on its operands and eventually returns a BFLAT.
@@ -466,7 +477,7 @@
   [exp]
   (cond (and (seq? exp) (= 'bi/step-> (first exp)))
         `(~'->
-          (:sys/$ ~'?tl)
+          :sys/$ #_(:sys/$ ~'?tl)
           ~@(map #(if (and (seq? %) (= 'bi/dot-map (first %)))
                     (list 'bi/dot-map (nth % 2))
                     %)
@@ -479,4 +490,14 @@
 (defn rewrite-nav
   "Rewrite a form with sequences of bi/step nav to wrap in bi/navigate."
   [exp]
-  (-> exp compress-nav drop-topic))
+  (-> exp compress-nav #_drop-topic))
+
+;;; I'm thinking that maybe we DO need an atom, (bi/make-state-obj) creates it.
+;;; All the assocs become swap! Ugh! (...or just the ones setting $).
+(defn tryme []
+  (-> (bi/make-state-obj)
+      (assoc :sys/$ (bi/$readFile "data/testing/jsonata/try.json"))
+      (bi/step-> (bi/dot-map "Account")
+                 (bi/dot-map "Order")
+                 (bi/apply-map "Product"
+                               (fn [_x1] (bi/* (bi/dot-map _x1 "Price") (bi/dot-map _x1 "Quantity")))))))

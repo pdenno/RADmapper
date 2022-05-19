@@ -61,23 +61,68 @@
              (rew/rewrite* :ptag/code-block "($ := [{'Product' : {'price' : 50, 'quantity' : 2}}
                                                     {'Product' : {'price' : 50, 'quantity' : 4}}];
                                                   Product.(price * quantity) )" :execute? true))))))
+(deftest why
+  (testing "Why:"
+
+    (testing "In JSONata this disregards data and returns 'abc'. Why?"
+      (is (= "abc" (rew/rewrite* :ptag/exp "'abc'[$]" :execute? true))))
+
+    (testing "Maybe this is no match because the data is neither object nor array???"
+      (is (= :no-match (rew/rewrite* :ptag/exp "'abc'.$" :execute? true))))))
 
 (deftest new-design
   (testing "New-design:"
 
-    (testing "implicit mapping and the singleton behavior."
-      (is (= [100 100 100] (rew/rewrite* :ptag/exp "['a', 'b', 'c'].$sum(100)"
-                                         :execute? true))))
+    (testing "simple use of context variable (1)"
+      (is (= "abc" (rew/rewrite* :ptag/exp "'abc'[0]" :execute? true))))
+
+    (testing "simple use of context variable (2)"
+      (is (= [1 2 3] (rew/rewrite* :ptag/exp "[1 , 2, 3].$" :execute? true))))
+
+    (testing "simple use of context variable (3)"
+      (is (= 123
+             (rew/rewrite* :ptag/code-block "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c.$ )"
+                           :execute? true))))
+
+    (testing "Last part of path expression creates an array."
+      (is (= [[1] [2] [3]] (rew/rewrite* :ptag/exp "[1,2,3].[$]" :execute? true))))
+
+    (testing "simple use of contex variable, or not (1)"
+      (is (= 123
+             (rew/rewrite* :ptag/code-block "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c )"
+                           :execute? true))))
+
+    (testing "simple use of contex variable, or not (2)"
+      (is (= 123
+             (rew/rewrite* :ptag/exp "{'a' : {'b' : {'c' : 123}}}.a.b.c"
+                           :execute? true))))
+
+    (testing "simple use of contex variable, or not (3)"
+      (is (= 123
+             (rew/rewrite* :ptag/exp "{'a' : {'b' : {'c' : 123}}}.a.b.c.$"
+                           :execute? true))))
+
+    (testing "implicit mapping and strange argument" ; <========================== This one next.
+      (is (= [100 100 100]
+             (rew/rewrite* :ptag/exp "['a', 'b', 'c'].$sum([50, 50])"
+                           :execute? true))))
 
     (testing "implicit mapping with use of $."
-      (is (= [1, 2, 3] (rew/rewrite* :ptag/exp "[1, 2, 3].$sum($)"
-                                     :execute? true))))
+      (is (= 6
+             (rew/rewrite* :ptag/code-block "( $ := [1, 2, 3]; $sum($) )"
+                           :execute? true))))
 
-    (testing "binary precedence and non-advancing context variable."
-      (is (= 11 (rew/rewrite* :ptag/code-block "($ := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; a + b * c + d)"
-                              :execute? true))))
+    (testing "binary precedence and non-advancing context variable (1)."
+      (is (= 11
+             (rew/rewrite* :ptag/code-block "($ := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; a + b * c + d)"
+                           :execute? true))))
 
-    (testing "advancing context variable."
+    (testing "binary precedence and non-advancing context variable (2)."
+      (is (= 11
+             (rew/rewrite* :ptag/exp "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)"
+                           :execute? true))))
+
+    (testing "advancing context variable on apply-map."
       (is (= [68.9, 21.67, 137.8, 107.99]
              (rew/rewrite* :ptag/code-block "( $:= $readFile('data/testing/jsonata/try.json');
                                                Account.Order.Product.(Price*Quantity) )"
@@ -85,7 +130,7 @@
 
 (deftest nyi
   (testing "NYI:"
-    
+
     (testing "reduce using delimiters;  ToDo: the backquote thing."
       (is (= {"Bowler Hat" [68.9, 137.8], "Trilby hat" 21.67, "Cloak" 107.99}
              (rew/rewrite* :ptag/code-block "(  $:= $readFile('data/testing/jsonata/try.json');
@@ -117,3 +162,11 @@
            (rew/rewrite* :ptag/code-block (str addr-data "$ADDR.phone.mobile )") :execute? true)))
     (is (= [68.9, 21.67, 137.8, 107.99]
            (rew/rewrite* :ptag/code-block "data/testing/map-examples/iteration/i6.mmp" :file? true :execute? true)))))
+
+(defn tryme []
+  (-> (bi/step-> (-> {} (assoc "a" (-> {} (assoc "b" (-> {} (assoc "c" 123))))))
+                 (bi/dot-map "a")
+                 (bi/dot-map "b")
+                 (bi/dot-map "c")
+                 :sys/$)
+      rad-mapper.builtins/finish))

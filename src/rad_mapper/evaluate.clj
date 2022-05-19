@@ -1,7 +1,8 @@
 (ns rad-mapper.evaluate
   "Evaluate (someday with SCI) a rewritten form."
   (:require
-   [taoensso.timbre   :as log]))
+   [rad-mapper.builtins :as bi]
+   [taoensso.timbre     :as log]))
 
 ;;; ToDo: SCI (Small Clojure Interpreter)
 ;;; ToDo: It would be nice to say *what symbol* is unresolved. In tracking this down,
@@ -14,6 +15,7 @@
   (when verbose? (println "eval form: " form))
   (binding [*ns* (find-ns 'user)]
     (try
+      (bi/reset-env)
       (eval form)
       (catch Exception e
         (log/error "\nError evaluating form:" e "\nform:" form)))))

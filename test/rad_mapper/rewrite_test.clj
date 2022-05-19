@@ -24,9 +24,9 @@
 
       ;; This one actually tests the tokenizer! \? and \: are problematic owing to use in qvars and triple roles.
       (is (= '(if true "a" "b") (rew/rewrite* :ptag/exp "true?'a':'b'" :rewrite? true)))
-      
+
       ;; ToDo: This one doesn't work yet, but it tokenizes. See parse_test.clj.
-      ;; I think the problem is that triple-roles are literals yet. I'm not sure that they should be. 
+      ;; I think the problem is that triple-roles are literals yet. I'm not sure that they should be.
       #_(is (= '(if true :foo/bar :foo/bat) (rew/rewrite* :ptag/exp "true?:foo/bar::foo/bat" :rewrite? true)))
 
       ;; Testing the synax reordering of map/filter on paths
@@ -35,7 +35,7 @@
 
       (is (= '(mapv (fn [foo] (bi/* (bi/dot-map foo "A") (bi/dot-map foo "B"))) $data)
              (rew/rewrite* :ptag/exp "$data.(A * B)" :rewrite? true)))
-      
+
       (is (= '(bi/+ (bi/dot-map (bi/dot-map (bi/dot-map (bi/dot-map "a") "b") "c") "d") (bi/dot-map (bi/dot-map "e") "f"))
              (rew/rewrite* :ptag/exp "a.b.c.d + e.f" :rewrite? true)))
 
@@ -98,7 +98,7 @@
 (deftest code-block
   (testing "Testing that code blocks handle binding and special jvars correctly"
 
-    ;; ToDo: I need to look at JSONata use of \; on this one. 
+    ;; ToDo: I need to look at JSONata use of \; on this one.
     (is (= '(let [$x 1] ($f $x) ($g $x))
            (rew/rewrite* :ptag/code-block  "( $x := 1; $f($x) $g($x) )" :rewrite? true)))
 

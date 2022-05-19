@@ -1,0 +1,437 @@
+{:_type :JaCurlyDelimitedExp,
+ :exp
+ [{:_type :JaMapPair,
+   :key "shippedItemInstance",
+   :val
+   {:_type :JaSquareDelimitedExp,
+    :exp
+    [{:_type :JaFnCall,
+      :fn-name "$map",
+      :args
+      [{:_type :JaField, :field-name "payload"}
+       {:_type :JaFnDef,
+        :vars [{:_type :JaJvar, :jvar-name "$payload01"} {:_type :JaJvar, :jvar-name "$i"}],
+        :body
+        {:_type :JaCurlyDelimitedExp,
+         :exp
+         [{:_type :JaMapPair, :key "typeCode", :val "seed"}
+          {:_type :JaMapPair,
+           :key "identifier",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp
+            [{:_type :JaMapPair,
+              :key "content",
+              :val
+              {:_type :JaBinOpExp,
+               :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+               :bin-op \.,
+               :exp2
+               {:_type :JaBinOpExp,
+                :exp1 {:_type :JaField, :field-name "ShipmentNumber"},
+                :bin-op \&,
+                :exp2 {:_type :JaBinOpExp, :exp1 "-", :bin-op \&, :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "SeqCode"}}}}}}
+             {:_type :JaMapPair, :key "typeCode", :val "shipment_line_identifier"}]}}
+          {:_type :JaMapPair,
+           :key "item",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp
+            [{:_type :JaMapPair, :key "brandName", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "SeedBrand"}}}
+             {:_type :JaMapPair,
+              :key "manufacturerItemIdentification",
+              :val
+              {:_type :JaCurlyDelimitedExp,
+               :exp
+               [{:_type :JaMapPair,
+                 :key "identifier",
+                 :val
+                 {:_type :JaConditionalExp,
+                  :predicate
+                  {:_type :JaParenDelimitedExp,
+                   :exp {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "TREATMENT"}}},
+                  :exp1 {:_type :JaParenDelimitedExp, :exp {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "ItemNumber"}}},
+                  :exp2 ""}}
+                {:_type :JaMapPair,
+                 :key "typeCode",
+                 :val
+                 {:_type :JaConditionalExp,
+                  :predicate
+                  {:_type :JaParenDelimitedExp,
+                   :exp {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "TREATMENT"}}},
+                  :exp1 {:_type :JaParenDelimitedExp, :exp "SKU"},
+                  :exp2 ""}}]}}
+             {:_type :JaMapPair, :key "description", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "Description"}}}
+             {:_type :JaMapPair,
+              :key "gtinid",
+              :val
+              {:_type :JaConditionalExp,
+               :predicate
+               {:_type :JaParenDelimitedExp,
+                :exp
+                {:_type :JaBinOpExp,
+                 :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                 :bin-op \.,
+                 :exp2
+                 {:_type :JaBinOpExp,
+                  :exp1 {:_type :JaField, :field-name "Crop"},
+                  :bin-op :!=,
+                  :exp2
+                  {:_type :JaBinOpExp,
+                   :exp1 "TREATMENT",
+                   :bin-op :and,
+                   :exp2
+                   {:_type :JaBinOpExp,
+                    :exp1
+                    {:_type :JaFnCall,
+                     :fn-name "$length",
+                     :args [{:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "Crop"}}]}]},
+                    :bin-op \>,
+                    :exp2 12}}}}},
+               :exp1 {:_type :JaParenDelimitedExp, :exp {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "ItemNumber"}}},
+               :exp2 ""}}
+             {:_type :JaMapPair, :key "varietyName", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "ShortDescription"}}}
+             {:_type :JaMapPair, :key "productName", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "ShortDescription"}}}]}}
+          {:_type :JaMapPair,
+           :key "quantity",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp
+            [{:_type :JaMapPair, :key "unitCode", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "UOM"}}}
+             {:_type :JaMapPair,
+              :key "content",
+              :val {:_type :JaFnCall, :fn-name "$number", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "Quantity"}}]}}]}}
+          {:_type :JaMapPair,
+           :key "description",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp
+            [{:_type :JaMapPair,
+              :key "content",
+              :val
+              {:_type :JaBinOpExp,
+               :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+               :bin-op \.,
+               :exp2
+               {:_type :JaBinOpExp,
+                :exp1 {:_type :JaField, :field-name "ShortDescription"},
+                :bin-op \&,
+                :exp2
+                {:_type :JaParenDelimitedExp,
+                 :exp
+                 {:_type :JaConditionalExp,
+                  :predicate
+                  {:_type :JaParenDelimitedExp,
+                   :exp
+                   {:_type :JaBinOpExp,
+                    :exp1
+                    {:_type :JaFnCall,
+                     :fn-name "$length",
+                     :args [{:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "LotId"}}]}]},
+                    :bin-op \>,
+                    :exp2 0}},
+                  :exp1
+                  {:_type :JaParenDelimitedExp,
+                   :exp {:_type :JaBinOpExp, :exp1 "-", :bin-op \&, :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "LotId"}}}},
+                  :exp2 ""}}}}}
+             {:_type :JaMapPair, :key "typeCode", :val "mics_display"}]}}
+          {:_type :JaMapPair,
+           :key "classification",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp
+            [{:_type :JaMapPair,
+              :key "codes",
+              :val
+              {:_type :JaCurlyDelimitedExp,
+               :exp
+               [{:_type :JaMapPair,
+                 :key "code",
+                 :val
+                 {:_type :JaSquareDelimitedExp,
+                  :exp
+                  [{:_type :JaCurlyDelimitedExp,
+                    :exp
+                    [{:_type :JaMapPair,
+                      :key "content",
+                      :val
+                      {:_type :JaConditionalExp,
+                       :predicate
+                       {:_type :JaParenDelimitedExp,
+                        :exp
+                        {:_type :JaBinOpExp,
+                         :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                         :bin-op \.,
+                         :exp2
+                         {:_type :JaBinOpExp,
+                          :exp1 {:_type :JaField, :field-name "Crop"},
+                          :bin-op \=,
+                          :exp2
+                          {:_type :JaBinOpExp,
+                           :exp1 "Corn",
+                           :bin-op :or,
+                           :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "CORN"}}}}}},
+                       :exp1 {:_type :JaParenDelimitedExp, :exp "C"},
+                       :exp2
+                       {:_type :JaConditionalExp,
+                        :predicate
+                        {:_type :JaParenDelimitedExp,
+                         :exp
+                         {:_type :JaBinOpExp,
+                          :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                          :bin-op \.,
+                          :exp2
+                          {:_type :JaBinOpExp,
+                           :exp1 {:_type :JaField, :field-name "Crop"},
+                           :bin-op \=,
+                           :exp2
+                           {:_type :JaBinOpExp,
+                            :exp1 "Soybeans",
+                            :bin-op :or,
+                            :exp2
+                            {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "SOYBEANS"}}}}}},
+                        :exp1 {:_type :JaParenDelimitedExp, :exp "S"},
+                        :exp2
+                        {:_type :JaConditionalExp,
+                         :predicate
+                         {:_type :JaParenDelimitedExp,
+                          :exp
+                          {:_type :JaBinOpExp,
+                           :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                           :bin-op \.,
+                           :exp2
+                           {:_type :JaBinOpExp,
+                            :exp1 {:_type :JaField, :field-name "Crop"},
+                            :bin-op \=,
+                            :exp2
+                            {:_type :JaBinOpExp,
+                             :exp1 "Alfalfa",
+                             :bin-op :or,
+                             :exp2
+                             {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "ALFALFA"}}}}}},
+                         :exp1 {:_type :JaParenDelimitedExp, :exp "ALF"},
+                         :exp2
+                         {:_type :JaConditionalExp,
+                          :predicate
+                          {:_type :JaParenDelimitedExp,
+                           :exp
+                           {:_type :JaBinOpExp,
+                            :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                            :bin-op \.,
+                            :exp2
+                            {:_type :JaBinOpExp,
+                             :exp1 {:_type :JaField, :field-name "Crop"},
+                             :bin-op \=,
+                             :exp2
+                             {:_type :JaBinOpExp,
+                              :exp1 "Cotton",
+                              :bin-op :or,
+                              :exp2
+                              {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "COTTON"}}}}}},
+                          :exp1 {:_type :JaParenDelimitedExp, :exp "TN"},
+                          :exp2
+                          {:_type :JaConditionalExp,
+                           :predicate
+                           {:_type :JaParenDelimitedExp,
+                            :exp
+                            {:_type :JaBinOpExp,
+                             :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                             :bin-op \.,
+                             :exp2
+                             {:_type :JaBinOpExp,
+                              :exp1 {:_type :JaField, :field-name "Crop"},
+                              :bin-op \=,
+                              :exp2
+                              {:_type :JaBinOpExp,
+                               :exp1 "Wheat",
+                               :bin-op :or,
+                               :exp2
+                               {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "WHEAT"}}}}}},
+                           :exp1 {:_type :JaParenDelimitedExp, :exp "SW"},
+                           :exp2
+                           {:_type :JaConditionalExp,
+                            :predicate
+                            {:_type :JaParenDelimitedExp,
+                             :exp
+                             {:_type :JaBinOpExp,
+                              :exp1 {:_type :JaJvar, :jvar-name "$containspayload01"},
+                              :bin-op \.,
+                              :exp2
+                              {:_type :JaBinOpExp,
+                               :exp1 {:_type :JaField, :field-name "Crop"},
+                               :bin-op \=,
+                               :exp2
+                               {:_type :JaBinOpExp,
+                                :exp1 "SpringWheat",
+                                :bin-op :or,
+                                :exp2
+                                {:_type :JaBinOpExp,
+                                 :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                                 :bin-op \.,
+                                 :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "SPRINGWHEAT"}}}}}},
+                            :exp1 {:_type :JaParenDelimitedExp, :exp "SW"},
+                            :exp2
+                            {:_type :JaConditionalExp,
+                             :predicate
+                             {:_type :JaParenDelimitedExp,
+                              :exp
+                              {:_type :JaBinOpExp,
+                               :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                               :bin-op \.,
+                               :exp2
+                               {:_type :JaBinOpExp,
+                                :exp1 {:_type :JaField, :field-name "Crop"},
+                                :bin-op \=,
+                                :exp2
+                                {:_type :JaBinOpExp,
+                                 :exp1 "WinterWheat",
+                                 :bin-op :or,
+                                 :exp2
+                                 {:_type :JaBinOpExp,
+                                  :exp1 {:_type :JaJvar, :jvar-name "$payload01"},
+                                  :bin-op \.,
+                                  :exp2 {:_type :JaBinOpExp, :exp1 {:_type :JaField, :field-name "Crop"}, :bin-op \=, :exp2 "WINTERWHEAT"}}}}}},
+                             :exp1 {:_type :JaParenDelimitedExp, :exp "WW"},
+                             :exp2 ""}}}}}}}}
+                     {:_type :JaMapPair, :key "listAgencyIdentifier", :val "AGIIS"}
+                     {:_type :JaMapPair, :key "typeCode", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "Crop"}}}]}
+                   {:_type :JaCurlyDelimitedExp,
+                    :exp
+                    [{:_type :JaMapPair, :key "content", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "SeedTrait"}}}
+                     {:_type :JaMapPair, :key "typeCode", :val "Trait"}]}]}}]}}
+             {:_type :JaMapPair, :key "typeCode", :val "Crop"}]}}
+          {:_type :JaMapPair,
+           :key "lot",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp
+            [{:_type :JaMapPair,
+              :key "identifier",
+              :val
+              {:_type :JaCurlyDelimitedExp,
+               :exp
+               [{:_type :JaMapPair,
+                 :key "content",
+                 :val {:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "LotId"}}]}}
+                {:_type :JaMapPair, :key "typeCode", :val "Lot"}]}}]}}
+          {:_type :JaMapPair,
+           :key "documentReference",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp
+            [{:_type :JaMapPair,
+              :key "identifier",
+              :val
+              {:_type :JaCurlyDelimitedExp,
+               :exp
+               [{:_type :JaMapPair,
+                 :key "content",
+                 :val {:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "ShipmentNumber"}}]}}]}}
+             {:_type :JaMapPair, :key "typeCode", :val "shipment_identifier"}
+             {:_type :JaMapPair,
+              :key "documentDateTime",
+              :val
+              {:_type :JaConditionalExp,
+               :predicate
+               {:_type :JaParenDelimitedExp,
+                :exp
+                {:_type :JaFnCall,
+                 :fn-name "$contains",
+                 :args [{:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "OrderDate"}}]} "-"]}},
+               :exp1
+               {:_type :JaParenDelimitedExp,
+                :exp
+                {:_type :JaBinOpExp,
+                 :exp1 {:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "OrderDate"}}]},
+                 :bin-op \&,
+                 :exp2 "T00:00:00.000-05:00"}},
+               :exp2
+               {:_type :JaConditionalExp,
+                :predicate
+                {:_type :JaParenDelimitedExp,
+                 :exp
+                 {:_type :JaBinOpExp,
+                  :exp1
+                  {:_type :JaFnCall,
+                   :fn-name "$length",
+                   :args [{:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "OrderDate"}}]}]},
+                  :bin-op \=,
+                  :exp2 8}},
+                :exp1
+                {:_type :JaParenDelimitedExp,
+                 :exp
+                 {:_type :JaBinOpExp,
+                  :exp1
+                  {:_type :JaParenDelimitedExp,
+                   :exp
+                   {:_type :JaBinOpExp,
+                    :exp1 {:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "OrderDate"}}]},
+                    :bin-op :thread,
+                    :exp2 #"(\d4)-(\d2)-(\d2)"}},
+                  :bin-op \&,
+                  :exp2 "T00:00:00.000-05:00"}},
+                :exp2 ""}}}]}}
+          {:_type :JaMapPair,
+           :key "manufacturingParty",
+           :val
+           {:_type :JaCurlyDelimitedExp,
+            :exp [{:_type :JaMapPair, :key "name", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "ManufacturerName"}}}]}}
+          {:_type :JaMapPair,
+           :key "party",
+           :val
+           {:_type :JaSquareDelimitedExp,
+            :exp
+            [{:_type :JaCurlyDelimitedExp,
+              :exp
+              [{:_type :JaMapPair,
+                :key "identifier",
+                :val
+                {:_type :JaSquareDelimitedExp,
+                 :exp
+                 [{:_type :JaCurlyDelimitedExp,
+                   :exp
+                   [{:_type :JaMapPair,
+                     :key "content",
+                     :val {:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "CustomerNumber"}}]}}
+                    {:_type :JaMapPair, :key "typeCode", :val "retailer_grower_identifier"}]}]}}
+               {:_type :JaMapPair, :key "name", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "CustomerLookupName"}}}
+               {:_type :JaMapPair,
+                :key "location",
+                :val
+                {:_type :JaCurlyDelimitedExp,
+                 :exp
+                 [{:_type :JaMapPair,
+                   :key "glnid",
+                   :val {:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "CustomerGLN"}}]}}]}}
+               {:_type :JaMapPair, :key "typeCode", :val "Grower"}]}
+             {:_type :JaCurlyDelimitedExp,
+              :exp
+              [{:_type :JaMapPair, :key "name", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "Retailer"}}}
+               {:_type :JaMapPair,
+                :key "location",
+                :val
+                {:_type :JaCurlyDelimitedExp,
+                 :exp
+                 [{:_type :JaMapPair,
+                   :key "glnid",
+                   :val {:_type :JaFnCall, :fn-name "$string", :args [{:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "RetailerGLN"}}]}}]}}
+               {:_type :JaMapPair, :key "typeCode", :val "Retailer"}]}]}}
+          {:_type :JaMapPair,
+           :key "itemIdentifierSet",
+           :val
+           {:_type :JaSquareDelimitedExp,
+            :exp
+            [{:_type :JaCurlyDelimitedExp,
+              :exp
+              [{:_type :JaMapPair,
+                :key "identifier",
+                :val
+                {:_type :JaSquareDelimitedExp,
+                 :exp
+                 [{:_type :JaCurlyDelimitedExp,
+                   :exp
+                   [{:_type :JaMapPair, :key "content", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "SeedTreatments"}}}
+                    {:_type :JaMapPair, :key "typeCode", :val "product"}]}]}}
+               {:_type :JaMapPair, :key "schemeAgencyIdentifier", :val "manufacturer_seed_treatment_identifier"}
+               {:_type :JaMapPair, :key "schemeIdentifier", :val {:_type :JaBinOpExp, :exp1 {:_type :JaJvar, :jvar-name "$payload01"}, :bin-op \., :exp2 {:_type :JaField, :field-name "SeedTreatments"}}}
+               {:_type :JaMapPair, :key "typeCode", :val "seed_treatment"}]}]}}]}}]}]}}]}
