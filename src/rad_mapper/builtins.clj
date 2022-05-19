@@ -139,7 +139,7 @@
 (defn apply-map
   "Navigates one more step from the argument and executes fn."
   [obj last-operand-step fn]
-  (let [obj (if (state-obj? obj) (:sys/$ obj) obj)]
+  (let [obj (if (s/valid? ::state-obj obj) (:sys/$ obj) obj)]
     (->> (dot-map obj last-operand-step)
          (mapv fn)
          jsonata-flatten)))
@@ -255,17 +255,17 @@
   "This is for $reduce with JSONata semantics."
   [coll func]
   (let [num-params (-> func meta :params count)]
-    (reset! $ (loop [c (rest coll),
-                     r (first coll)
-                     i 0]
-                (if (empty? c)
-                  r
-                  (recur (rest c),
-                         (case num-params
-                           4 (func r (first c) i coll),
-                           3 (func r (first c) i),
-                           2 (func r (first c))),
-                         (inc i)))))))
+    (loop [c (rest coll),
+           r (first coll)
+           i 0]
+      (if (empty? c)
+        r
+        (recur (rest c),
+               (case num-params
+                 4 (func r (first c) i coll),
+                 3 (func r (first c) i),
+                 2 (func r (first c))),
+               (inc i))))))
 
 (defn $reduce
   "Signature: $reduce(array, function [, init])
@@ -313,25 +313,25 @@
    The index (position) of that value in the input array is passed in as the second parameter,
    if specified. The whole input array is passed in as the third parameter, if specified."
   [coll func]
-  (reset! $ (let [nvars  (-> func meta :params count)]
-              (cond
-                (== nvars 3)
-                (loop [c coll, i 0, r false]
-                  (cond r r
-                        (empty? c) false
-                        :else (recur (rest c) (inc i) (func (first c) i coll))))
-              (== nvars 2)
-              (loop [c coll, i 0, r false]
-                (cond r r
-                      (empty? c) false
-                      :else (recur (rest c) (inc i) (func (first c) i))))
-              (== nvars 1)
-              (loop [c coll, r false]
-                (cond r r
-                      (empty? c) false
-                      :else (recur (rest c) (func (first c))))),
-              :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
-                                    {:vars (-> func meta :params)}))))))
+  (let [nvars  (-> func meta :params count)]
+    (cond
+      (== nvars 3)
+      (loop [c coll, i 0, r false]
+        (cond r r
+              (empty? c) false
+              :else (recur (rest c) (inc i) (func (first c) i coll))))
+      (== nvars 2)
+      (loop [c coll, i 0, r false]
+        (cond r r
+              (empty? c) false
+              :else (recur (rest c) (inc i) (func (first c) i))))
+      (== nvars 1)
+      (loop [c coll, r false]
+        (cond r r
+              (empty? c) false
+              :else (recur (rest c) (func (first c))))),
+      :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
+                            {:vars (-> func meta :params)})))))
 
 (defn strcat
   "The JSONata & operator."
@@ -391,7 +391,7 @@
              (nth obj# (clojure.core/+ len# ix#))
              (nth obj# ix#))))
        ;; Filter behavior
-       (reset! $ (filterv (fn [arg#] (reset! $ arg#) ~pred|ix) obj#)))))
+       (filterv (fn [arg#] arg# ~pred|ix) obj#))))
 
 ;;;--------------------------- JSONata mostly-one-liners ------------------------------------
 

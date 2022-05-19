@@ -5,6 +5,15 @@
    [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]))
 
+(defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
+  (let [execute? (not (or simplify? rewrite?))]
+    (rew/rewrite* :ptag/exp exp
+                  :simplify? simplify?
+                  :rewrite? rewrite?
+                  :execute? execute?
+                  :debug? debug?
+                  :debug-parse? debug-parse?)))
+
 (deftest expr-evaluations true
   (testing "evaluation of small expressions"
     #_(is false) ; Needed for recent versions of CIDER!
@@ -14,27 +23,25 @@
            (rew/rewrite* :ptag/code-block "($ := [{'a' : 1}, {'a' : 2}, {'a' : 3}]; a)" :execute? true)))
 
     ;; This tests use of $match
-    (is (= {"match" "foo", "index" 2, "groups" []}
-           (rew/rewrite* :ptag/exp "$match(\"bbfoovar\", /foo/)" :execute? true)))
+    (is (= {"match" "foo", "index" 2, "groups" []}  (run "$match(\"bbfoovar\", /foo/)")))
 
     ;; This tests use of $match
-    (is (= {"match" "xababy", "index" 6, "groups" ["ab"]}
-           (rew/rewrite* :ptag/exp "$match(\"foobarxababy\",/\\d*x(ab)+y/)" :execute? true)))
+    (is (= {"match" "xababy", "index" 6, "groups" ["ab"]} (run "$match(\"foobarxababy\",/\\d*x(ab)+y/)")))
 
     ;; This tests 'immediate use' of a function
-    (is (= 4 (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :execute? true)))
+    (is (= 4 (run "function($x){$x+1}(3)")))
 
     ;; This tests another sort of immediate use, using the threading macro.
-    (is (= 5 (rew/rewrite* :ptag/exp "4 ~> function($x){$x+1}()" :execute? true)))
+    (is (= 5 (run "4 ~> function($x){$x+1}()")))
 
     ;; This tests reduce.
-    (is (= 15 (rew/rewrite* :ptag/exp "$reduce([1..5], function($i, $j){$i + $j})" :execute? true)))
+    (is (= 15 (run "$reduce([1..5], function($i, $j){$i + $j})")))
 
     ;; This tests reduce on one arg.
-    (is (= 3 (rew/rewrite* :ptag/exp "$reduce([3], function($i, $j){$i + $j})" :execute? true)))
+    (is (= 3 (run "$reduce([3], function($i, $j){$i + $j})")))
 
     ;; This tests reduce on one arg and an initial value.
-    (is (= 5 (rew/rewrite* :ptag/exp "$reduce([3], function($i, $j){$i + $j}, 2)" :execute? true)))))
+    (is (= 5 (run "$reduce([3], function($i, $j){$i + $j}, 2)")))))
 
 (deftest code-block-evaluations true
   (testing "Code block:"
@@ -65,67 +72,67 @@
   (testing "Why:"
 
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
-      (is (= "abc" (rew/rewrite* :ptag/exp "'abc'[$]" :execute? true))))
+      (is (= "abc" (run "'abc'[$]"))))
 
     (testing "Maybe this is no match because the data is neither object nor array???"
-      (is (= :no-match (rew/rewrite* :ptag/exp "'abc'.$" :execute? true))))))
+      (is (= :no-match (run "'abc'.$"))))))
 
-(deftest new-design
-  (testing "New-design:"
+(deftest design
+  (testing "Design (evaluate):"
 
     (testing "simple use of context variable (1)"
-      (is (= "abc" (rew/rewrite* :ptag/exp "'abc'[0]" :execute? true))))
+      (is (= "abc" (run "'abc'[0]"))))
 
     (testing "simple use of context variable (2)"
-      (is (= [1 2 3] (rew/rewrite* :ptag/exp "[1 , 2, 3].$" :execute? true))))
+      (is (= [1 2 3] (run "[1 , 2, 3].$"))))
 
     (testing "simple use of context variable (3)"
-      (is (= 123
-             (rew/rewrite* :ptag/code-block "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c.$ )"
-                           :execute? true))))
+      (is (= 123 (run "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c.$ )"))))
 
     (testing "Last part of path expression creates an array."
-      (is (= [[1] [2] [3]] (rew/rewrite* :ptag/exp "[1,2,3].[$]" :execute? true))))
+      (is (= [[1] [2] [3]] (run "[1,2,3].[$]"))))
 
     (testing "simple use of contex variable, or not (1)"
-      (is (= 123
-             (rew/rewrite* :ptag/code-block "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c )"
-                           :execute? true))))
+      (is (= 123 (run "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c )")))
 
     (testing "simple use of contex variable, or not (2)"
-      (is (= 123
-             (rew/rewrite* :ptag/exp "{'a' : {'b' : {'c' : 123}}}.a.b.c"
-                           :execute? true))))
+      (is (= 123 (run "{'a' : {'b' : {'c' : 123}}}.a.b.c"))))
 
     (testing "simple use of contex variable, or not (3)"
-      (is (= 123
-             (rew/rewrite* :ptag/exp "{'a' : {'b' : {'c' : 123}}}.a.b.c.$"
-                           :execute? true))))
+      (is (= 123 (run "{'a' : {'b' : {'c' : 123}}}.a.b.c.$"))))
 
     (testing "implicit mapping and strange argument" ; <========================== This one next.
-      (is (= [100 100 100]
-             (rew/rewrite* :ptag/exp "['a', 'b', 'c'].$sum([50, 50])"
-                           :execute? true))))
+      (is (= [100 100 100] (run "['a', 'b', 'c'].$sum([50, 50])"))))
 
     (testing "implicit mapping with use of $."
-      (is (= 6
-             (rew/rewrite* :ptag/code-block "( $ := [1, 2, 3]; $sum($) )"
-                           :execute? true))))
+      (is (= 6 (run "( $ := [1, 2, 3]; $sum($) )"))))
 
     (testing "binary precedence and non-advancing context variable (1)."
-      (is (= 11
-             (rew/rewrite* :ptag/code-block "($ := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; a + b * c + d)"
-                           :execute? true))))
+      (is (= 11 (run "($ := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; a + b * c + d)"))))
 
     (testing "binary precedence and non-advancing context variable (2)."
-      (is (= 11
-             (rew/rewrite* :ptag/exp "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)"
-                           :execute? true))))
+      (is (= 11 (run "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)"))))
+
+    (testing "'code-block' is just an expression"
+      (is (= 22 (run "{'a' : 1, 'b' : 22}.($x := 2; $y:= 4; b)"))))
+
+    (testing "code-blocks allow closures"
+      (is (=  8 (run "($incAmt := 3; $inc := function($n){$n + $incAmt}; $inc(5))"))))
+
+    (testing "Assignments return values; semicolon is a separator."
+      (is (= 1 (rew/rewrite* :ptag/code-block "{'a' : 1, 'b' : 2}.($x := 3)"
+                             :execute? true))))
 
     (testing "advancing context variable on apply-map."
       (is (= [68.9, 21.67, 137.8, 107.99]
              (rew/rewrite* :ptag/code-block "( $:= $readFile('data/testing/jsonata/try.json');
                                                Account.Order.Product.(Price*Quantity) )"
+                           :execute? true))))
+
+    (testing "Like try.jsonata page."
+      (is (= 336.36
+             (rew/rewrite* :ptag/code-block "( $:= $readFile('data/testing/jsonata/try.json');
+                                               $sum(Account.Order.Product.(Price*Quantity)) )"
                            :execute? true))))))
 
 (deftest nyi

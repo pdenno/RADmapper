@@ -118,8 +118,7 @@
           `(-> ~(->> m :top rewrite rewrite-nav) bi/finish)
           (= typ :JaField) :NYI)))
 
-;;; ToDo: There is the possibility that the code-block/primary/map-exp distinction can disappear.
-;;; ToDo: Likewise (and perhaps even more likely) the reduce-exp/construction distinction.
+;;; ToDo: Return to the let-style implementation; assignments are expressions
 (defrewrite :JaCodeBlock [m]
   (util/reset-dgensym!)
   (->> m :body (map rewrite)))
@@ -491,13 +490,3 @@
   "Rewrite a form with sequences of bi/step nav to wrap in bi/navigate."
   [exp]
   (-> exp compress-nav #_drop-topic))
-
-;;; I'm thinking that maybe we DO need an atom, (bi/make-state-obj) creates it.
-;;; All the assocs become swap! Ugh! (...or just the ones setting $).
-(defn tryme []
-  (-> (bi/make-state-obj)
-      (assoc :sys/$ (bi/$readFile "data/testing/jsonata/try.json"))
-      (bi/step-> (bi/dot-map "Account")
-                 (bi/dot-map "Order")
-                 (bi/apply-map "Product"
-                               (fn [_x1] (bi/* (bi/dot-map _x1 "Price") (bi/dot-map _x1 "Quantity")))))))
