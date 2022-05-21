@@ -11,7 +11,8 @@
            org.clojure/data.json          {:mvn/version "2.4.0"}
            org.clojure/data.xml           {:mvn/version "0.2.0-alpha6"}}
 
- :aliases {:dev {:extra-deps {com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}} ; clj -A:dev, for example. (in .dir-locals.el)
+ :aliases {:dev {:extra-paths ["src/devl"]
+                 :extra-deps {com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}} ; clj -A:dev, for example. (in .dir-locals.el)
 
            :test {:extra-paths ["test"]
                   :extra-deps  {lambdaisland/kaocha {:mvn/version "1.65.1029"}

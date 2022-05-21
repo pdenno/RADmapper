@@ -24,7 +24,7 @@
   "The root context data, like in JSONata."
   (atom nil))
 
-(def user-established-context
+(def current-context
   "In evaluating code, $ := ... or use of $ 'out of the blue' might occur.
    This is used to find the value of :sys/$ set by those means.
    It is only valid before the action starts; after that, only the threaded
@@ -33,20 +33,14 @@
 
 ;;; ToDo: Write some documentation once you figure it out!
 ;;; So far, this is called by step->, but I think there may be other forms where it makes sense to do.
-(defn init-state-obj
-  ([] (init-state-obj @user-established-context))
-  ([val] {:sys/$ val
-          :advance? false}))
-
-(defn establish-context
-  "Intialize the state object and set the value of :sys/$."
+(defn initialize-context
   [val]
-  (reset! user-established-context val))
+  (reset! current-context {:sys/$ val :advance? false}))
 
 (defn reset-env
   "Clean things up just prior to running user code."
   []
-  (reset! user-established-context nil))
+  (reset! current-context nil))
 
 (s/def ::state-obj (s/keys :req_un [:advance?] :req [:sys/$]))
 (s/def ::number number?)
@@ -73,10 +67,10 @@
     s))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn + "plus" [x_ y]
-  (if (number? x_)
-    (clojure.core/+ x_ y)
-    (throw (ex-info "The left side of the '+' operator must evaluate to a number." {:op1 x_}))))
+(defn + "plus" [x y]
+  (s/assert ::number (:sys/$ x))
+  (s/assert ::number (:sys/$ y))
+  (clojure.core/+ (:sys/$ x) (:sys/$ y)))
 
 (defn - "minus" [x_ y]
   (if (number? x_)
@@ -119,23 +113,6 @@
   "Return the argument as a string."
   [s_] (str s_))
 
-(defn dot-map
-  "Perform the mapping activity of the 'a' in $.a, for example.
-   This function is called with the state object. It returns either:
-   (1) if :advance? is true, the state object with :sys/$ updated
-   (2) if :advance? is false, the effect of mapping 'a' directly."
-  [sobj prop|fn]
-  (s/assert ::state-obj sobj)
-  (let [obj (if (-> sobj :sys/$ vector?) (:sys/$ sobj) (-> sobj :sys/$ vector))
-        res (jsonata-flatten
-             (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
-                   (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
-                                                       (filterv identity)),
-                   (fn? prop|fn)                  (->> (mapv prop|fn obj)
-                                                       (filterv identity)),
-                   :else (throw (ex-info "Expected function to map over" {:got prop|fn}))))]
-    (if (:advance? sobj) (assoc sobj :sys/$ res) res)))
-
 (defn apply-map
   "Navigates one more step from the argument and executes fn."
   [obj last-operand-step fn]
@@ -152,21 +129,34 @@
   [x y]
   `(-> ~x ~y))
 
+(defn dot-map
+  "Perform the mapping activity of the 'a' in $.a, for example.
+   This function is called with the state object. It returns the
+   state object with :sys/$ updated."
+  ([prop|fn] (dot-map @current-context prop|fn))
+  ([sobj prop|fn]
+   (s/assert ::state-obj sobj)
+   (let [obj (if (-> sobj :sys/$ vector?) (:sys/$ sobj) (-> sobj :sys/$ vector))
+         res (jsonata-flatten
+              (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
+                    (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
+                                                        (filterv identity)),
+                    (fn? prop|fn)                  (->> (mapv prop|fn obj)
+                                                        (filterv identity)),
+                    :else (throw (ex-info "Expected function to map over" {:got prop|fn}))))]
+     (assoc sobj :sys/$ res))))
+
+;;; ToDo: Currently the only thing that can be inside step-> is dot-map.
+;;;       So is :advance? really necessary? I'm not using it here. 
 (defmacro step->
-  "Update :sys/$ by performing navigation.
-   The topic provided is either the state-obj or something that can serve as
-   the state object's :sys/$, in which case a state object is initialized to that value.
-   This latter case is (at least) for initialization when the code being evaluated
-   starts with an object. For example, {'a' : {'b' : 123}}.a.b ."
+  "Save the current context, walk through dot-map navigation, and restore 
+   current  context from what is saved. The topic provided is a state-obj."
   [topic & body]
   `(let [top# ~topic
-         top# (if (s/valid? ::state-obj top#) top# (init-state-obj top#))]
-     (let [res# (-> top#
-                    (assoc :advance? true)
-                    ~@body)]
-       (if (s/valid? ::state-obj res#)
-         (assoc res# :advance? false)
-         res#))))
+         pre-excursion# @current-context]
+     (let [res# (-> top# ~@body)]
+       (reset! current-context pre-excursion#)
+         res#)))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------

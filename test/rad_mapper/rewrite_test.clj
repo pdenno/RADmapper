@@ -5,115 +5,142 @@
    [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]))
 
+(defn rew [exp & {:keys [simplify? execute? debug? debug-parse? skip-top?]}]
+  "Default rewriting function"
+  (let [rewrite? (not (or simplify? execute?))]
+    (rew/rewrite* :ptag/exp exp
+                  :simplify? simplify?
+                  :rewrite? rewrite?
+                  :execute? execute?
+                  :debug? debug?
+                  :skip-top? skip-top?
+                  :debug-parse? debug-parse?)))
+
 ;;; (not= #"abc" #"abc") so don't bother testing things containing regular expressions.
-(deftest expression-rewrites
-  (testing "Some :ptag/exp translations to clj"
-    (binding [bi/*test-sym* 'foo]
-      (is (= 1                                                    (rew/rewrite* :ptag/exp "1" :rewrite? true)))
-      (is (= [1 2 3]                                              (rew/rewrite* :ptag/exp "[1, 2, 3]" :rewrite? true)))
-      (is (= '(bi/+ 1 2)                                          (rew/rewrite* :ptag/exp "1 + 2"  :rewrite? true)))
-      (is (= '(range 1 (inc 5))                                   (rew/rewrite* :ptag/exp "[1..5]" :rewrite? true)))
-      (is (= '(bi/filter-aref $A 1)                               (rew/rewrite* :ptag/exp "$A[1]"  :rewrite? true)))
-      (is (= '(bi/$sum (bi/dot-map $v "field"))                   (rew/rewrite* :ptag/exp "$sum($v.field)" :rewrite? true)))
-      (is (= '(bi/$sum (bi/dot-map (bi/dot-map "a") "b"))         (rew/rewrite* :ptag/exp "$sum(a.b)" :rewrite? true)))
-      (is (= '(bi/* (bi/dot-map "A") (bi/dot-map "B"))            (rew/rewrite* :ptag/exp "(A * B)" :rewrite? true)))
-      (is (= '(bi/thread 4 ($f))                                  (rew/rewrite* :ptag/exp "4 ~> $f()" :rewrite? true)))
-      (is (= '(deref bi/$)                                        (rew/rewrite* :ptag/exp "$"   :rewrite? true)))
-      (is (= '(deref bi/$$)                                       (rew/rewrite* :ptag/exp "$$"  :rewrite? true)))
-      (is (= '$foo                                                (rew/rewrite* :ptag/exp "$foo" :rewrite? true)))
+(deftest simple
+  (testing "Simple (rewrite):"
+    (testing "miscellaneous simple rewrites"
+      (binding [bi/*test-sym* 'foo]
+        (is (= 1                                                    (rew "1")))
+        (is (= [1 2 3]                                              (rew "[1, 2, 3]")))
+        (is (= '(bi/+ 1 2)                                          (rew "1 + 2" )))
+        (is (= '(range 1 (inc 5))                                   (rew "[1..5]")))
+        (is (= '(bi/filter-aref $A 1)                               (rew "$A[1]" )))
+        (is (= '(bi/$sum (bi/dot-map $v "field"))                   (rew "$sum($v.field)")))
+        (is (= '(bi/$sum (bi/dot-map (bi/dot-map "a") "b"))         (rew "$sum(a.b)")))
+        (is (= '(bi/* (bi/dot-map "A") (bi/dot-map "B"))            (rew "(A * B)")))
+        (is (= '(bi/thread 4 ($f))                                  (rew "4 ~> $f()")))
+        (is (= '(deref bi/$)                                        (rew "$"  )))
+        (is (= '(deref bi/$$)                                       (rew "$$" )))
+        (is (= '$foo                                                (rew "$foo")))))
 
-      ;; This one actually tests the tokenizer! \? and \: are problematic owing to use in qvars and triple roles.
-      (is (= '(if true "a" "b") (rew/rewrite* :ptag/exp "true?'a':'b'" :rewrite? true)))
+    (testing "tokenizer"
+      (is (= '(if true "a" "b") (rew "true?'a':'b'"))))
 
-      ;; ToDo: This one doesn't work yet, but it tokenizes. See parse_test.clj.
-      ;; I think the problem is that triple-roles are literals yet. I'm not sure that they should be.
-      #_(is (= '(if true :foo/bar :foo/bat) (rew/rewrite* :ptag/exp "true?:foo/bar::foo/bat" :rewrite? true)))
+    ;; ToDo: This one doesn't work yet, but it tokenizes. See parse_test.clj.
+    ;; I think the problem is that triple-roles are literals yet. I'm not sure that they should be.
+    #_(testing "triple-role in conditional"
+        (is (= '(if true :foo/bar :foo/bat) (rew "true?:foo/bar::foo/bat"))))
 
-      ;; Testing the synax reordering of map/filter on paths
+    (testing "the synax reordering of map/filter on paths"
       (is (= '(mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) $var)
-             (rew/rewrite* :ptag/exp "$var.(P * Q)" :rewrite? true)))
+             (rew "$var.(P * Q)")))
 
       (is (= '(mapv (fn [foo] (bi/* (bi/dot-map foo "A") (bi/dot-map foo "B"))) $data)
-             (rew/rewrite* :ptag/exp "$data.(A * B)" :rewrite? true)))
+             (rew "$data.(A * B)")))
 
       (is (= '(bi/+ (bi/dot-map (bi/dot-map (bi/dot-map (bi/dot-map "a") "b") "c") "d") (bi/dot-map (bi/dot-map "e") "f"))
-             (rew/rewrite* :ptag/exp "a.b.c.d + e.f" :rewrite? true)))
+             (rew "a.b.c.d + e.f")))
 
       (is (= '(bi/+ (bi/dot-map "a") (bi/* (bi/dot-map "b") ($f (bi/+ (bi/dot-map "c") (bi/dot-map "d")))))
-             (rew/rewrite* :ptag/exp "a + b * $f(c + d)" :rewrite? true)))
+             (rew "a + b * $f(c + d)")))
 
       (is (= '(bi/+ (bi/dot-map $var "a")
                     (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q")))
                           (bi/dot-map (bi/dot-map "b") "c")))
-             (rew/rewrite* :ptag/exp "$var.a + b.c.(P * Q)" :rewrite? true)))
-
-;;; Wrong  '(bi/+ (bi/dot-map $var "a") (bi/dot-map (bi/dot-map "b") (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) (bi/dot-map "c"))))
+             (rew "$var.a + b.c.(P * Q)")))
 
       (is (= '(bi/+ (bi/+ (bi/dot-map $var "a")
                           (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q")))
                                 (bi/dot-map (bi/dot-map "b") "c")))
                     (bi/dot-map "d"))
-             (rew/rewrite* :ptag/exp "$var.a + b.c.(P * Q) + d" :rewrite? true)))
+             (rew "$var.a + b.c.(P * Q) + d")))
 
       (is (= '(bi/+ (bi/+ (bi/dot-map $var "a")
                           (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q")))
                                 (bi/dot-map (bi/dot-map "b") "c")))
                     (mapv (fn [foo] (bi/* (bi/dot-map foo "M") (bi/dot-map foo "N")))
                           (bi/dot-map "d")))
-             (rew/rewrite* :ptag/exp "$var.a + b.c.(P * Q) + d.(M * N)" :rewrite? true)))
+             (rew "$var.a + b.c.(P * Q) + d.(M * N)")))
 
       (is (= '(mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) (bi/dot-map (bi/dot-map (bi/dot-map $var "a") "b") "c"))
-             (rew/rewrite* :ptag/exp "$var.a.b.c.(P * Q)" :rewrite? true)))
+             (rew "$var.a.b.c.(P * Q)")))
 
       (is (= '(bi/$sum (mapv (fn [foo] (bi/* (bi/dot-map foo "P") (bi/dot-map foo "Q"))) (bi/dot-map $v "a")))
-             (rew/rewrite* :ptag/exp "$sum($v.a.(P * Q))" :rewrite? true)))
+             (rew "$sum($v.a.(P * Q))")))))
 
-      ;; Miscellaneous other tests.
-      (is (= '(-> (fn [$v $i $a] (< (bi/dot-map $v "cbc_InvoicedQuantity") 0))
-                  (with-meta {:params '[$v $i $a], :body '(< (bi/dot-map $v "cbc_InvoicedQuantity") 0)}))
-             (rew/rewrite* :ptag/fn-def "function($v,$i,$a) { $v.cbc_InvoicedQuantity < 0 }" :rewrite? true)))
+  (testing "miscellaneous"
+    (is (= '(-> (fn [$v $i $a] (< (bi/dot-map $v "cbc_InvoicedQuantity") 0))
+                (with-meta {:params '[$v $i $a], :body '(< (bi/dot-map $v "cbc_InvoicedQuantity") 0)}))
+           (rew/rewrite* :ptag/fn-def "function($v,$i,$a) { $v.cbc_InvoicedQuantity < 0 }")))
 
-      (is (= '(let [$inc (-> (fn [$v] (bi/+ $v 1)) (with-meta {:params '[$v], :body '(bi/+ $v 1)}))]
-                (bi/$map [1 2 3] $inc))
-             (rew/rewrite* :ptag/code-block "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))" :rewrite? true)))
+    (is (= '(let [$inc (-> (fn [$v] (bi/+ $v 1)) (with-meta {:params '[$v], :body '(bi/+ $v 1)}))]
+              (bi/$map [1 2 3] $inc))
+           (rew "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))")))
 
-      (is (= '(bi/$reduce (range 1 (inc 5)) (-> (fn [$x $y] (bi/+ $x $y)) (with-meta {:params '[$x $y], :body '(bi/+ $x $y)})) 100)
-             (rew/rewrite* :ptag/exp "$reduce([1..5], function($x,$y){$x + $y}, 100)" :rewrite? true)))
+    (is (= '(bi/$reduce (range 1 (inc 5)) (-> (fn [$x $y] (bi/+ $x $y)) (with-meta {:params '[$x $y], :body '(bi/+ $x $y)})) 100)
+           (rew "$reduce([1..5], function($x,$y){$x + $y}, 100)")))
 
-      (is (= '($fn1 (bi/dot-map (bi/dot-map ($fn2 $v) "a") "b"))
-             (rew/rewrite* :ptag/exp "$fn1($fn2($v).a.b)" :rewrite? true)))
+    (is (= '($fn1 (bi/dot-map (bi/dot-map ($fn2 $v) "a") "b"))
+           (rew "$fn1($fn2($v).a.b)")))
 
-      (is (= '(bi/$sum
-               (bi/dot-map
-                (bi/dot-map
-                 (bi/$filter
-                  (bi/dot-map $v "InvoiceLine")
-                  (-> (fn [$v $i $a] (< (bi/dot-map $v "Quantity") 0))
-                      (with-meta {:params '[$v $i $a], :body '(< (bi/dot-map $v "Quantity") 0)})))
-                 "Price")
-                "PriceAmount"))
-             (rew/rewrite* :ptag/exp "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"
-                           :rewrite? true))))))
+    (is (= '(bi/$sum
+             (bi/dot-map
+              (bi/dot-map
+               (bi/$filter
+                (bi/dot-map $v "InvoiceLine")
+                (-> (fn [$v $i $a] (< (bi/dot-map $v "Quantity") 0))
+                    (with-meta {:params '[$v $i $a], :body '(< (bi/dot-map $v "Quantity") 0)})))
+               "Price")
+              "PriceAmount"))
+           (rew "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"
+                )))))
 
 (deftest code-block
   (testing "Testing that code blocks handle binding and special jvars correctly"
 
     ;; ToDo: I need to look at JSONata use of \; on this one.
     (is (= '(let [$x 1] ($f $x) ($g $x))
-           (rew/rewrite* :ptag/code-block  "( $x := 1; $f($x) $g($x) )" :rewrite? true)))
+           (rew  "( $x := 1; $f($x) $g($x) )")))
 
     ;; A side-effected dummy binding is used for the special $.
     (is (= '(let [$x "foo" _x1 (bi/reset-special! bi/$ (-> {} (assoc "a" 1))) $y "bat" $yy "ybat"] ($f $x $y))
-           (rew/rewrite* :ptag/code-block
+           (rew
                          "( $x   :=  'foo';
                             $    := {'a' : 1};
                             $y   := 'bat';
                             $yy  := 'ybat';
                             $f($x, $y) )"
-                         :rewrite? true)))))
+                        )))))
 
 (deftest nav-compression
   (testing "Testing compression of naviagation"
     (is (= '(bi/+ (bi/step-> ?tl (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "c"))
                   (bi/step-> ?tl (bi/dot-map "d") (bi/dot-map "e") (bi/dot-map "f")))
-           (rew/rewrite* :ptag/exp "a.b.c + d.e.f" :rewrite? true :skip-top? true)))))
+           (rew "a.b.c + d.e.f" :skip-top? true)))))
+
+(deftest context
+  (testing "Context management:"
+
+    (is (=
+         (rew "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)")
+         :nyi))))
+
+(defn tryme []
+  (bi/finish
+   (let
+       [_x1 (bi/initialize-context (-> {} (assoc "a" (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3)))))))]
+     (bi/+
+      (bi/step-> (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "c"))
+      (bi/step-> (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "f"))))))
+  

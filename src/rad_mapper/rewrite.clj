@@ -16,7 +16,7 @@
 (def tags (atom []))
 (def locals (atom [{}]))
 (declare map-simplify remove-nils rewrite make-runnable)
-(declare binops2bvecs walk-for-bvecs rewrite-bvec-as-sexp precedence rewrite-nav)
+(declare rewrite-bvec-as-sexp precedence rewrite-nav)
 (def diag (atom nil))
 
 (defn rewrite*
@@ -40,7 +40,7 @@
           (as-> (:result ps) ?r
             (if simplify? (map-simplify ?r) ?r)
             (if rewrite?
-              (->> (if skip-top? ?r {:_type :toplevel :top ?r}) rewrite rewrite-nav)
+              (->> (if skip-top? ?r {:_type :toplevel :top ?r}) rewrite)
               ?r)
             (if execute?  (ev/user-eval ?r :verbose? verbose?) ?r)
             (if (:rewrite-error? ?r)
@@ -110,31 +110,34 @@
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
-(defrewrite :toplevel [m]
-  (let [typ (-> m :top :_type)]
-    (cond (= typ :JaCodeBlock )
-          `(~'-> (~'bi/make-state-obj) ~@(->> m :top :body (map rewrite) rewrite-nav)),
-          (= typ :JaBinOpExp)
-          `(-> ~(->> m :top rewrite rewrite-nav) bi/finish)
-          (= typ :JaField) :NYI)))
+(defrewrite :toplevel [m] `(~'bi/finish (~@(->> m :top rewrite rewrite-nav))))
+
+#_(defrewrite :toplevel [m]
+    (let [typ (-> m :top :_type)]
+      (cond (= typ :JaCodeBlock )
+            `(~'bi/finish (~@(->> m :top rewrite rewrite-nav))),
+            (= typ :JaBinOpSeq)
+            `(-> ~(->> m :top rewrite rewrite-nav) bi/finish)
+            :else (throw (ex-info "toplevel type" {:_type typ})))))
 
 ;;; ToDo: Return to the let-style implementation; assignments are expressions
 (defrewrite :JaCodeBlock [m]
   (util/reset-dgensym!)
-  (->> m :body (map rewrite)))
+  (let [returned-exp (-> m :body last)
+        others (->> m :body butlast)]
+    (if (empty? others)
+      `(-> (bi/init-state-obj) ~(rewrite returned-exp))
+      `(let [~@(mapcat rewrite others)] ~(rewrite returned-exp)))))
 
-(defrewrite :JaPrimary [m]
-  (-> m :exp rewrite))
-
+;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JaJvarDecl [m]
   (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
-        `(bi/establish-context ~(-> m :init-val rewrite)),
-        ;; ToDo: Is setting this a legit user activity
+        `(~(dgensym!) (bi/initialize-context ~(-> m :init-val rewrite))),
+        ;; ToDo: Is setting $$ a legit user activity?
         (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
-        `(reset! bi/$$ ~(-> m :init-val rewrite)),
+        `(~(dgensym!) (reset! bi/$$ ~(-> m :init-val rewrite))),
         :else
-        `(~'assoc
-          ~(->> m :var :jvar-name (keyword "user"))
+        `(~(->> m :var :jvar-name)
           ~(-> m :init-val rewrite))))
 
 (defrewrite :JaJvar  [m]
@@ -159,13 +162,13 @@
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
-    `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
+    `(~'bi/get-from-b-set b-set ~(-> m :qvar-name keyword))
     (-> m :qvar-name symbol)))
 
 (defrewrite :JaMapExp [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
-        body `(~'fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
+        body `(fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
         operand (binding [inside-delim? true] (-> m :operand rewrite doall))]
     `(~'bi/apply-map ~operand ~body)))
 
@@ -177,15 +180,15 @@
 
 ;;; ToDo: This should follow the pattern of JaMapExp above. (and it maps)
 (defrewrite :JaReduceExp [m]
-  `(~'-> {}
+  `(-> {}
     ~@(map rewrite (:exp m))))
 
 (defrewrite :JaObjExp [m]
-  `(~'-> {}
+  `(-> {}
     ~@(map rewrite (:exp m))))
 
 (defrewrite :JaKVPair [m]
-  `(~'assoc ~(:key m) ~(rewrite (:val m))))
+  `(assoc ~(:key m) ~(rewrite (:val m))))
 
 (defrewrite :JaFnCall [m]
   (let [fname (-> m :fn-name)
@@ -203,7 +206,7 @@
 (defrewrite :and [_m] #_(par/binary-op? m) (throw (ex-info ":and ???" {})))
 
 (defrewrite :JaRangeExp [m]
-  `(~'range ~(rewrite (:start m)) (~'inc ~(rewrite (:stop m)))))
+  `(range ~(rewrite (:start m)) (inc ~(rewrite (:stop m)))))
 
 (defrewrite :JaArray [m]
   (mapv rewrite (:exprs m)))
@@ -225,8 +228,8 @@
 (defrewrite :JaFnDef [m]
   (let [vars (mapv #(-> % :jvar-name symbol) (:vars m))
         body (-> m :body rewrite)]
-    `(~'-> (~'fn ~(mapv rewrite (:vars m)) ~body)
-      (~'with-meta {:params '~vars :body '~body}))))
+    `(-> (fn ~(mapv rewrite (:vars m)) ~body)
+      (with-meta {:params '~vars :body '~body}))))
 
 (defrewrite :JaTripleRole [m] (:role-name m))
 
@@ -234,17 +237,14 @@
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
 (defrewrite :JaConditionalExp [m]
-  `(~'if ~(-> m :predicate rewrite)
+  `(if ~(-> m :predicate rewrite)
     ~(-> m :exp1 rewrite)
     ~(-> m :exp2 rewrite)))
 
-(defrewrite :JaBinOpExp [m]
-  (let [preprocess (-> m  binops2bvecs walk-for-bvecs)]
-    (when *debugging?*
-      (println "======== :BFLAT Preprocess (START) =========")
-      (pprint preprocess *out*)
-      (println "------- :BFLAT Preprocess (step 1) ---------"))
-    (rewrite preprocess)))
+(defrewrite :JaBinOpSeq [m]
+  (-> {:_type :BFLAT}
+      (assoc :bf (:seq m))
+      rewrite))
 
 (defrewrite :BFLAT [m]
   (let [preprocess (-> m :bf rewrite-bvec-as-sexp)]
@@ -253,19 +253,13 @@
       (println "========= :BFLAT Preprocess (END) ========"))
   (rewrite preprocess)))
 
-(defn binops2bvecs
-  "Walk structure rewriting JaBinOpExp as a map with :_type :BVEC and :bvec, a vector of the arguments and operators.
-   This doesn't flatten things, just gets the bvecs in there."
+(defn atomic?
+  "This is mostly to speed up stepping through walk-for-bvecs!"
   [exp]
-  (cond (vector? exp) (mapv binops2bvecs exp)
-        (seq? exp)    (map  binops2bvecs exp)
-        (and (map? exp) (type? exp :JaBinOpExp))
-        (as-> exp ?e
-          (assoc ?e :bvec [(-> ?e :exp1 binops2bvecs) (:bin-op ?e) (-> ?e :exp2 binops2bvecs)])
-          (assoc ?e :_type :BVEC)
-          (dissoc ?e :exp1 :bin-op :exp2))
-        (map? exp) (reduce-kv (fn [m k v] (assoc m k (binops2bvecs v))) {} exp)
-        :else exp))
+  (or (string? exp)
+      (number? exp)
+      (keyword? exp)
+      (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
 (defn collect-bvec
   "Given a BVEC, return the vector of expressions (operands) separated by binary operators it expresses."
@@ -280,14 +274,6 @@
                  (into res (vector (walk-for-bvecs operand1) op)))
           (recur []
                  (into res (vector (walk-for-bvecs operand1) op (walk-for-bvecs operand2)))))))))
-
-(defn atomic?
-  "This is mostly to speed up stepping through walk-for-bvecs!"
-  [exp]
-  (or (string? exp)
-      (number? exp)
-      (keyword? exp)
-      (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
 ;;;**** Walk the structure. When you encounter a BVEC, call collect-bvec.
 ;;;     Note: collect-bvec calls this on its operands and eventually returns a BFLAT.
@@ -346,7 +332,7 @@
    'bi/*        {:assoc :left :val 300}
    'bi/%        {:assoc :left :val 300}
    'bi//        {:assoc :left :val 300}
-   'bi/step->   {:assoc :left :val 150}}) ; It will be replaced by ->
+   'bi/step->   {:assoc :left :val 150}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)
@@ -448,8 +434,8 @@
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
 
-(defn compress-nav
-  "Iteratively walk a complex expression rewriting nested bi/step-> expression."
+(defn rewrite-nav
+  "Iteratively walk a complex expression rewriting and 'compressing' nested bi/step-> expression."
   [exp]
   (let [progress? (atom true)]
     (letfn [(one-step [exp]
@@ -459,34 +445,11 @@
                          (= 'bi/step-> (-> exp second first)))
                     (do (reset! progress? true)
                         `(~'bi/step-> ~@(-> exp second rest) ~@(-> exp rest rest)))
-                    (vector? exp) (->> exp (map compress-nav) doall vec)
-                    (seq? exp)    (->> exp (map compress-nav) doall)
-                    (map? exp) (reduce-kv (fn [m k v] (assoc m k (compress-nav v))) {} exp)
+                    (vector? exp) (->> exp (map rewrite-nav) doall vec)
+                    (seq? exp)    (->> exp (map rewrite-nav) doall)
+                    (map? exp) (reduce-kv (fn [m k v] (assoc m k (rewrite-nav v))) {} exp)
                     :else exp))]
       (loop [exp exp]
         (if (-> progress? deref not) exp
             (do (reset! progress? false)
                 (recur (one-step exp))))))))
-
-;;; ToDo: A smarter rewrite would obviate this.
-;;; Currently bi/step-> is inserted in bflat processing.
-(defn drop-topic
-  "Transform by dropping first arg from so bi/dot-map topic can be threaded
-   and replacing bi/step-> with clojure.core/-> ."
-  [exp]
-  (cond (and (seq? exp) (= 'bi/step-> (first exp)))
-        `(~'->
-          :sys/$ #_(:sys/$ ~'?tl)
-          ~@(map #(if (and (seq? %) (= 'bi/dot-map (first %)))
-                    (list 'bi/dot-map (nth % 2))
-                    %)
-                 (rest exp))),
-        (seq? exp) (map drop-topic exp)
-        (vector? exp) (mapv drop-topic exp)
-        (map? exp) (reduce-kv (fn [m k v] (assoc m k (drop-topic v))) {} exp)
-        :else exp))
-
-(defn rewrite-nav
-  "Rewrite a form with sequences of bi/step nav to wrap in bi/navigate."
-  [exp]
-  (-> exp compress-nav #_drop-topic))
