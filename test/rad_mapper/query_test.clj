@@ -586,7 +586,6 @@
         $propBsets ($quProp $data)]
     (bi/$reduce $propBsets $enPropTable $tar_data)))
 
-
 ;;;====================== Temporary, work on AST idea ===================================
 (def diag (atom nil))
 (declare rw-ast)
@@ -626,7 +625,7 @@
                               (dissoc :exp))))
 
 (def char2op
-  {\. :field-access
+  {\. :dot-map
    \& :str-concat
    \> :>
    \< :<
@@ -711,7 +710,6 @@
         :else (throw (ex-info "Toplevel is a primitive type?" {:obj obj}))))
 
 (def scott-result (rew/rewrite* :ptag/exp "data/testing/map-examples/shipped-item-instance-clean.json" :file? true :simplify? true))
-
 (defn tryme
   []
   (-> scott-result

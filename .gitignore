@@ -19,6 +19,6 @@ target
 .cpcache
 .clj-kondo/.cache
 data/schema
-data/testing/map-examples
+data/testing/old
 data/testing/messages
 data/testing/spreadsheets

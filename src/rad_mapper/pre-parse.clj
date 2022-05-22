@@ -297,16 +297,6 @@
      (cl-format nil "Line ~A: ~A ~{~A~^, ~}" (-> pstate :tokens first :line) msg args)
      (cl-format nil "Line ~A: ~A"            (-> pstate :tokens first :line) msg))))
 
-(def diag (atom nil))
-
-(defn ps-throw
-  "A special throw to eliminate to clean up line-seq and "
-  [pstate msg data]
-  (as-> pstate ?ps
-    (dissoc ?ps :line-seq) ; So REPL won't freak out over the reader being closed...
-    (reset! diag {:pstate ?ps :msg msg :data data})
-    (throw (ex-info (line-msg ?ps msg) data))))
-
 (defn look
   "Sets a value in the :look map of pstate and might do some tokenizing in the process.
    n = 1 is one past :head, :tokens[0].
@@ -316,6 +306,13 @@
         tokens (:tokens ps)
         cnt (count tokens)]
     (assoc-in ps [:look n] (if (> n cnt) ::eof (-> tokens (nth (dec n)) :tkn)))))
+
+(defn ps-throw
+  "A special throw to eliminate to clean up line-seq and "
+  [pstate msg data]
+  (as-> pstate ?ps
+    (dissoc ?ps :line-seq) ; So REPL won't freak out over the reader being closed...
+    (throw (ex-info (line-msg ?ps msg) data))))
 
 (defn ps-assert
   "A special s/assert that does ps-throw on an error."
@@ -509,9 +506,8 @@
          (or (not (contains? (s/registry) tag))
              (s/valid? tag (:result ?pstate))))))
 
-
 (defn parse-list
-  "Does parse parametrically for <open-char> ( <item> ( <char-sep> <item>)? )? <close-char>"
+  "Does parse parametrically for <open-char> [ <item> <char-sep>... ] <close-char>"
   ([pstate char-open char-close char-sep]
    (parse-list pstate char-open char-close char-sep :ptag/exp))
   ([pstate char-open char-close char-sep parse-tag]
@@ -600,105 +596,50 @@
 (s/def ::head #(not (nil? %)))
 (declare operand-exp? delimited-next? binary-next?)
 
-(defn exp-continuable?
-  "Return the operator represented by the token (or token pair), if any."
-  [tkn1 tkn2]
-  (let [bin-op? (binary-op? tkn1)]
-    (cond (and bin-op? (= \( tkn2)) :apply-map
-          bin-op? bin-op?
-          :else ({\[ :apply-filter \{ :apply-reduce} tkn1))))
-
-(defrecord JaBinOpSeq [seq])
 ;;;=============================== Grammar ===============================
-;;; <exp> ::= <base-exp> ( ( <bin-op> <base-exp> )+ | '?' <conditional-tail> ) ?
+;;; ToDo: Rethink use of in-binary?
+;;; <exp> ::=  <base-exp> ( '?' <conditional-tail> | <exp> )?
+(defrecord JaBinOpExp [exp1 bin-op exp2])
 (defparse :ptag/exp
-  [ps]
-  (let [base-ps (-> (parse :ptag/base-exp ps) (store :operand-1) (look 1))
-        tkn2 (-> base-ps :look (get 1))
-        tkn1 (:head base-ps)]
-    (cond (= \? tkn1)
+  [ps & {:keys [in-binary?]}]
+  (let [base-ps (parse :ptag/base-exp ps :in-binary? in-binary?)]
+    (cond (and (= \? (:head base-ps)) (not in-binary?))
           (parse :ptag/conditional-tail base-ps :predicate (:result base-ps)),
-          
-          (exp-continuable? tkn1 tkn2)
+          (-> base-ps :head binary-op?) ; (and (not in-binary?)) is causing early termination.
           (as-> base-ps ?ps
-            (parse :ptag/bin-op-continuation ?ps)
-            (assoc ?ps :result (->JaBinOpSeq (into (vector (recall ?ps :operand-1))
-                                                   (-> ?ps :result :op-operand-seq)))))
+            (store ?ps :operator :head)
+            (eat-token ?ps)
+            (parse :ptag/exp ?ps :in-binary? true)
+            (assoc ?ps :result (->JaBinOpExp (:result base-ps) (recall ?ps :operator) (:result ?ps)))),
           :else base-ps)))
 
-(defrecord JaOpOperandSeq [op-operand-seq])
-(defparse :ptag/bin-op-continuation
-  [ps]
-  (loop [ps (look ps 1)
-         oseq []]
-    (let [tkn1 (:head ps)
-          tkn2 (-> ps :look (get 1))
-          cont? (exp-continuable? tkn1 tkn2)]
-    (if (not cont?)
-      (assoc ps :result (->JaOpOperandSeq oseq))
-      (let [p (cond (= cont? :apply-map)
-                    (as-> ps ?ps
-                      (eat-token ?ps \.)
-                      (parse :ptag/delimited-exp ?ps)
-                      (look ?ps 1)),
-                    (#{:apply-filter :apply-reduce} cont?)
-                    (as-> ps ?ps
-                      (parse :ptag/delimited-exp ?ps)
-                      (look ?ps 1)),
-                    :else 
-                    (as-> ps ?ps
-                      (eat-token ?ps)
-                      (parse :ptag/base-exp ?ps :operand-2? true)
-                      (look ?ps 1)))]
-        (recur p (-> oseq (conj cont?) (conj (:result p)))))))))
-
 ;;; ToDo: qvar here might make it permissive of nonsense. Needs thought.
-;;; <base-exp> ::= <delimited-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <field> | <jvar> | <qvar>
+;;; <base-exp> ::= <delimited-exp> | <binary-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <field> | <jvar> | <qvar>
 (defparse :ptag/base-exp
-  [ps & {:keys [operand-2?]}]
-  (let [tkn  (:head ps)
-        ps   (look ps 1)
+  [ps & {:keys [in-binary?]}]
+  (let [tkn   (:head ps)
+        operand-look (operand-exp? ps)
+        ps (look ps 1)
         tkn2 (-> ps :look (get 1))]
-    (cond (#{\{ \[ \(} tkn)                  (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
-          (builtin-un-op tkn)                (parse :ptag/unary-op-exp ps)  ; <unary-op-exp>
-          (#{:function :query :enforce} tkn) (parse :ptag/construct-def ps) ; <construct-def>
-          (and (= \( tkn2)
-               (or (builtin-fns tkn)
-                   (jvar? tkn)))             (parse :ptag/fn-call ps)       ; <fn-call>
-          (literal? tkn)                     (parse :ptag/literal ps)       ; <literal>
-          (or (jvar? tkn)
-              (qvar? tkn) ; really?            
-              (field? tkn))                  (as-> ps ?ps
-                                               (assoc ?ps :result tkn)
-                                               (eat-token ?ps)),            ; <field>, <jvar>, or <qvar>
+    (cond (and (not in-binary?) (#{\{ \[ \(} tkn)) (parse :ptag/delimited-exp ps), ; ToDo: Why not ".(" ?
+          (delimited-next? operand-look)                              ; <delimited-exp>
+          (parse :ptag/delimited-exp ps :operand-info operand-look),
+          (and (not in-binary?) (binary-next? operand-look))          ; <binary-exp>
+          (parse :ptag/binary-exp ps :operand-info operand-look),
+          (builtin-un-op tkn) (parse :ptag/unary-op-exp ps),          ; <unary-op-exp>
+          (#{:function :query :enforce} tkn)                          ; <construct-def>
+          (parse :ptag/construct-def ps)
+          (and (or (builtin-fns tkn) (jvar? tkn)) (= \( tkn2))        ; <fn-call>
+          (parse :ptag/fn-call ps),
+          (literal? tkn)                                              ; <literal>
+          (parse :ptag/literal ps),
+          (or (jvar? tkn) (qvar? tkn) (field? tkn))                   ; <field>, <jvar>, or <qvar>
+          (as-> ps ?ps
+            (assoc ?ps :result tkn)
+            (eat-token ?ps)),
           :else
-          (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
+          (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, ?id, or path element."
                     {:got tkn}))))
-    
-;;;| syntax/op       | Example                                     | Comment                                         |
-;;;|-----------------+---------------------------------------------+-------------------------------------------------|
-;;;| Square / filter | Phone[type = 'mobile']                      | http://docs.jsonata.org/predicate               |
-;;;| Parens / map    | Product.(price * quantity)                  | After the dot is an exp with or w/o the parens. |
-;;;| Curly  / reduce | Product{`Product Name`: $.(Price*Quantity)} |                                                 |
-
-;;;  But see $.{ in http://docs.jsonata.org/sorting-grouping.
-
-;;; <delimited-exp> ::= ( <operand-exp> ( ('.' <map-exp>)    | <filter-exp>  | <reduce-exp> ) ) |
-;;;                                     (      <code-block>  | <array|range> | <obj-exp>      )
-
-;;; <delimited-exp> ::= <code-block> | <filter-exp> | <reduce-exp> | <range|array-exp> | <obj-exp>
-(defparse :ptag/delimited-exp
-  [ps & {:keys [operand-2?]}]
-  (let [head (:head ps)]
-    (if operand-2? ; http://docs.jsonata.org/path-operators
-      (case head
-        \(  (parse :ptag/code-block ps)
-        \[  (parse :ptag/filter-exp ps) ; Includes aref.
-        \{  (parse :ptag/reduce-exp ps))
-      (case head
-        \(  (parse :ptag/code-block ps)
-        \[  (parse :ptag/range|array-exp ps)
-        \{  (parse :ptag/obj-exp ps)))))
 
 (defmacro continue-mac
   "Abbreviation of tedious code."
@@ -745,10 +686,61 @@
     (assoc ?ps :result (:head ?ps))
     (eat-token ?ps jvar?)))
 
+;;; <binary-exp>  ::= <operand-exp> <binary-op> <exp>
+;;; <operand-exp> ::= <field> | <var> | literal | <fn-call> | <delimited-exp> | <unary-op-exp>
+(defparse :ptag/binary-exp
+  [ps & {:keys [operand-info]}]
+  (as-> ps ?ps
+    (parse (:operand-tag operand-info) ?ps) ; Parametric tag!
+    (store ?ps :exp1)
+    (store ?ps :op :head)
+    (eat-token ?ps binary-op?)
+    (parse :ptag/exp ?ps #_#_:in-binary? true) ; in-binary? so that the caller can consume \?, and other reasons.
+    (assoc ?ps :result (->JaBinOpExp (recall ?ps :exp1) (recall ?ps :op) (:result ?ps)))))
+
 ;;; ToDo: Review :ptag/delimited-exp. It was a iffy design choice to depend so much on
 ;;;       the presence of an operator (operator-info) at this point in parsing.
 ;;;       There are opportunities for consolidation for each of the delimiters.
 ;;;       If you stick with this approach, split off
+
+;;;| syntax/op       | Example                                     | Comment                                         |
+;;;|-----------------+---------------------------------------------+-------------------------------------------------|
+;;;| Square / filter | Phone[type = 'mobile']                      | http://docs.jsonata.org/predicate               |
+;;;| Parens / map    | Product.(price * quantity)                  | After the dot is an exp with or w/o the parens. |
+;;;| Curly  / reduce | Product{`Product Name`: $.(Price*Quantity)} |                                                 |
+
+;;;  But see $.{ in http://docs.jsonata.org/sorting-grouping.
+
+;;; <delimited-exp> ::= ( <operand-exp> ( ('.' <map-exp>) | <filter-exp>  | <reduce-exp> ) ) |
+;;;                                     (      <primary>  | <array|range> | <obj-exp>      )
+(defparse :ptag/delimited-exp
+  [ps & {:keys [operand-info]}]
+  (let [{:keys [operand-tag next-tkns]} operand-info
+        tkn (:head ps)]
+    (if (not operand-info)
+      (cond (= tkn \() (parse :ptag/primary ps)           ; ToDo: Distinguish 'code-block'?
+            (= tkn \{) (parse :ptag/literal ps)           ; object
+            (= tkn \[) (parse :ptag/range|array-exp ps))  ; array or range.
+      (as-> ps ?ps
+        (parse operand-tag ?ps) ; Parametric tag!
+        (store ?ps :operand) ; operand is a bit of a misnomer; it's the last step of producing the operand!
+        (cond (= [\. \(] next-tkns) (as-> ?ps ?ps1
+                                      (eat-token ?ps1 \.)
+                                      (parse :ptag/map-exp ?ps1)),
+              (= \[ (first next-tkns)) (parse :ptag/filter-exp ?ps),
+              (= \{ (first next-tkns)) (parse :ptag/reduce-exp ?ps),
+              :else (ps-throw ps "Expected a delimited-exp." {:operand-info operand-info}))
+        (assoc-in ?ps [:result :operand] (recall ?ps :operand))))))
+
+(defrecord JaPrimary [exp])
+(defparse :ptag/primary
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps \()
+    (parse :ptag/exp ?ps)
+    (eat-token ?ps \))
+    (assoc ?ps :result (->JaPrimary (:result ?ps)))))
+
 (defrecord JaMapExp [operand exp])
 (defparse :ptag/map-exp
   [ps]
@@ -758,7 +750,7 @@
     (eat-token ?ps \)) ; Operand added in :ptag/delimited-exp
     (assoc ?ps :result (map->JaMapExp {:exp (:result ?ps)}))))
 
-(defrecord JaFilterExp [operand exp]) ; This accommodates aref expressions too.
+(defrecord JaFilterExp [operand exp])
 (defparse :ptag/filter-exp
   [ps]
   (as-> ps ?ps
@@ -769,7 +761,7 @@
 ;;;       Keep the distinction in structures created, however!
 (defrecord JaObjExp    [operand kv-pairs])
 (defrecord JaReduceExp [operand kv-pairs])
-(defparse :ptag/obj-exp
+(defparse :ptag/obj
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
@@ -821,19 +813,23 @@
 (defparse :ptag/code-block
   [ps]
   (as-> ps ?ps
-    (parse-list ?ps \( \) \; :ptag/block-elem)
-    (assoc ?ps :result (->JaCodeBlock (:result ?ps)))))
+    (eat-token ?ps \()
+    (loop [ps ?ps
+           exprs []]
+      (cond (= (:head ps) \))
+            (as-> ps ?ps1
+              (assoc ?ps1 :result (->JaCodeBlock exprs))
+              (eat-token ?ps1 \))),
+            (= (:head ps) ::eof)  (ps-throw  ps "Runaway code block" {}),
+            :else
+            (let [ps (as-> ps ?ps1
+                       (look ?ps1 1)
+                       (if (= :binding (-> ?ps1 :look (get 1)))
+                         (parse :ptag/jvar-decl ?ps1)
+                         (parse :ptag/exp ?ps1)))]
+              (recur ps (conj exprs (:result ps))))))))
 
-;;; <block-elem> ::= <jvar-decl> | <exp>
-(defparse :ptag/block-elem
-  [ps]
-  (as-> ps ?ps
-    (look ?ps 1)
-    (if (= :binding (-> ?ps :look (get 1)))
-      (parse :ptag/jvar-decl ?ps)
-      (parse :ptag/exp ?ps))))
-
-;;; jvar-decl ::= <jvar> ':=' <exp> 
+;;; id-type-pair ::= <jvar> ':=' <exp> ';'
 (defrecord JaJvarDecl [var init-val])
 (defparse :ptag/jvar-decl
   [pstate]
@@ -847,6 +843,7 @@
     (eat-token ?ps :binding)
     (parse :ptag/exp ?ps)
     (store ?ps :init-val)
+    (eat-token ?ps \;)
     (assoc ?ps :result (->JaJvarDecl (recall ?ps :jvar)
                                      (recall ?ps :init-val)))))
 
@@ -904,7 +901,7 @@
   [ps]
   (let [tkn (:head ps)]
     (cond (literal? tkn) (-> ps (assoc :result tkn) eat-token), ; :true and :false will be rewritten
-          (= tkn \{)     (parse :ptag/obj-exp ps),
+          (= tkn \{)     (parse :ptag/obj ps),
           (= tkn \[)     (parse :ptag/array ps),
           :else (ps-throw ps "expected a literal string, number, 'true', 'false' regex, obj, range, or array."
                           {:got tkn}))))

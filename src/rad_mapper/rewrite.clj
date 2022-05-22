@@ -8,26 +8,22 @@
    [clojure.spec.alpha  :as s]
    [rad-mapper.builtins :as bi]
    [rad-mapper.evaluate :as ev]
-   [rad-mapper.util     :as util :refer [dgensym!]]
+   [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
    [rad-mapper.parse    :as par]
    [taoensso.timbre     :as log]))
-
-;;; ToDo:
-;;;   - Look into why you can't do (defrewriter \. ...) That is, use something other than a keyword for the tag.
-;;;   - All this stuff belongs in a library!
 
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
 (def locals (atom [{}]))
 (declare map-simplify remove-nils rewrite make-runnable)
-(declare binops2bvecs walk-for-bvecs reorder-for-delimited-exps connect-bvec-fields rewrite-bvec-as-sexp precedence)
+(declare rewrite-bvec-as-sexp precedence rewrite-nav)
 (def diag (atom nil))
 
 (defn rewrite*
   "A top-level function for all phases of translation.
    parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it rewrites without debug output."
-  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? verbose?] :as opts}]
+  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? skip-top? verbose?] :as opts}]
   simplify? rewrite? ; ToDo Avoid Kondo warning
   (let [kopts (-> opts keys set)
         simplify? (not-empty (set/intersection #{:rewrite? :simplify? :execute?} kopts))
@@ -43,7 +39,9 @@
         (if (= :ok (:parse-status ps))
           (as-> (:result ps) ?r
             (if simplify? (map-simplify ?r) ?r)
-            (if rewrite?  (rewrite ?r) ?r)
+            (if rewrite?
+              (->> (if skip-top? ?r {:_type :toplevel :top ?r}) rewrite)
+              ?r)
             (if execute?  (ev/user-eval ?r :verbose? verbose?) ?r)
             (if (:rewrite-error? ?r)
               (throw (ex-info "Error in rewriting" {:result (with-out-str (pprint ?r))}))
@@ -112,74 +110,85 @@
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
+(defrewrite :toplevel [m] `(~'bi/finish (~@(->> m :top rewrite rewrite-nav))))
+
+#_(defrewrite :toplevel [m]
+    (let [typ (-> m :top :_type)]
+      (cond (= typ :JaCodeBlock )
+            `(~'bi/finish (~@(->> m :top rewrite rewrite-nav))),
+            (= typ :JaBinOpSeq)
+            `(-> ~(->> m :top rewrite rewrite-nav) bi/finish)
+            :else (throw (ex-info "toplevel type" {:_type typ})))))
+
+;;; ToDo: Return to the let-style implementation; assignments are expressions
 (defrewrite :JaCodeBlock [m]
   (util/reset-dgensym!)
-  (if (> (-> m :body count) 1)
-    `(~'let [~@(mapcat rewrite (-> m :body butlast))]
-      ~(-> m :body last rewrite))
-    (if (= :JaJvarDecl (-> m :body first :_type))
-      `(~'let [~@(-> m :body first rewrite)])
-      (-> m :body first rewrite))))
+  (let [returned-exp (-> m :body last)
+        others (->> m :body butlast)]
+    (if (empty? others)
+      `(-> (bi/init-state-obj) ~(rewrite returned-exp))
+      `(let [~@(mapcat rewrite others)] ~(rewrite returned-exp)))))
 
+;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JaJvarDecl [m]
-  (if (-> m :var :special?)
-    `(~(dgensym!) (~'bi/reset-special! ~(->> m :var :jvar-name (symbol "bi"))
-                          ~(-> m :init-val rewrite)))
-    (let [val  (-> m :init-val rewrite)
-          jvar (-> m :var      rewrite)]
-      (vector jvar (if (= :JaFnDef (:_type val)) (:form val) val)))))
+  (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
+        `(~(dgensym!) (bi/initialize-context ~(-> m :init-val rewrite))),
+        ;; ToDo: Is setting $$ a legit user activity?
+        (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
+        `(~(dgensym!) (reset! bi/$$ ~(-> m :init-val rewrite))),
+        :else
+        `(~(->> m :var :jvar-name)
+          ~(-> m :init-val rewrite))))
 
-(defrewrite :JaField [m] (-> m :field-name))
-
-(def ^:dynamic in-enforce? "While inside an enforce, qvar references are wrapped." false)
-
-;;; ToDo: Jvars and qvars can be local# ?
 (defrewrite :JaJvar  [m]
-  (if (:special? m)
-    `(~'deref ~(->> m :jvar-name (symbol "bi")))
-    (-> m :jvar-name symbol)))
+  (cond (and (:special? m) (= "$" (:jvar-name m)))
+        :sys/$
+        (and (:special? m) (= "$$" (:jvar-name m)))
+        `(->  bi/$$ deref)
+        :else (-> m :jvar-name symbol)))
+
+(def ^:dynamic inside-delim?
+  "When true, modify rewriting behavior inside 'delimited expressions'."
+  false)
+
+(def ^:dynamic in-enforce?
+  "While inside an enforce, qvar references are wrapped."
+  false)
+
+(defrewrite :JaField [m]
+  (if inside-delim?
+    (-> m :field-name)
+    `(~'bi/dot-map  ~(-> m :field-name))))
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
-    `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
+    `(~'bi/get-from-b-set b-set ~(-> m :qvar-name keyword))
     (-> m :qvar-name symbol)))
 
-(defn combined-map-translation [m]
-  (let [sym (or bi/*test-sym* (dgensym!))]
-    `(~'mapv (~'fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
-      ~(-> m :operand rewrite))))
+(defrewrite :JaMapExp [m]
+  (reset-dgensym!)
+  (let [sym (dgensym!)
+        body `(fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
+        operand (binding [inside-delim? true] (-> m :operand rewrite doall))]
+    `(~'bi/apply-map ~operand ~body)))
 
-(defrewrite :JaParenDelimitedExp [m]
-  (if (:operand m)
-    (combined-map-translation m)
-    (-> m :exp rewrite)))
-
-(defrewrite :MAP [m]
-  (combined-map-translation m))
-
-;;; Whether you filter or aref depends on the argument.
-;;; Thus this one has to be done at runtime. (It's a JSONata quirk).
-(defn combined-filter-translation [m]
+;;; ToDo: This should follow the pattern of JaMapExp above.
+(defrewrite :JaFilterExp [m]
   `(~'bi/filter-aref
     ~(-> m :operand rewrite)
     ~(-> m :exp first rewrite)))
 
-(defrewrite :JaSquareDelimitedExp [m]
-  (if (:operand m)
-    (combined-filter-translation m)
-    (-> m :exp rewrite)))
+;;; ToDo: This should follow the pattern of JaMapExp above. (and it maps)
+(defrewrite :JaReduceExp [m]
+  `(-> {}
+    ~@(map rewrite (:exp m))))
 
-(defrewrite :FILTER [m]
-  (combined-map-translation m))
+(defrewrite :JaObjExp [m]
+  `(-> {}
+    ~@(map rewrite (:exp m))))
 
-;;; ToDo: Maybe there should be a more direct way to create data!
-;;; Some of these become :CONSTRUCT
-(defrewrite :JaCurlyDelimitedExp [m]
-  `(~'-> {}
-       ~@(map rewrite (:exp m))))
-
-(defrewrite :JaMapPair [m]
-  `(~'assoc ~(:key m) ~(rewrite (:val m))))
+(defrewrite :JaKVPair [m]
+  `(assoc ~(:key m) ~(rewrite (:val m))))
 
 (defrewrite :JaFnCall [m]
   (let [fname (-> m :fn-name)
@@ -188,19 +197,19 @@
       `(~(symbol "bi" fname) ~@args)
       `(~(symbol fname) ~@args))))
 
-(defrewrite :JaArray [m]
-  (mapv rewrite (:exprs m)))
-
 (defrewrite :JaUniOpExp [m]
   `(~(-> m :uni-op str symbol)
     ~(-> m :exp rewrite)))
 
 ;;; ToDo: Taken care of by defn rewrite above, right?
-(defrewrite :or  [m] #_(par/binary-op? m) (throw (ex-info ":or ???" {})))
-(defrewrite :and [m] #_(par/binary-op? m) (throw (ex-info ":and ???" {})))
+(defrewrite :or  [_m] #_(par/binary-op? m) (throw (ex-info ":or ???" {})))
+(defrewrite :and [_m] #_(par/binary-op? m) (throw (ex-info ":and ???" {})))
 
 (defrewrite :JaRangeExp [m]
-  `(~'range ~(rewrite (:start m)) (~'inc ~(rewrite (:stop m)))))
+  `(range ~(rewrite (:start m)) (inc ~(rewrite (:stop m)))))
+
+(defrewrite :JaArray [m]
+  (mapv rewrite (:exprs m)))
 
 (defrewrite :JaQueryDef [m]
   `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:triples m))))
@@ -219,8 +228,8 @@
 (defrewrite :JaFnDef [m]
   (let [vars (mapv #(-> % :jvar-name symbol) (:vars m))
         body (-> m :body rewrite)]
-    `(~'-> (~'fn ~(mapv rewrite (:vars m)) ~body)
-      (~'with-meta {:params '~vars :body '~body}))))
+    `(-> (fn ~(mapv rewrite (:vars m)) ~body)
+      (with-meta {:params '~vars :body '~body}))))
 
 (defrewrite :JaTripleRole [m] (:role-name m))
 
@@ -228,55 +237,29 @@
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
 (defrewrite :JaConditionalExp [m]
-  `(~'if ~(-> m :predicate rewrite)
+  `(if ~(-> m :predicate rewrite)
     ~(-> m :exp1 rewrite)
     ~(-> m :exp2 rewrite)))
 
-(defn tryme []
-  (let [m {:_type :JaBinOpExp,
-           :exp1 {:_type :JaSquareDelimitedExp,
-                  :exp ["a" "b" "c"]},
-           :bin-op \.,
-           :exp2 {:_type :JaFnCall, :fn-name "$sum", :args [100]}}]
-    (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps)))
-
-(defn step1 [m] (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps))
-(defn step2 [m] (-> m :bf connect-bvec-fields rewrite-bvec-as-sexp))
-
-;;; {:_type :JaBinOpExp,
-;;;  :exp1 {:_type :JaSquareDelimitedExp, :exp ["a" "b" "c"]},
-;;;  :bin-op \.,
-;;;  :exp2 {:_type :JaFnCall, :fn-name "$sum", :args [100]}}
-;;;----------- Binary ops precedence ordering; half the work of rewriting! -----------------
-;;; This one produces a :BFLAT structure.
-(defrewrite :JaBinOpExp [m]
-  (let [preprocess (-> m  binops2bvecs walk-for-bvecs reorder-for-delimited-exps)]
-    (when *debugging?*
-      (println "======== :BFLAT Preprocess (START) =========")
-      (pprint preprocess *out*)
-      (println "------- :BFLAT Preprocess (step 1) ---------"))
-    (rewrite preprocess)))
+(defrewrite :JaBinOpSeq [m]
+  (-> {:_type :BFLAT}
+      (assoc :bf (:seq m))
+      rewrite))
 
 (defrewrite :BFLAT [m]
-  (let [preprocess (-> m :bf connect-bvec-fields rewrite-bvec-as-sexp)]
+  (let [preprocess (-> m :bf rewrite-bvec-as-sexp)]
     (when *debugging?*
       (pprint preprocess *out*)
       (println "========= :BFLAT Preprocess (END) ========"))
   (rewrite preprocess)))
 
-(defn binops2bvecs
-  "Walk structure rewriting JaBinOpExp as a map with :_type :BVEC and :bvec, a vector of the arguments and operators.
-   This doesn't flatten things, just gets the bvecs in there."
+(defn atomic?
+  "This is mostly to speed up stepping through walk-for-bvecs!"
   [exp]
-  (cond (vector? exp) (mapv binops2bvecs exp)
-        (seq? exp)    (map  binops2bvecs exp)
-        (and (map? exp) (type? exp :JaBinOpExp))
-        (as-> exp ?e
-          (assoc ?e :bvec [(-> ?e :exp1 binops2bvecs) (:bin-op ?e) (-> ?e :exp2 binops2bvecs)])
-          (assoc ?e :_type :BVEC)
-          (dissoc ?e :exp1 :bin-op :exp2))
-        (map? exp) (reduce-kv (fn [m k v] (assoc m k (binops2bvecs v))) {} exp)
-        :else exp))
+  (or (string? exp)
+      (number? exp)
+      (keyword? exp)
+      (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
 (defn collect-bvec
   "Given a BVEC, return the vector of expressions (operands) separated by binary operators it expresses."
@@ -292,14 +275,6 @@
           (recur []
                  (into res (vector (walk-for-bvecs operand1) op (walk-for-bvecs operand2)))))))))
 
-(defn atomic?
-  "This is mostly to speed up stepping through walk-for-bvecs!"
-  [exp]
-  (or (string? exp)
-      (number? exp)
-      (keyword? exp)
-      (and (map? exp) (#{:JaField :JaVar} (:_type exp)))))
-
 ;;;**** Walk the structure. When you encounter a BVEC, call collect-bvec.
 ;;;     Note: collect-bvec calls this on its operands and eventually returns a BFLAT.
 (defn walk-for-bvecs
@@ -313,17 +288,6 @@
         (atomic? exp) exp
         :else exp))
 
-(defrewrite :FILTER [m] ; ToDo: Investigate use of ~@ here.
-  `(~'bi/filter-path ~(-> m :exp first rewrite second) ~(-> m :arg rewrite)))
-
-;;; ToDo Needs work!
-(defrewrite :CONSTRUCT [m]
-  `(~'bi/construct-path ~(-> m :exp rewrite) ~(-> m :arg rewrite)))
-
-(def JaDelimitedExp? {:JaParenDelimitedExp  :MAP,
-                      :JaSquareDelimitedExp :FILTER,
-                      :JaCurlyDelimitedExp  :CONSTRUCT})
-
 (defn bvec?
   "Returns true if the argument has the form of a bvec.
    A bvec has operators interposed between operands."
@@ -333,7 +297,7 @@
               ix 0]
          (let [elem (first bv)]
            (cond (empty? bv) true
-                 (and (even? ix) (not (and (map? elem) (contains? elem :_type)))) false, 
+                 (and (even? ix) (not (and (map? elem) (contains? elem :_type)))) false,
                  (and (odd? ix)  (not (par/binary-op? elem)))                     false,
                  :else (recur (rest bv) (inc ix)))))))
 
@@ -348,96 +312,6 @@
 (s/def ::info (s/keys :req-un [::args ::operators]))
 (s/def ::bvec #(bvec? %))
 
-;;; ToDo: I think this needs to be rethought.
-;;;   (1) Why does split-with have special provisions for \.
-;;;   (2) I think the quirk is about putting the final \. on and then ignoring it.
-;;;   (3) In what sense does this reorder? It doesn't concern precedence.
-;;;   (4) Maybe less weird that this would be to let
-;;;        \. do mapping (uninvolved)
-;;;        (), [], and {} define functions here. 
-(defn reorder-for-delimited-exps
-  "The operand of things in JaDelimitedExp are things lexically prior to the delimiter exp.
-   This function transforms a JaDelimitedExps (three kinds; I use the term as an abstraction over the three)
-   by walking backwards over a BFLAT from the JaDelimitedExp while the expression leading to it are
-   path navigations. These become the argument to the MAP/FILTER/CONSTRUCT. In the case of the FILTER,
-   the builtin function determines whether it is intended as array indexing or actual filtering.
-  
-   One more quirk is addressed here:
-   Owing to the way parsing is implemented (currently?)
-   the JaDelimitedExp has an attribute that is the last operand encountered.
-   This is put into the BFLAT separated by one more \\."
-  [bflat]
-  (let [[p1 p2] (split-with #(not (type? % JaDelimitedExp?)) (:bf bflat))]
-    (cond (empty? p2)  bflat,                 ; Nothing more to do. 
-          (empty? p1)  bflat,                 ; Nothing in front of the DE. (It might be an array, for example).
-          :else
-          (let [[p1-1-r p1-2-r] (split-with #(-> % par/binary-op? not) (reverse p1))
-                p1-1 (reverse p1-2-r)
-                p1-2 (reverse p1-1-r)
-                [JaDE & others] p2
-                primary (assoc JaDE :operand (-> {:_type :BFLAT
-                                                  :bf (-> p1-2 butlast vec           ; put stuff from p1-1
-                                                          (conj (:operand JaDE)))}   ; in front of what you had.
-                                                 reorder-for-delimited-exps))]       ; Then go deeper.
-            ;(println "p1-2=" p1-2 "\n")
-            ;(println "JaDE=" JaDE "\n")
-            ;(println "p1-1=" p1-1 "\n")
-            ;(println "others=" others "\n")
-            ;(println "primary=" primary "\n")
-            (-> bflat
-                (assoc  :bf (conj (vec p1-1) primary))
-                (update :bf into (-> {:_type :BFLAT :bf (vec others)} reorder-for-delimited-exps :bf)))))))
-
-;;; Here it makes sense to wrap both of the fields: "a + b * f()"
-;;; [{:_type :JaField, :field-name "a"} \+ {:_type :JaField, :field-name "b"} \* {:_type :JaFnCall, :fn-name "$f"}]
-;;;
-;;; $sum($v.field)
-;;; [{:_type :JaVar :jvar-name "$v"} \. {:_type :JaField :field-name "field"}]
-;;;
-;;; [{:_type :JaField :field-name "a"} \+ {:_type :JaField :field-name "b"} \* {:_type :JaFnCall :fn-name "$f"}]
-(defn connect-bvec-fields
-  "Any JaField in a BFLAT.bf that isn't preceded by a bi/access (\\.) is a reference to that field in the context variable.
-   Thus replace such JaFields with the one-argument call to bi/access.
-   The rewrite for :JaField just returns the string.
-   This leaves some fields, the ones preceded by a \\., to be processed by rewrite-bvec-as-sexp.
-   These others (they start new accesses into context variable) are wrapped in 1-arg bi/access here."
-  [bvec]
-  (s/assert ::bvec bvec)
-  (loop [bv bvec
-         res []
-         start? true]
-    (cond (empty? bv) res,
-
-          ;;[\. {:_type :JaField, :field-name "b"}]
-          (and (== 2 (count bvec)) (= \. (first bv)) (type? (second bv) :JaField))
-          (conj res `(~'bi/access ~(-> bv second :field-name))),
-
-          (and start? (type? (first bv) :JaField))                  ; starts with a field; wrap in 1-arg bi/access.
-          (recur (-> bv rest vec)
-                 (vector `(~'bi/access ~(-> bv first :field-name)))
-                 false),
-
-          start?                                                    ; Starts with anything but a field, advance by one.
-          (recur (-> bv rest vec)
-                 (-> bv first vector)
-                 false),
-
-          ;; After start, it does [<operator>, <operand>].
-          (and (= \. (first bv)) (type? (second bv) :JaField))      ; Ordinary field, advance two.
-          (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; rewrite-bvec-as-sexp will take care of it.
-                 (into res (subvec bv 0 2))
-                 false),
-
-          (type? (second bv) :JaField)
-          (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; 'Newly started' field; wrap it.
-                 (into res (vector (first bv) `(~'bi/access ~(-> bv second :field-name))))
-                 false)
-          :else                                                     ; Advance two. If it contains a field,
-          (recur (if (<= (count bv) 2) [] (subvec bv 2))            ; rewrite-bvec-as-sexp will take care of it.
-                 (into res (subvec bv 0 2))
-                 ;(if (<= (count bv) 2) res (into res (subvec bv 0 2)))
-                 false))))
-
 ;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 ;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
 (def op-precedence-tbl ; lower :val means binds tighter.
@@ -451,14 +325,14 @@
    :!=          {:assoc :none :val 800}
    :in          {:assoc :none :val 700}
    :thread      {:assoc :left :val 700} ; ToDo guessing
-   \&           {:assoc :left :val 400} ; ToDo guessing
-   \+           {:assoc :left :val 400}
-   \-           {:assoc :left :val 400}
+   'bi/&        {:assoc :left :val 400} ; ToDo guessing
+   'bi/+        {:assoc :left :val 400}
+   'bi/-        {:assoc :left :val 400}
    :range       {:assoc :left :val 400} ; ToDo guessing
-   \*           {:assoc :left :val 300}
-   \%           {:assoc :left :val 300}
-   \/           {:assoc :left :val 300}
-   \.           {:assoc :left :val 150}})
+   'bi/*        {:assoc :left :val 300}
+   'bi/%        {:assoc :left :val 300}
+   'bi//        {:assoc :left :val 300}
+   'bi/step->   {:assoc :left :val 150}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)
@@ -471,11 +345,12 @@
   (reduce
    (fn [res [k v]]
      (if (odd? k)
-       (-> res
-           (update :operators #(conj % {:pos k
-                                        :op (rewrite v)
-                                        :prec (:val (op-precedence-tbl v))}))
-           (update :args #(conj % :$op$)))
+       (let [op (rewrite v)]
+         (-> res
+             (update :operators #(conj % {:pos k
+                                          :op op
+                                          :prec (-> op op-precedence-tbl :val)}))
+           (update :args #(conj % :$op$))))
        (update res :args #(conj % v))))
    {:operators [] :args []}
    (map #(vector %1 %2) (range (count bvec)) bvec)))
@@ -559,3 +434,22 @@
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
 
+(defn rewrite-nav
+  "Iteratively walk a complex expression rewriting and 'compressing' nested bi/step-> expression."
+  [exp]
+  (let [progress? (atom true)]
+    (letfn [(one-step [exp]
+              (cond (and (-> progress? deref not)
+                         (seq? exp)
+                         (= 'bi/step-> (first exp))
+                         (= 'bi/step-> (-> exp second first)))
+                    (do (reset! progress? true)
+                        `(~'bi/step-> ~@(-> exp second rest) ~@(-> exp rest rest)))
+                    (vector? exp) (->> exp (map rewrite-nav) doall vec)
+                    (seq? exp)    (->> exp (map rewrite-nav) doall)
+                    (map? exp) (reduce-kv (fn [m k v] (assoc m k (rewrite-nav v))) {} exp)
+                    :else exp))]
+      (loop [exp exp]
+        (if (-> progress? deref not) exp
+            (do (reset! progress? false)
+                (recur (one-step exp))))))))
