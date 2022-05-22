@@ -129,18 +129,3 @@
                   (bi/step-> ?tl (bi/dot-map "d") (bi/dot-map "e") (bi/dot-map "f")))
            (rew "a.b.c + d.e.f" :skip-top? true)))))
 
-(deftest context
-  (testing "Context management:"
-
-    (is (=
-         (rew "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)")
-         :nyi))))
-
-(defn tryme []
-  (bi/finish
-   (let
-       [_x1 (bi/initialize-context (-> {} (assoc "a" (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3)))))))]
-     (bi/+
-      (bi/step-> (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "c"))
-      (bi/step-> (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "f"))))))
-  
