@@ -261,6 +261,7 @@
       (keyword? exp)
       (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
+(declare walk-for-bvecs)
 (defn collect-bvec
   "Given a BVEC, return the vector of expressions (operands) separated by binary operators it expresses."
   [bvec]

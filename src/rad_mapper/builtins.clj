@@ -113,14 +113,6 @@
   "Return the argument as a string."
   [s_] (str s_))
 
-(defn apply-map
-  "Navigates one more step from the argument and executes fn."
-  [obj last-operand-step fn]
-  (let [obj (if (s/valid? ::state-obj obj) (:sys/$ obj) obj)]
-    (->> (dot-map obj last-operand-step)
-         (mapv fn)
-         jsonata-flatten)))
-
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
 ;;; 4 ~> function($x){$x+1}()    ==>  5
@@ -156,7 +148,15 @@
          pre-excursion# @current-context]
      (let [res# (-> top# ~@body)]
        (reset! current-context pre-excursion#)
-         res#)))
+       res#)))
+
+(defn apply-map
+  "Navigates one more step from the argument and executes fn."
+  [obj last-operand-step fn]
+  (let [obj (if (s/valid? ::state-obj obj) (:sys/$ obj) obj)]
+    (->> (dot-map obj last-operand-step)
+         (mapv fn)
+         jsonata-flatten)))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------

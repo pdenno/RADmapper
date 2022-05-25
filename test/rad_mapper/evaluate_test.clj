@@ -13,7 +13,7 @@
                   :debug? debug?
                   :debug-parse? debug-parse?)))
 
-(deftest expr-evaluations
+(deftest small-things
   (testing "All the, small things (execute):"
     
     (testing "simple access of $"
