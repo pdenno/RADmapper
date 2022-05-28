@@ -24,7 +24,7 @@
   "The root context data, like in JSONata."
   (atom nil))
 
-(def current-context
+(def ^:dynamic current-context
   "In evaluating code, $ := ... or use of $ 'out of the blue' might occur.
    This is used to find the value of $ set by those means.
    It is only valid before the action starts; after that, only the threaded
@@ -151,12 +151,13 @@
        res#)))
 
 (defn apply-map
-  "mapv the argument object over the argument fn.
-   Typically obj would be provided by step->."
+  "mapv the argument object over the argument fn."
   [obj fn]
-  (->> (if (vector? obj) obj (vector obj))
-       (mapv fn)
-       jsonata-flatten))
+  (binding [current-context (atom obj)] ; Because fn might start with single-arg dot-map.
+    (->> obj
+         singlize
+         (mapv fn)
+         jsonata-flatten)))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------

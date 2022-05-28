@@ -618,7 +618,7 @@
         tkn1 (:head base-ps)]
     (cond (= \? tkn1)
           (parse :ptag/conditional-tail base-ps :predicate (:result base-ps)),
-          
+
           (exp-continuable? tkn1 tkn2)
           (as-> base-ps ?ps
             (parse :ptag/bin-op-continuation ?ps)
@@ -639,13 +639,13 @@
       (let [p (cond (= cont? :apply-map)
                     (as-> ps ?ps
                       (eat-token ?ps \.)
-                      (parse :ptag/delimited-exp ?ps)
+                      (parse :ptag/delimited-exp ?ps :operand-2? true)
                       (look ?ps 1)),
                     (#{:apply-filter :apply-reduce} cont?)
                     (as-> ps ?ps
-                      (parse :ptag/delimited-exp ?ps)
+                      (parse :ptag/delimited-exp ?ps :operand-2? true)
                       (look ?ps 1)),
-                    :else 
+                    :else
                     (as-> ps ?ps
                       (eat-token ?ps)
                       (parse :ptag/base-exp ?ps :operand-2? true)
@@ -667,14 +667,14 @@
                    (jvar? tkn)))             (parse :ptag/fn-call ps)       ; <fn-call>
           (literal? tkn)                     (parse :ptag/literal ps)       ; <literal>
           (or (jvar? tkn)
-              (qvar? tkn) ; really?            
+              (qvar? tkn) ; really?
               (field? tkn))                  (as-> ps ?ps
                                                (assoc ?ps :result tkn)
                                                (eat-token ?ps)),            ; <field>, <jvar>, or <qvar>
           :else
           (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
                     {:got tkn}))))
-    
+
 ;;;| syntax/op       | Example                                     | Comment                                         |
 ;;;|-----------------+---------------------------------------------+-------------------------------------------------|
 ;;;| Square / filter | Phone[type = 'mobile']                      | http://docs.jsonata.org/predicate               |
@@ -689,9 +689,9 @@
   (let [head (:head ps)]
     (if operand-2? ; http://docs.jsonata.org/path-operators
       (case head
-        \(  (parse :ptag/code-block ps)
-        \[  (parse :ptag/filter-exp ps) ; Includes aref.
-        \{  (parse :ptag/reduce-exp ps))
+        \(  (parse :ptag/apply-map    ps)
+        \[  (parse :ptag/apply-filter ps) ; Includes aref.
+        \{  (parse :ptag/apply-reduce ps))
       (case head
         \(  (parse :ptag/code-block ps)
         \[  (parse :ptag/range|array-exp ps)
@@ -742,21 +742,9 @@
     (assoc ?ps :result (:head ?ps))
     (eat-token ?ps jvar?)))
 
-;;; ToDo: Review :ptag/delimited-exp. It was a iffy design choice to depend so much on
-;;;       the presence of an operator (operator-info) at this point in parsing.
-;;;       There are opportunities for consolidation for each of the delimiters.
-;;;       If you stick with this approach, split off
-#_(defrecord JaMapExp [operand exp])
-#_(defparse :ptag/map-exp
-  [ps]
-  (as-> ps ?ps
-    (eat-token ?ps \()
-    (parse :ptag/exp ?ps)
-    (eat-token ?ps \)) ; Operand added in :ptag/delimited-exp
-    (assoc ?ps :result (map->JaMapExp {:exp (:result ?ps)}))))
 
 (defrecord JaFilterExp [operand exp]) ; This accommodates aref expressions too.
-(defparse :ptag/filter-exp
+(defparse :ptag/apply-filter
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \[ \] \, :ptag/exp) ; Operand added in :ptag/delimited-exp
@@ -772,7 +760,7 @@
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
     (assoc ?ps :result (map->JaObjExp {:exp (:result ?ps)}))))
 
-(defparse :ptag/reduce-exp
+(defparse :ptag/apply-reduce
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
@@ -811,6 +799,15 @@
                                            (recall ?ps :then)
                                            (:result ?ps)))))
 
+;;; Same RHS as JaCodeBlock
+;;; <apply-map> := '(' ( <jvar-decl> | <exp> )* ')'
+(defrecord JaApplyMap [body])
+(defparse :ptag/apply-map
+  [ps]
+    (as-> ps ?ps
+      (parse-list ?ps \( \) \; :ptag/block-elem)
+      (assoc ?ps :result (->JaApplyMap (:result ?ps)))))
+
 (s/def ::CodeBlock (s/keys :req-un [::body]))
 (defrecord JaCodeBlock [body])
 
@@ -830,7 +827,7 @@
       (parse :ptag/jvar-decl ?ps)
       (parse :ptag/exp ?ps))))
 
-;;; jvar-decl ::= <jvar> ':=' <exp> 
+;;; jvar-decl ::= <jvar> ':=' <exp>
 (defrecord JaJvarDecl [var init-val])
 (defparse :ptag/jvar-decl
   [pstate]

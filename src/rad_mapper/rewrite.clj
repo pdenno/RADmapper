@@ -113,7 +113,7 @@
   `(~'bi/finish
     (~@(->> m
             :top
-            preprocess-bin-ops
+            #_preprocess-bin-ops
             rewrite
             rewrite-nav))))
 
@@ -172,7 +172,7 @@
 
 ;;; ToDo: Is this always called inside a bi/step->.
 ;;; The rewritten form assumes so.
-(defrewrite :apply-map-fn [m]
+#_(defrewrite :apply-map-fn [m]
   `(fn [] ~(-> m :body rewrite)))
 
 #_(defrewrite :JaMapExp [m]
@@ -267,42 +267,12 @@
   (->> m
       :seq
       rewrite-bvec-as-sexp ; Then you have s-expressions.
-      rewrite-nav))        ; A simplification compressing out bi/step->
+      rewrite-nav))        ; A simplification on sexps, compressing out bi/step->
 
-(defrewrite :apply-map-fn
+;;; ToDo: Could sub in var?
+(defrewrite :JaApplyMap
   [m]
-  `(fn [] ~(-> m :body rewrite)))
-
-(defn preprocess-bin-ops
-  "Walk the expression applying rewrite-apply to :JaBinOpSeq.
-   Note that this is done BEFORE REWRITING."
-  [exp]
-  (cond (and (map? exp) (= :JaBinOpSeq (:_type exp)))
-        (->> exp
-             rewrite-apply
-             (reduce-kv (fn [m k v] (assoc m k (preprocess-bin-ops v))) {})),
-        (map? exp) (reduce-kv (fn [m k v] (assoc m k (preprocess-bin-ops v))) {} exp),
-        (vector? exp)  (mapv preprocess-bin-ops exp)
-        (seq? exp)     (map  preprocess-bin-ops exp)
-        :else exp))
-
-;;; ToDo: This needs to executed in dogfood AST processing.
-(defn rewrite-apply
-  "Where an apply-map/filter/reduce is in the argument BinOpSeq.seq, the next elem in the seq gets a special wrapper.
-   For example, the next will be a CodeBlock if :apply-map, and that gets transformed to a bi/apply-map, where the body
-   is a function."
-  [bin-op-seq]
-  (loop [bvec (:seq bin-op-seq)
-         res []]
-    (cond (empty? bvec) {:_type :JaBinOpSeq :seq res},
-          (= :apply-map (first bvec))
-          (recur (-> bvec rest rest)
-                 (-> res
-                     (conj :apply-map #_'bi/apply-map)
-                     (conj (-> bvec rest first (assoc :_type :apply-map-fn)))))
-          :else
-          (recur (rest bvec)
-                 (conj res (first bvec))))))
+  `(fn [~(dgensym!)] ~@(-> m :body rewrite)))
 
 (def spec-ops (-> par/binary-op? vals set)) ; ToDo: Not necessary?
 
@@ -335,7 +305,7 @@
    'bi/%         {:assoc :left :val 300}
    'bi//         {:assoc :left :val 300}
    'bi/step->    {:assoc :left :val 150}
-   #_#_'bi/apply-map {:assoc :left :val 150}})
+   'bi/apply-map {:assoc :left :val 150}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)
@@ -354,7 +324,7 @@
                                           :op op
                                           :prec (-> op op-precedence-tbl :val)}))
            (update :args #(conj % :$op$))))
-       (update res :args #(conj % v))))
+       (update res :args #(conj % (rewrite v)))))
    {:operators [] :args []}
    (map #(vector %1 %2) (range (count bvec)) bvec)))
 
@@ -437,7 +407,6 @@
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
 
-
 (defn rewrite-nav
   "Iteratively walk a nested s-expression rewriting and 'compressing' nested bi/step-> expression."
   [exp]
@@ -446,7 +415,7 @@
               (cond (and (-> progress? deref not)
                          (seq? exp)
                          (= 'bi/step-> (first exp))
-                         (#{'bi/step-> :apply-map} (-> exp second first)))
+                         (= 'bi/step-> (-> exp second first)))
                     (do (reset! progress? true)
                         `(~'bi/step-> ~@(-> exp second rest) ~@(-> exp rest rest)))
                     (vector? exp) (->> exp (map rewrite-nav) doall vec)
