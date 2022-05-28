@@ -129,3 +129,29 @@
                   (bi/step-> ?tl (bi/dot-map "d") (bi/dot-map "e") (bi/dot-map "f")))
            (rew "a.b.c + d.e.f" :skip-top? true)))))
 
+
+(deftest rewriting-apply
+  (testing "rewrite apply a.b.(c + f)"
+    (is (= '[{:_type :JaField, :field-name "a"}
+             bi/step->
+             {:_type :JaField, :field-name "b"}
+             bi/apply-map
+             {:_type :apply-map-fn,
+              :body [{:_type :JaBinOpSeq,
+                      :seq [{:_type :JaField, :field-name "c"} bi/+ {:_type :JaField, :field-name "f"}]}]}]
+           ;; The arg here is (rew/rewrite* :ptag/exp "a.b.(c + f)" :simplify? true)
+           (rew/rewrite-apply '[{:_type :JaField, :field-name "a"}
+                                bi/step->
+                                {:_type :JaField, :field-name "b"}
+                                :apply-map
+                                {:_type :JaCodeBlock,
+                                 :body
+                                 [{:_type :JaBinOpSeq,
+                                   :seq
+                                   [{:_type :JaField, :field-name "c"}
+	                            bi/+
+	                            {:_type :JaField, :field-name "f"}]}]}])))))
+
+           
+
+

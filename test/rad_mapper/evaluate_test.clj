@@ -19,6 +19,12 @@
     (testing "simple access of $"
       (is (= [1 2 3] (run "($ := [{'a' : 1}, {'a' : 2}, {'a' : 3}]; a)"))))
 
+    (testing "simple navigation"
+      (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)"))))
+
+    (testing "simple navigation, more efficiently"
+      (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.(c +f) )"))))
+
     (testing "use of $match (1)"
       (is (= {"match" "foo", "index" 2, "groups" []}  (run "$match(\"bbfoovar\", /foo/)"))))
 

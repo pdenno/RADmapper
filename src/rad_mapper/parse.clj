@@ -72,7 +72,7 @@
 (def comparison-operators '{:<= <=, :>= >=, :!= not=, \< <, \= =, \> >, "in" bi/in})
 (def boolean-operators '{:and and :or or})
 (def string-operators '{\& bi/&})
-(def other-operators '{\. bi/step->, :thread bi/thread})
+(def other-operators '{\. bi/step->, :thread bi/thread :apply-map bi/apply-map})
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
@@ -683,9 +683,6 @@
 
 ;;;  But see $.{ in http://docs.jsonata.org/sorting-grouping.
 
-;;; <delimited-exp> ::= ( <operand-exp> ( ('.' <map-exp>)    | <filter-exp>  | <reduce-exp> ) ) |
-;;;                                     (      <code-block>  | <array|range> | <obj-exp>      )
-
 ;;; <delimited-exp> ::= <code-block> | <filter-exp> | <reduce-exp> | <range|array-exp> | <obj-exp>
 (defparse :ptag/delimited-exp
   [ps & {:keys [operand-2?]}]
@@ -749,8 +746,8 @@
 ;;;       the presence of an operator (operator-info) at this point in parsing.
 ;;;       There are opportunities for consolidation for each of the delimiters.
 ;;;       If you stick with this approach, split off
-(defrecord JaMapExp [operand exp])
-(defparse :ptag/map-exp
+#_(defrecord JaMapExp [operand exp])
+#_(defparse :ptag/map-exp
   [ps]
   (as-> ps ?ps
     (eat-token ?ps \()

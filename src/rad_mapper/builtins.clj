@@ -26,7 +26,7 @@
 
 (def current-context
   "In evaluating code, $ := ... or use of $ 'out of the blue' might occur.
-   This is used to find the value of :sys/$ set by those means.
+   This is used to find the value of $ set by those means.
    It is only valid before the action starts; after that, only the threaded
    state object matters."
   (atom nil))
@@ -35,21 +35,21 @@
 ;;; So far, this is called by step->, but I think there may be other forms where it makes sense to do.
 (defn initialize-context
   [val]
-  (reset! current-context {:sys/$ val :advance? false}))
+  (reset! current-context val))
 
 (defn reset-env
   "Clean things up just prior to running user code."
   []
   (reset! current-context nil))
 
-(s/def ::state-obj (s/keys :req_un [:advance?] :req [:sys/$]))
+(s/def ::state-obj true)
 (s/def ::number number?)
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
 (defn finish
   "This is called last in user code to account for the difference between a.b and a.b.$"
   [obj]
-  (if (s/valid? ::state-obj obj) (:sys/$ obj) obj))
+  (jsonata-flatten obj))
 
 ;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
 (defn singlize [v] (if (vector? v) v (vector v)))
@@ -68,24 +68,24 @@
 
 ;;;========================= JSONata built-ins  =========================================
 (defn + "plus" [x y]
-  (s/assert ::number (:sys/$ x))
-  (s/assert ::number (:sys/$ y))
-  (clojure.core/+ (:sys/$ x) (:sys/$ y)))
+  (s/assert ::number x)
+  (s/assert ::number y)
+  (clojure.core/+ x y))
 
-(defn - "minus" [x_ y]
-  (if (number? x_)
-    (clojure.core/- x_ y)
-    (throw (ex-info "The left side of the '-' operator must evaluate to a number." {:op1 x_}))))
+(defn - "minus" [x y]
+  (if (number? x)
+    (clojure.core/- x y)
+    (throw (ex-info "The left side of the '-' operator must evaluate to a number." {:op1 x}))))
 
-(defn * "times"  [x_ y]
-    (if (number? x_)
-    (clojure.core/* x_ y)
-    (throw (ex-info "The left side of the '*' operator must evaluate to a number." {:op1 x_}))))
+(defn * "times"  [x y]
+    (if (number? x)
+    (clojure.core/* x y)
+    (throw (ex-info "The left side of the '*' operator must evaluate to a number." {:op1 x}))))
 
-(defn / "divide" [x_ y]
-  (if (number? x_)
-    (double (clojure.core// x_ y))
-    (throw (ex-info "The left side of the '/' operator must evaluate to a number." {:op1 x_}))))
+(defn / "divide" [x y]
+  (if (number? x)
+    (double (clojure.core// x y))
+    (throw (ex-info "The left side of the '/' operator must evaluate to a number." {:op1 x}))))
 
 ;;; ToDo: $contains(), $split(), $replace()
 ;;; ToDo: flags on regular expressions. /regex/flags  (the only flags are 'i' and 'm' (case insenstive, multi-line)).
@@ -128,7 +128,7 @@
   ([prop|fn] (dot-map @current-context prop|fn))
   ([sobj prop|fn]
    (s/assert ::state-obj sobj)
-   (let [obj (if (-> sobj :sys/$ vector?) (:sys/$ sobj) (-> sobj :sys/$ vector))
+   (let [obj (if (vector? sobj) sobj (vector sobj))
          res (jsonata-flatten
               (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
                     (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
@@ -136,7 +136,7 @@
                     (fn? prop|fn)                  (->> (mapv prop|fn obj)
                                                         (filterv identity)),
                     :else (throw (ex-info "Expected function to map over" {:got prop|fn}))))]
-     (assoc sobj :sys/$ res))))
+     res)))
 
 ;;; ToDo: Currently the only thing that can be inside step-> is dot-map.
 ;;;       So is :advance? really necessary? I'm not using it here. 
@@ -151,12 +151,12 @@
        res#)))
 
 (defn apply-map
-  "Navigates one more step from the argument and executes fn."
-  [obj last-operand-step fn]
-  (let [obj (if (s/valid? ::state-obj obj) (:sys/$ obj) obj)]
-    (->> (dot-map obj last-operand-step)
-         (mapv fn)
-         jsonata-flatten)))
+  "mapv the argument object over the argument fn.
+   Typically obj would be provided by step->."
+  [obj fn]
+  (->> (if (vector? obj) obj (vector obj))
+       (mapv fn)
+       jsonata-flatten))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------
@@ -435,12 +435,12 @@
 ;;; $power
 (defn $power
   "Return the largest the numeric argument (an array or singleton)."
-  [x_ y]
-  (s/assert ::number x_)
+  [x y]
+  (s/assert ::number x)
   (s/assert ::number y)
-  (if (and (integer? x_) (pos-int? y))
-    (int (Math/pow x_ y))
-    (Math/pow x_ y)))
+  (if (and (integer? x) (pos-int? y))
+    (int (Math/pow x y))
+    (Math/pow x y)))
 
 ;;; $max
 (defn $max

@@ -15,8 +15,7 @@
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
 (def locals (atom [{}]))
-(declare map-simplify remove-nils rewrite make-runnable)
-(declare rewrite-bvec-as-sexp precedence rewrite-nav)
+(declare map-simplify preprocess-bin-ops remove-nils rewrite make-runnable)
 (def diag (atom nil))
 
 (defn rewrite*
@@ -110,7 +109,13 @@
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
-(defrewrite :toplevel [m] `(~'bi/finish (~@(->> m :top rewrite rewrite-nav))))
+(defrewrite :toplevel [m]
+  `(~'bi/finish
+    (~@(->> m
+            :top
+            preprocess-bin-ops
+            rewrite
+            rewrite-nav))))
 
 #_(defrewrite :toplevel [m]
     (let [typ (-> m :top :_type)]
@@ -165,7 +170,12 @@
     `(~'bi/get-from-b-set b-set ~(-> m :qvar-name keyword))
     (-> m :qvar-name symbol)))
 
-(defrewrite :JaMapExp [m]
+;;; ToDo: Is this always called inside a bi/step->.
+;;; The rewritten form assumes so.
+(defrewrite :apply-map-fn [m]
+  `(fn [] ~(-> m :body rewrite)))
+
+#_(defrewrite :JaMapExp [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
         body `(fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
@@ -241,18 +251,6 @@
     ~(-> m :exp1 rewrite)
     ~(-> m :exp2 rewrite)))
 
-(defrewrite :JaBinOpSeq [m]
-  (-> {:_type :BFLAT}
-      (assoc :bf (:seq m))
-      rewrite))
-
-(defrewrite :BFLAT [m]
-  (let [preprocess (-> m :bf rewrite-bvec-as-sexp)]
-    (when *debugging?*
-      (pprint preprocess *out*)
-      (println "========= :BFLAT Preprocess (END) ========"))
-  (rewrite preprocess)))
-
 (defn atomic?
   "This is mostly to speed up stepping through walk-for-bvecs!"
   [exp]
@@ -261,46 +259,50 @@
       (keyword? exp)
       (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
-(declare walk-for-bvecs)
-(defn collect-bvec
-  "Given a BVEC, return the vector of expressions (operands) separated by binary operators it expresses."
-  [bvec]
-  (loop [bv bvec
-         res []]
-    (if (empty? bv)
-      {:_type :BFLAT :bf res}
-      (let [[operand1 op operand2] (:bvec bv)]
-        (if (type? operand2 :BVEC)
-          (recur operand2
-                 (into res (vector (walk-for-bvecs operand1) op)))
-          (recur []
-                 (into res (vector (walk-for-bvecs operand1) op (walk-for-bvecs operand2)))))))))
+;;;----------------------------- Rewriting binary operations (the remainder of this file) -------------
 
-;;;**** Walk the structure. When you encounter a BVEC, call collect-bvec.
-;;;     Note: collect-bvec calls this on its operands and eventually returns a BFLAT.
-(defn walk-for-bvecs
-  "Walk the structure; when you encounter a BVEC, replace the value with with what is
-   provided by collect-bvec called on the value. collect-bvec calls this function too."
+(declare rewrite-apply rewrite-bvec-as-sexp precedence rewrite-nav rewrite-apply)
+
+(defrewrite :JaBinOpSeq [m]
+  (->> m
+      :seq
+      rewrite-bvec-as-sexp ; Then you have s-expressions.
+      rewrite-nav))        ; A simplification compressing out bi/step->
+
+(defrewrite :apply-map-fn
+  [m]
+  `(fn [] ~(-> m :body rewrite)))
+
+(defn preprocess-bin-ops
+  "Walk the expression applying rewrite-apply to :JaBinOpSeq.
+   Note that this is done BEFORE REWRITING."
   [exp]
-  (cond (seq? exp) (map walk-for-bvecs exp)
-        (vector? exp) (mapv walk-for-bvecs exp)
-        (and (map? exp) (type? exp :BVEC)) (collect-bvec exp)
-        (map? exp) (reduce-kv (fn [m k v] (assoc m k (walk-for-bvecs v))) {} exp)
-        (atomic? exp) exp
+  (cond (and (map? exp) (= :JaBinOpSeq (:_type exp)))
+        (->> exp
+             rewrite-apply
+             (reduce-kv (fn [m k v] (assoc m k (preprocess-bin-ops v))) {})),
+        (map? exp) (reduce-kv (fn [m k v] (assoc m k (preprocess-bin-ops v))) {} exp),
+        (vector? exp)  (mapv preprocess-bin-ops exp)
+        (seq? exp)     (map  preprocess-bin-ops exp)
         :else exp))
 
-(defn bvec?
-  "Returns true if the argument has the form of a bvec.
-   A bvec has operators interposed between operands."
-  [bvec]
-  (and (vector? bvec)
-       (loop [bv bvec
-              ix 0]
-         (let [elem (first bv)]
-           (cond (empty? bv) true
-                 (and (even? ix) (not (and (map? elem) (contains? elem :_type)))) false,
-                 (and (odd? ix)  (not (par/binary-op? elem)))                     false,
-                 :else (recur (rest bv) (inc ix)))))))
+;;; ToDo: This needs to executed in dogfood AST processing.
+(defn rewrite-apply
+  "Where an apply-map/filter/reduce is in the argument BinOpSeq.seq, the next elem in the seq gets a special wrapper.
+   For example, the next will be a CodeBlock if :apply-map, and that gets transformed to a bi/apply-map, where the body
+   is a function."
+  [bin-op-seq]
+  (loop [bvec (:seq bin-op-seq)
+         res []]
+    (cond (empty? bvec) {:_type :JaBinOpSeq :seq res},
+          (= :apply-map (first bvec))
+          (recur (-> bvec rest rest)
+                 (-> res
+                     (conj :apply-map #_'bi/apply-map)
+                     (conj (-> bvec rest first (assoc :_type :apply-map-fn)))))
+          :else
+          (recur (rest bvec)
+                 (conj res (first bvec))))))
 
 (def spec-ops (-> par/binary-op? vals set)) ; ToDo: Not necessary?
 
@@ -311,29 +313,29 @@
 (s/def ::info-op  (s/keys :req-un [::pos ::op ::prec]))
 (s/def ::operators (s/coll-of ::info-op :kind vector?))
 (s/def ::info (s/keys :req-un [::args ::operators]))
-(s/def ::bvec #(bvec? %))
 
 ;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 ;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
 (def op-precedence-tbl ; lower :val means binds tighter.
-  {:or          {:assoc :left :val 1000}
-   :and         {:assoc :left :val 900}
-   \<           {:assoc :none :val 800}
-   \>           {:assoc :none :val 800}
-   :<=          {:assoc :none :val 800}
-   :>=          {:assoc :none :val 800}
-   \=           {:assoc :none :val 800}
-   :!=          {:assoc :none :val 800}
-   :in          {:assoc :none :val 700}
-   :thread      {:assoc :left :val 700} ; ToDo guessing
-   'bi/&        {:assoc :left :val 400} ; ToDo guessing
-   'bi/+        {:assoc :left :val 400}
-   'bi/-        {:assoc :left :val 400}
-   :range       {:assoc :left :val 400} ; ToDo guessing
-   'bi/*        {:assoc :left :val 300}
-   'bi/%        {:assoc :left :val 300}
-   'bi//        {:assoc :left :val 300}
-   'bi/step->   {:assoc :left :val 150}})
+  {:or           {:assoc :left :val 1000}
+   :and          {:assoc :left :val 900}
+   \<            {:assoc :none :val 800}
+   \>            {:assoc :none :val 800}
+   :<=           {:assoc :none :val 800}
+   :>=           {:assoc :none :val 800}
+   \=            {:assoc :none :val 800}
+   :!=           {:assoc :none :val 800}
+   :in           {:assoc :none :val 700}
+   :thread       {:assoc :left :val 700} ; ToDo guessing
+   'bi/&         {:assoc :left :val 400} ; ToDo guessing
+   'bi/+         {:assoc :left :val 400}
+   'bi/-         {:assoc :left :val 400}
+   :range        {:assoc :left :val 400} ; ToDo guessing
+   'bi/*         {:assoc :left :val 300}
+   'bi/%         {:assoc :left :val 300}
+   'bi//         {:assoc :left :val 300}
+   'bi/step->    {:assoc :left :val 150}
+   #_#_'bi/apply-map {:assoc :left :val 150}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)
@@ -400,7 +402,7 @@
                       (range (count args))))))
 
 (defn rewrite-bvec-as-sexp
-  "Process the :bvec of BVEC to a sexps conforming to
+  "Process the :seq of a JaBinOpSeq a sexp conforming to
     (1) precedence rules (which are only a concern in languages that have C-language-like syntax).
     (2) lisp-like operator before operand ordering (which is a concern for all).
   The result can have embedded un-rewritten stuff in it. Will hit that with be rewritten later."
@@ -435,15 +437,16 @@
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
 
+
 (defn rewrite-nav
-  "Iteratively walk a complex expression rewriting and 'compressing' nested bi/step-> expression."
+  "Iteratively walk a nested s-expression rewriting and 'compressing' nested bi/step-> expression."
   [exp]
   (let [progress? (atom true)]
     (letfn [(one-step [exp]
               (cond (and (-> progress? deref not)
                          (seq? exp)
                          (= 'bi/step-> (first exp))
-                         (= 'bi/step-> (-> exp second first)))
+                         (#{'bi/step-> :apply-map} (-> exp second first)))
                     (do (reset! progress? true)
                         `(~'bi/step-> ~@(-> exp second rest) ~@(-> exp rest rest)))
                     (vector? exp) (->> exp (map rewrite-nav) doall vec)
