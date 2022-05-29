@@ -114,7 +114,7 @@
            (rew  "( $x := 1; $f($x) $g($x) )")))
 
     ;; A side-effected dummy binding is used for the special $.
-    (is (= '(let [$x "foo" _x1 (bi/reset-special! bi/$ (-> {} (assoc "a" 1))) $y "bat" $yy "ybat"] ($f $x $y))
+    (is (= '(let [$x "foo" _x1 (bi/set-context! (-> {} (assoc "a" 1))) $y "bat" $yy "ybat"] ($f $x $y))
            (rew
                          "( $x   :=  'foo';
                             $    := {'a' : 1};
@@ -128,30 +128,3 @@
     (is (= '(bi/+ (bi/step-> ?tl (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "c"))
                   (bi/step-> ?tl (bi/dot-map "d") (bi/dot-map "e") (bi/dot-map "f")))
            (rew "a.b.c + d.e.f" :skip-top? true)))))
-
-
-(deftest rewriting-apply
-  (testing "rewrite apply a.b.(c + f)"
-    (is (= '[{:_type :JaField, :field-name "a"}
-             bi/step->
-             {:_type :JaField, :field-name "b"}
-             bi/apply-map
-             {:_type :apply-map-fn,
-              :body [{:_type :JaBinOpSeq,
-                      :seq [{:_type :JaField, :field-name "c"} bi/+ {:_type :JaField, :field-name "f"}]}]}]
-           ;; The arg here is (rew/rewrite* :ptag/exp "a.b.(c + f)" :simplify? true)
-           (rew/rewrite-apply '[{:_type :JaField, :field-name "a"}
-                                bi/step->
-                                {:_type :JaField, :field-name "b"}
-                                :apply-map
-                                {:_type :JaCodeBlock,
-                                 :body
-                                 [{:_type :JaBinOpSeq,
-                                   :seq
-                                   [{:_type :JaField, :field-name "c"}
-	                            bi/+
-	                            {:_type :JaField, :field-name "f"}]}]}])))))
-
-           
-
-

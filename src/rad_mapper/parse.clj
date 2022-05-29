@@ -743,14 +743,6 @@
     (assoc ?ps :result (:head ?ps))
     (eat-token ?ps jvar?)))
 
-
-(defrecord JaFilterExp [operand exp]) ; This accommodates aref expressions too.
-(defparse :ptag/apply-filter
-  [ps]
-  (as-> ps ?ps
-    (parse-list ?ps \[ \] \, :ptag/exp) ; Operand added in :ptag/delimited-exp
-    (assoc ?ps :result (map->JaFilterExp {:exp (:result ?ps)}))))
-
 ;;; ToDo: Verify that no distinction in syntax between reduce and obj construction.
 ;;;       Keep the distinction in structures created, however!
 (defrecord JaObjExp    [operand kv-pairs])
@@ -800,14 +792,24 @@
                                            (recall ?ps :then)
                                            (:result ?ps)))))
 
-;;; Same RHS as JaCodeBlock
-;;; <apply-map> := '(' ( <jvar-decl> | <exp> )* ')'
+;;; <code-block> := '(' ( <jvar-decl> | <exp> )* ')'
+;;; <map-exp>    := '(' ( <jvar-decl> | <exp> )* ')'
 (defrecord JaApplyMap [body])
 (defparse :ptag/apply-map
   [ps]
     (as-> ps ?ps
       (parse-list ?ps \( \) \; :ptag/block-elem)
       (assoc ?ps :result (->JaApplyMap (:result ?ps)))))
+
+;;; <filter-exp> := '[' <exp> ']'
+(defrecord JaApplyFilter [body]) ; This accommodates aref expressions too.
+(defparse :ptag/apply-filter
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps \[)
+    (parse :ptag/exp ?ps)
+    (eat-token ?ps \])
+    (assoc ?ps :result (->JaApplyFilter (:result ?ps)))))
 
 (s/def ::CodeBlock (s/keys :req-un [::body]))
 (defrecord JaCodeBlock [body])

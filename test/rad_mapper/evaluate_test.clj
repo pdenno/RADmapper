@@ -26,11 +26,44 @@
     (testing "simple navigation, more efficiently"
       (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.(c +f) )"))))
 
-    (testing "simple filter"
-      (is (= "b" (run "( $ := {'letter' : ['a', 'b', 'c', 'd']}; letter[$ = 'b'] )"))))
+    (testing "jsonata flatten (1)"
+      (is (= [1 2 3 4] (run "[[1,2,3], [4]].$"))))
+
+    (testing "jsonata flatten (2)"
+      (is (= 2 (run "[[1,2,3], 4].$[1]"))))
+
+    (testing "mapping here means 'run [0] on each element.'"
+      (is (= [1 4] (run "[[1,2,3], 4].$[0]"))))
+
+    (testing "Jsonata's flattening idea has odd consequences!"
+      (is (= [1 4] (run "[[1,2,3], 4].$[0][0][0][0]"))))
+
+    (testing "Jsonata quirk 1: you can't use literal 1 here, but you can set $=1.'"
+      (is (= 1 (run "($ := 1; $[0])"))))
+
+    (testing "Jsonata quirk 1: ToDo: Note that RADmapper doesn't mind."
+      (is (= 1 (run "1[0]"))))
+
+    ;; I think the weirdness of 2a/2b suggests that you don't do jsonata-flatten until the end (in bi/finish).
+    (testing "Jsonata quirk 2a: compare to 2b. Stop here, you merge results."
+      (is (= [11 22 33 44 55 66 77 88]
+             (run "[{'number' : [11, 22, 33, 44]}, {'number' : [55, 66, 77, 88]}].number"))))
+
+    (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
+      (is (= [44 88]
+             (run "[{'number' : [11, 22, 33, 44]}, {'number' : [55, 66, 77, 88]}].number[3]"))))
+
+    (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
+      (is (= [1] (run "{'numbers' : [[1], 2, 3]}.numbers[0]"))))
+
+    (testing "Jsonata quirk 3: Note that it doesn't flatten to singleton here."
+      (is (= [1] (run "{'numbers' : [[1], 2, 3]}.numbers[0]")))) ; Same as above; this one mentions quirk.
 
     (testing "simple aref"
-      (is (= "c"(run "( $ := {'letter' : ['a', 'b', 'c', 'd']}; letter[2] )"))))
+      (is (= 33 (run "{'number' : [11, 22, 33, 44]}.number[2]"))))
+
+    (testing "simple filter"
+      (is (= "b" (run "( $ := {'letter' : ['a', 'b', 'c', 'd']}; letter[$ = 'b'] )"))))
 
     (testing "simple filter (2)"
       (is (= [{"x" 2} {"x" 2}]
@@ -59,7 +92,11 @@
       (is (= 3 (run "$reduce([3], function($i, $j){$i + $j})"))))
 
     (testing "reduce on one arg and an initial value"
-      (is (= 5 (run "$reduce([3], function($i, $j){$i + $j}, 2)"))))))
+      (is (= 5 (run "$reduce([3], function($i, $j){$i + $j}, 2)"))))
+
+    ;; ToDo: Not a high priority, I think. The problem is is in parsing, I suppose.
+    #_(testing "That you can return functions for built-ins"
+        (is (= [bi/$sum bi/$sum] (run "[1,2].$sum"))))))
 
 (deftest code-block-evaluations true
   (testing "Code block:"
@@ -192,6 +229,13 @@
                  Phone[type = 'mobile'] )"
                     :rewrite? true)
       rad-mapper.devl.devl-util/nicer))
+
+(defn tryme2 []
+  (bi/finish
+   (let [_x1 (bi/set-context! 1)]
+     (bi/apply-filter|aref
+      (bi/step-> (bi/deref$) (bi/deref$))
+      (fn [_x1] 0)))))
 
 (defn tryme3 []
   (bi/finish

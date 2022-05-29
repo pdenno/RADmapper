@@ -92,8 +92,6 @@
 
 (defmulti rewrite-meth #'rewrite-dispatch)
 
-(def special-var? {:$ 'bi/$, :$$ 'bi/$$, :$$$ 'bi/$$$})
-
 (defn rewrite [obj & keys]
   (cond (map? obj)                  (rewrite-meth (:_type obj) obj keys)
         (seq? obj)                  (map  rewrite obj)
@@ -138,7 +136,7 @@
 
 (defrewrite :JaJvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
-        `(deref bi/$)
+        `(bi/deref$)
         (and (:special? m) (= "$$" (:jvar-name m)))
         `(deref bi/$$)
         :else (-> m :jvar-name symbol)))
@@ -160,37 +158,6 @@
   (if in-enforce? ; b-set is an argument passed into the enforce function.
     `(~'bi/get-from-b-set b-set ~(-> m :qvar-name keyword))
     (-> m :qvar-name symbol)))
-
-;;; ToDo: Is this always called inside a bi/step->.
-;;; The rewritten form assumes so.
-#_(defrewrite :apply-map-fn [m]
-  `(fn [] ~(-> m :body rewrite)))
-
-#_(defrewrite :JaMapExp [m]
-  (reset-dgensym!)
-  (let [sym (dgensym!)
-        body `(fn [~sym] ~(-> m :exp rewrite (bi/sym-bi-access sym)))
-        operand (binding [inside-delim? true] (-> m :operand rewrite doall))]
-    `(~'bi/apply-map ~operand ~body)))
-
-;;; ToDo: This should follow the pattern of JaMapExp above.
-#_(defrewrite :JaFilterExp [m]
-  `(~'bi/filter-aref
-    ~(-> m :operand rewrite)
-    ~(-> m :exp first rewrite)))
-
-;;; ToDo: Currently this implements the body, a function. The operand is always implicit?
-;;;       If so, maybe remove it from the record.
-(defrewrite :JaFilterExp [m]
-  (reset-dgensym!)
-  (let [sym (dgensym!)
-        body (-> m :exp first rewrite)]
-    `(fn [~sym] ~(bi/sym-bi-access body sym))))
-
-;;; ToDo: This should follow the pattern of JaMapExp above. (and it maps)
-(defrewrite :JaReduceExp [m]
-  `(-> {}
-    ~@(map rewrite (:exp m))))
 
 (defrewrite :JaObjExp [m]
   `(-> {}
@@ -260,7 +227,7 @@
 
 ;;;----------------------------- Rewriting binary operations (the remainder of this file) -------------
 
-(declare rewrite-apply rewrite-bvec-as-sexp precedence rewrite-nav rewrite-apply)
+(declare rewrite-bvec-as-sexp precedence rewrite-nav)
 
 (defrewrite :JaBinOpSeq [m]
   (->> m
@@ -272,6 +239,16 @@
 (defrewrite :JaApplyMap
   [m]
   `(fn [~(dgensym!)] ~@(-> m :body rewrite)))
+
+(defrewrite :JaApplyFilter [m]
+  (reset-dgensym!)
+  (let [sym (dgensym!)
+        body (-> m :body rewrite)]
+    `(fn [~sym] ~(bi/sym-bi-access body sym))))
+
+(defrewrite :JaApplyReduce [m]
+  `(-> {}
+    ~@(map rewrite (:exp m))))
 
 (def spec-ops (-> par/binary-op? vals set)) ; ToDo: Not necessary?
 
@@ -306,7 +283,7 @@
    'bi/step->        {:assoc :left :val 150}
    'bi/apply-map     {:assoc :left :val 150}
    'bi/apply-filter|aref  {:assoc :left :val 150}
-   'bi/apply-reduce  {:assoc :left :val 150}})   
+   'bi/apply-reduce  {:assoc :left :val 150}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)

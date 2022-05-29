@@ -17,8 +17,8 @@
    [rad-mapper.util              :as util]))
 
 ;;; ToDo:
-;;;   1) defn* go away?
-;;;   2) Investigate Small Clojure Interpreter.
+;;;   1) Investigate Small Clojure Interpreter.
+;;;   2) Simplify use of singlize and jsonata-flatten.
 
 (def $$
   "The root context data, like in JSONata."
@@ -33,38 +33,52 @@
 
 ;;; ToDo: Write some documentation once you figure it out!
 ;;; So far, this is called by step->, but I think there may be other forms where it makes sense to do.
-(defn set-context!
-  [val]
-  (reset! $ val))
+(defn set-context! [val] (reset! $ val))
 
 (defn reset-env
   "Clean things up just prior to running user code."
   []
   (reset! $ nil))
 
-(s/def ::state-obj true)
+(s/def ::state-obj true) ; ToDo: Can it be useful?
 (s/def ::number number?)
+(s/def ::non-zero (s/and number? #(-> % zero? not)))
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
-;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
 (defn singlize [v] (if (vector? v) v (vector v)))
+#_(defn singlize [v] (vector v))
 
+(def passing-singleton?
+  "To weird to describe currently."
+  (atom false))
+
+(defn jsonata-singleton
+  "If the argument is a vector, return nil if empty, the elem it it contains only one,
+   otherwise the argument" ; ToDo: Do I really want nil when empty?
+  [obj]
+  (let [len (count obj)]
+    (cond (== 0 len) nil,
+          (== 1 len) (do (reset! passing-singleton? true) (first obj)) ;<================
+          :else obj)))
+
+;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
 (defn jsonata-flatten
   "See http://docs.jsonata.org/processing section 'Sequences'"
   [s]
   (if (vector? s)
-    (let [res (-> s flatten vec)
-          len (count res)]
-      (cond
-        (== 0 len) nil,
-        (== 1 len) (first res)
-        :else res))
+    (->> s flatten (remove nil?) vec jsonata-singleton)
     s))
 
 (defn finish
   "This is called last in user code to account for the difference between a.b and a.b.$"
   [obj]
   (jsonata-flatten obj))
+
+(defn deref$
+  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/step-> [[1 2 3] [1]] (deref bi/$))
+   making it advantageous to have a deref that sets the value and returns it."
+  ([] @$)
+  ([val] (set-context! val) val))
 
 ;;;========================= JSONata built-ins  =========================================
 (defn + "plus" [x y]
@@ -73,45 +87,20 @@
   (clojure.core/+ x y))
 
 (defn - "minus" [x y]
-  (if (number? x)
-    (clojure.core/- x y)
-    (throw (ex-info "The left side of the '-' operator must evaluate to a number." {:op1 x}))))
+  (s/assert ::number x)
+  (s/assert ::number y)
+  (clojure.core/- x y))
 
 (defn * "times"  [x y]
-    (if (number? x)
-    (clojure.core/* x y)
-    (throw (ex-info "The left side of the '*' operator must evaluate to a number." {:op1 x}))))
+  (s/assert ::number x)
+  (s/assert ::number y)
+  (clojure.core/* x y))
 
 (defn / "divide" [x y]
-  (if (number? x)
-    (double (clojure.core// x y))
-    (throw (ex-info "The left side of the '/' operator must evaluate to a number." {:op1 x}))))
-
-;;; ToDo: $contains(), $split(), $replace()
-;;; ToDo: flags on regular expressions. /regex/flags  (the only flags are 'i' and 'm' (case insenstive, multi-line)).
-;;; (re-find #"foo" "foovar")
-(defn $match
-  "Return a JSONata-like map for the result of regex mapping.
-   Pattern is a Clojure regex."
-  [s_ pattern]
-  (letfn [(match-aux [s]
-            (let [result (re-find pattern s)]
-              (cond (string? result) {"match" result
-                                      "index" (str/index-of s result)
-                                      "groups" []}
-                    (vector? result)
-                    (let [[success & groups] result]
-                      {"match" success
-                       "index" (str/index-of s success)
-                       "groups" (vec groups)}))))]
-    ;; ToDo: I think this should be the pattern of every defn* ???
-    (if (vector? s_)
-      (mapv match-aux s_)
-      (match-aux s_))))
-
-(defn $string
-  "Return the argument as a string."
-  [s_] (str s_))
+  (s/assert ::number x)
+  (s/assert ::number y)
+  (s/assert ::non-zero y)
+  (double (clojure.core// x y)))
 
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
@@ -128,18 +117,19 @@
   ([prop|fn] (dot-map @$ prop|fn))
   ([sobj prop|fn]
    (s/assert ::state-obj sobj)
-   (let [obj (if (vector? sobj) sobj (vector sobj))
-         res (jsonata-flatten
-              (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
-                    (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
-                                                        (filterv identity)),
-                    (fn? prop|fn)                  (->> (mapv prop|fn obj)
-                                                        (filterv identity)),
-                    :else (throw (ex-info "Expected function to map over" {:got prop|fn}))))]
-     res)))
+   (let [obj (singlize sobj)]
+     (->> (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
+                (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
+                                                    (remove nil?)
+                                                    vec),
+                (fn? prop|fn)                  (->> (mapv prop|fn obj)
+                                                    (remove nil?)
+                                                    vec)
+                :else (throw (ex-info "Expected function to map over" {:got prop|fn}))) ; ToDo: Probably remove this.
+          (remove nil?)
+          vec
+          jsonata-singleton))))
 
-;;; ToDo: Currently the only thing that can be inside step-> is dot-map.
-;;;       So is :advance? really necessary? I'm not using it here.
 (defmacro step->
   "Save the current context, walk through dot-map navigation, and restore
    current  context from what is saved. The topic provided is a state-obj."
@@ -157,7 +147,8 @@
     (->> obj
          singlize
          (mapv fn)
-         jsonata-flatten)))
+         (remove nil?)
+         vec)))
 
 (defn apply-filter|aref
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
@@ -169,53 +160,30 @@
         If the array contains objects, and the location path selects fields within these objects, then each object within the array
         will be queried for selection. [This rule has nothing to do with filtering!]"
   [obj pred|ix-fn]
-  (let [obj  (singlize obj)
-        prix (try (pred|ix-fn obj) (catch Exception _e nil))]
+  (let [prix (try (pred|ix-fn obj) (catch Exception _e nil))] ; On obj??? Don't I want the index here? (Or does it not matter?)
     (if (number? prix) ; Array behavior.
-      (let [ix  (-> prix Math/floor int) ; Really! I checked!
-            len (count obj)]
-        (if (or (and (pos? ix) (>= ix len))
-                (and (neg? ix) (> (Math/abs ix) len)))
-          nil ; Rule 2, above.
-          (if (neg? ix)
-            (nth obj (clojure.core/+ len ix))
-            (nth obj ix))))
+      (let [ix  (-> prix Math/floor int)] ; Really! I checked!
+        (letfn [(access [obj]
+                  (let [len (if (vector? obj) (count obj) 1)
+                        ix  (if (neg? ix) (clojure.core/+ len ix) ix)]
+                    (if (or (and (pos? ix) (>= ix len))
+                            (and (neg? ix) (> (Math/abs ix) len)))
+                      nil ; Rule 2, above.
+                      (if (vector? obj) (nth obj ix) obj))))]
+        (if @passing-singleton?
+          (access obj)
+          (mapv #(let [len (if (vector? %) (count %) 1)
+                       ix  (if (neg? ix) (clojure.core/+ len ix) ix)]
+                   (if (or (and (pos? ix) (>= ix len))
+                           (and (neg? ix) (> (Math/abs ix) len)))
+                     nil ; Rule 2, above.
+                     (if (vector? %) (nth % ix) %)))
+                (singlize obj)))))
       ;; Filter behavior.
-      (filterv pred|ix-fn obj))))
+      (->> obj
+           singlize
+           (filterv #(do (set-context! %) (pred|ix-fn %))))))) ; ToDo: Arg to function is not used.
 
-;;; ToDo: No eval was needed, but is making it a function possible?
-;;; Could the pred-ix thing be a function in the case of an aref?
-#_(defmacro apply-filter|aref
-  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
-    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
-        then it is treated as a predicate.
-    (2) Negative indexes count from the end of the array, for example, arr[-1] will select the last value, arr[-2] the second to last, etc.
-        If an index is specified that exceeds the size of the array, then nothing is selected.
-    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
-        If the array contains objects, and the location path selects fields within these objects, then each object within the array
-        will be queried for selection. [This rule has nothing to do with filtering!]"
-  [obj pred|ix]
-  (binding [$ (atom obj)] ; Because fn might start with single-arg dot-map.
-    `(let [fun#  (fn [_] ~pred|ix)
-           prix# (try (fun# (deref $)) (catch Exception _e# nil))
-           obj#  (singlize ~obj)]
-       (if (number? prix#) ; Array behavior.
-         (let [ix#  (-> prix# Math/floor int) ; Really! I checked!
-               len# (count obj#)]
-           (if (or (and (pos? ix#) (>= ix# len#))
-                   (and (neg? ix#) (> (Math/abs ix#) len#)))
-             nil ; Rule 2, above.
-             (if (neg? ix#)
-               (nth obj# (clojure.core/+ len# ix#))
-               (nth obj# ix#))))
-         ;; Filter behavior.
-         (filterv fun# obj#)))))
-
-;;; ToDo: Review value of meta in the following.
-;;;----------------- Higher Order Functions --------------------------------
-;;; These cannot access the context variable implicitly (by reduced arity).
-;;; Thus Account.Order.Product.ProductID.$map($, $string)
-;;; not  Account.Order.Product.ProductID.$map($string). Thus not defn*.
 (defn $map
   "Signature: $map(array, function)
 
@@ -341,41 +309,6 @@
                  (reduce-body-enforce coll func [])
                  (reduce-body-typical coll func))))
 
-(defn $single
-  "See http://docs.jsonata.org/higher-order-functions
-   Signature: $single(array, function)
-
-   Returns the one and only one value in the array parameter that satisfy the function predicate
-   (i.e. function returns Boolean true when passed the value). Throws an exception if the number
-   of matching values is not exactly one.
-
-   The function that is supplied as the second parameter must have the following signature:
-   function(value [, index [, array]])
-
-   Each value in the input array is passed in as the first parameter in the supplied function.
-   The index (position) of that value in the input array is passed in as the second parameter,
-   if specified. The whole input array is passed in as the third parameter, if specified."
-  [coll func]
-  (let [nvars  (-> func meta :params count)]
-    (cond
-      (== nvars 3)
-      (loop [c coll, i 0, r false]
-        (cond r r
-              (empty? c) false
-              :else (recur (rest c) (inc i) (func (first c) i coll))))
-      (== nvars 2)
-      (loop [c coll, i 0, r false]
-        (cond r r
-              (empty? c) false
-              :else (recur (rest c) (inc i) (func (first c) i))))
-      (== nvars 1)
-      (loop [c coll, r false]
-        (cond r r
-              (empty? c) false
-              :else (recur (rest c) (func (first c))))),
-      :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :params)})))))
-
 (defn strcat
   "The JSONata & operator."
   [& objs]
@@ -383,7 +316,6 @@
 
 ;;; rewrite.clj would have been a good place for this, but here we need it at runtime!
 ;;; ToDo: sym-bi-access IS executed for $map in rewrite. So can that for filter too?
-;;; N.B. filter-fn below calls eval.
 (defn sym-bi-access
   "When doing mapping such as '$.(A * B)' the expressions A and B
    were rewritten (bi/get-field 'A'). There needs to be a first argument
@@ -402,11 +334,6 @@
     (sba-aux form)))
 
 (def ^:dynamic *test-sym* "Used with sym-bi-access calls in testing" 'foo) ; <========== ToDo: Why can't this be nil?
-#_(defn filter-fn
-  "Return a function for form, making the sym-bi-access insertions."
-  [form]
-  (let [sym (or *test-sym* (gensym "x"))]
-    (eval `(fn [~sym] ~(sym-bi-access form sym)))))
 
 ;;;--------------------------- JSONata mostly-one-liners ------------------------------------
 
@@ -422,10 +349,33 @@
 ;;; $join
 ;;; $length
 ;;; $lowercase
+;;; $match
+(defn $match
+  "Return a JSONata-like map for the result of regex mapping.
+   Pattern is a Clojure regex."
+  [s_ pattern]
+  (letfn [(match-aux [s]
+            (let [result (re-find pattern s)]
+              (cond (string? result) {"match" result
+                                      "index" (str/index-of s result)
+                                      "groups" []}
+                    (vector? result)
+                    (let [[success & groups] result]
+                      {"match" success
+                       "index" (str/index-of s success)
+                       "groups" (vec groups)}))))]
+    ;; ToDo: I think this should be the pattern of every defn* ???
+    (if (vector? s_)
+      (mapv match-aux s_)
+      (match-aux s_))))
+
 ;;; $pad
 ;;; $replace
 ;;; $split
 ;;; $string
+(defn $string
+  "Return the argument as a string."
+  [s_] (str s_))
 ;;; $substring
 ;;; $substringAfter
 ;;; $substringBefore
@@ -492,8 +442,7 @@
   "Return the sum of the argument (a vector of numbers)."
   [obj v]
   (let [v (singlize v)]
-    (-> (mapv #(let [_ignore %] (apply clojure.core/+ v)) obj)
-        jsonata-flatten)))
+     (mapv #(let [_ignore %] (apply clojure.core/+ v)) obj)))
 
 ;;; $sqrt
 (defn $sqrt
@@ -536,7 +485,42 @@
 ;;;-------------- Higher (the higher not yet defined)
 ;;; $sift
 ;;; $single
+(defn $single
+  "See http://docs.jsonata.org/higher-order-functions
+   Signature: $single(array, function)
 
+   Returns the one and only one value in the array parameter that satisfy the function predicate
+   (i.e. function returns Boolean true when passed the value). Throws an exception if the number
+   of matching values is not exactly one.
+
+   The function that is supplied as the second parameter must have the following signature:
+   function(value [, index [, array]])
+
+   Each value in the input array is passed in as the first parameter in the supplied function.
+   The index (position) of that value in the input array is passed in as the second parameter,
+   if specified. The whole input array is passed in as the third parameter, if specified."
+  [coll func]
+  (let [nvars  (-> func meta :params count)]
+    (cond
+      (== nvars 3)
+      (loop [c coll, i 0, r false]
+        (cond r r
+              (empty? c) false
+              :else (recur (rest c) (inc i) (func (first c) i coll))))
+      (== nvars 2)
+      (loop [c coll, i 0, r false]
+        (cond r r
+              (empty? c) false
+              :else (recur (rest c) (inc i) (func (first c) i))))
+      (== nvars 1)
+      (loop [c coll, r false]
+        (cond r r
+              (empty? c) false
+              :else (recur (rest c) (func (first c))))),
+      :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
+                            {:vars (-> func meta :params)})))))
+
+;;;==========================================================================
 ;;;=================== Non-JSONata functions ================================
 (defn $readFile
   "Read a file of JSON or XML, creating a map."
@@ -596,7 +580,6 @@
                    (transpose-sheet raw)
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
-
 
 ;;;============================= Mapping Context, query, enforce ======================
 
