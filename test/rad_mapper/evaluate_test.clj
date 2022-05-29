@@ -2,6 +2,7 @@
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
    [clojure.test        :refer  [deftest is testing]]
+   [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]))
 
 (defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
@@ -15,7 +16,7 @@
 
 (deftest small-things
   (testing "All the, small things (execute):"
-    
+
     (testing "simple access of $"
       (is (= [1 2 3] (run "($ := [{'a' : 1}, {'a' : 2}, {'a' : 3}]; a)"))))
 
@@ -24,6 +25,20 @@
 
     (testing "simple navigation, more efficiently"
       (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.(c +f) )"))))
+
+    (testing "simple filter"
+      (is (= "b" (run "( $ := {'letter' : ['a', 'b', 'c', 'd']}; letter[$ = 'b'] )"))))
+
+    (testing "simple aref"
+      (is (= "c"(run "( $ := {'letter' : ['a', 'b', 'c', 'd']}; letter[2] )"))))
+
+    (testing "simple filter (2)"
+      (is (= [{"x" 2} {"x" 2}]
+             (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].num[x = 2]"))))
+
+    (testing "simple filter, needs thought"
+      (is (= [[false] [true] [false]]
+             (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]"))))
 
     (testing "use of $match (1)"
       (is (= {"match" "foo", "index" 2, "groups" []}  (run "$match(\"bbfoovar\", /foo/)"))))
@@ -61,15 +76,15 @@
     (testing "filter 'delimited expressions."
       (is (= [{"type" "mobile", "num" "555-123-4567"} {"type" "mobile", "num" "555-333-4444"}]
              (run "($ := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}}
-                                                    {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}}
-                                                    {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
-                                             Phone[type = 'mobile'] )"))))
+                          {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}}
+                          {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
+                      Phone[type = 'mobile'] )"))))
 
     (testing "map 'delimited expressions'."
       (is (= [100 200]
              (run "($ := [{'Product' : {'price' : 50, 'quantity' : 2}}
-                                                    {'Product' : {'price' : 50, 'quantity' : 4}}];
-                                                  Product.(price * quantity) )"))))))
+                          {'Product' : {'price' : 50, 'quantity' : 4}}];
+                    Product.(price * quantity) )"))))))
 (deftest why
   (testing "Why:"
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
@@ -168,3 +183,29 @@
 (deftest context
   (testing "Context management:"
     (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)")))))
+
+(defn tryme []
+  (-> (rew/rewrite* :ptag/exp
+                    "($ := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}}
+                      {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}}
+                      {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
+                 Phone[type = 'mobile'] )"
+                    :rewrite? true)
+      rad-mapper.devl.devl-util/nicer))
+
+(defn tryme3 []
+  (bi/finish
+   (let [_x1 (bi/set-context! (-> {} (assoc "letter" ["a" "b" "c" "d"])))]
+     (let* [fun  (fn [_x1] (= _x1 "b"))
+            prix (try (fun bi/$) (catch java.lang.Exception _e__42631__auto__ nil))
+            obj  (bi/singlize (bi/dot-map "letter"))]
+       (if (number? prix)
+         (let [ix (-> prix Math/floor int)
+               len (count obj)]
+           (if (or (and (pos? ix) (>= ix len))
+                   (and (neg? ix) (> (abs ix) len)))
+             nil
+             (if (neg? ix)
+               (nth obj (+ len ix))
+               (nth obj ix))))
+         (filterv fun obj))))))

@@ -15,7 +15,7 @@
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
 (def locals (atom [{}]))
-(declare map-simplify preprocess-bin-ops remove-nils rewrite make-runnable)
+(declare map-simplify rewrite rewrite-nav)
 (def diag (atom nil))
 
 (defn rewrite*
@@ -73,6 +73,11 @@
         (set? type) (-> obj :_type type)
         (map? type) (-> obj :_type type)))
 
+(defn remove-nils
+  "Remove map values that are nil."
+  [m]
+  (reduce-kv (fn [m k v] (if (= nil v) m (assoc m k v))) {} m))
+
 (defn map-simplify
   "Recursively traverse the map structures changing records to maps,
    removing nil map values, and adding :_type value named after the record."
@@ -82,11 +87,6 @@
                         remove-nils),
         (coll? m) (mapv map-simplify m),
         :else m))
-
-(defn remove-nils
-  "Remove map values that are nil."
-  [m]
-  (reduce-kv (fn [m k v] (if (= nil v) m (assoc m k v))) {} m))
 
 (defn rewrite-dispatch [tag _ & _] tag)
 
@@ -113,17 +113,8 @@
   `(~'bi/finish
     (~@(->> m
             :top
-            #_preprocess-bin-ops
             rewrite
             rewrite-nav))))
-
-#_(defrewrite :toplevel [m]
-    (let [typ (-> m :top :_type)]
-      (cond (= typ :JaCodeBlock )
-            `(~'bi/finish (~@(->> m :top rewrite rewrite-nav))),
-            (= typ :JaBinOpSeq)
-            `(-> ~(->> m :top rewrite rewrite-nav) bi/finish)
-            :else (throw (ex-info "toplevel type" {:_type typ})))))
 
 ;;; ToDo: Return to the let-style implementation; assignments are expressions
 (defrewrite :JaCodeBlock [m]
@@ -137,19 +128,19 @@
 ;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JaJvarDecl [m]
   (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
-        `(~(dgensym!) (bi/initialize-context ~(-> m :init-val rewrite))),
+        `(~(dgensym!) (bi/set-context! ~(-> m :init-val rewrite))),
         ;; ToDo: Is setting $$ a legit user activity?
         (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
         `(~(dgensym!) (reset! bi/$$ ~(-> m :init-val rewrite))),
         :else
-        `(~(->> m :var :jvar-name)
+        `(~(->> m :var rewrite)
           ~(-> m :init-val rewrite))))
 
 (defrewrite :JaJvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
-        :sys/$
+        `(deref bi/$)
         (and (:special? m) (= "$$" (:jvar-name m)))
-        `(->  bi/$$ deref)
+        `(deref bi/$$)
         :else (-> m :jvar-name symbol)))
 
 (def ^:dynamic inside-delim?
@@ -183,10 +174,18 @@
     `(~'bi/apply-map ~operand ~body)))
 
 ;;; ToDo: This should follow the pattern of JaMapExp above.
-(defrewrite :JaFilterExp [m]
+#_(defrewrite :JaFilterExp [m]
   `(~'bi/filter-aref
     ~(-> m :operand rewrite)
     ~(-> m :exp first rewrite)))
+
+;;; ToDo: Currently this implements the body, a function. The operand is always implicit?
+;;;       If so, maybe remove it from the record.
+(defrewrite :JaFilterExp [m]
+  (reset-dgensym!)
+  (let [sym (dgensym!)
+        body (-> m :exp first rewrite)]
+    `(fn [~sym] ~(bi/sym-bi-access body sym))))
 
 ;;; ToDo: This should follow the pattern of JaMapExp above. (and it maps)
 (defrewrite :JaReduceExp [m]
@@ -287,25 +286,27 @@
 ;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 ;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
 (def op-precedence-tbl ; lower :val means binds tighter.
-  {:or           {:assoc :left :val 1000}
-   :and          {:assoc :left :val 900}
-   \<            {:assoc :none :val 800}
-   \>            {:assoc :none :val 800}
-   :<=           {:assoc :none :val 800}
-   :>=           {:assoc :none :val 800}
-   \=            {:assoc :none :val 800}
-   :!=           {:assoc :none :val 800}
-   :in           {:assoc :none :val 700}
-   :thread       {:assoc :left :val 700} ; ToDo guessing
-   'bi/&         {:assoc :left :val 400} ; ToDo guessing
-   'bi/+         {:assoc :left :val 400}
-   'bi/-         {:assoc :left :val 400}
-   :range        {:assoc :left :val 400} ; ToDo guessing
-   'bi/*         {:assoc :left :val 300}
-   'bi/%         {:assoc :left :val 300}
-   'bi//         {:assoc :left :val 300}
-   'bi/step->    {:assoc :left :val 150}
-   'bi/apply-map {:assoc :left :val 150}})
+  {:or               {:assoc :left :val 1000}
+   :and              {:assoc :left :val 900}
+   \<                {:assoc :none :val 800}
+   \>                {:assoc :none :val 800}
+   :<=               {:assoc :none :val 800}
+   :>=               {:assoc :none :val 800}
+   \=                {:assoc :none :val 800}
+   :!=               {:assoc :none :val 800}
+   :in               {:assoc :none :val 700}
+   :thread           {:assoc :left :val 700} ; ToDo guessing
+   'bi/&             {:assoc :left :val 400} ; ToDo guessing
+   'bi/+             {:assoc :left :val 400}
+   'bi/-             {:assoc :left :val 400}
+   :range            {:assoc :left :val 400} ; ToDo guessing
+   'bi/*             {:assoc :left :val 300}
+   'bi/%             {:assoc :left :val 300}
+   'bi//             {:assoc :left :val 300}
+   'bi/step->        {:assoc :left :val 150}
+   'bi/apply-map     {:assoc :left :val 150}
+   'bi/apply-filter|aref  {:assoc :left :val 150}
+   'bi/apply-reduce  {:assoc :left :val 150}})   
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)

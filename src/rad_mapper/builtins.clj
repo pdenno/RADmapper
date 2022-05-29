@@ -24,7 +24,7 @@
   "The root context data, like in JSONata."
   (atom nil))
 
-(def ^:dynamic current-context
+(def ^:dynamic $
   "In evaluating code, $ := ... or use of $ 'out of the blue' might occur.
    This is used to find the value of $ set by those means.
    It is only valid before the action starts; after that, only the threaded
@@ -33,23 +33,18 @@
 
 ;;; ToDo: Write some documentation once you figure it out!
 ;;; So far, this is called by step->, but I think there may be other forms where it makes sense to do.
-(defn initialize-context
+(defn set-context!
   [val]
-  (reset! current-context val))
+  (reset! $ val))
 
 (defn reset-env
   "Clean things up just prior to running user code."
   []
-  (reset! current-context nil))
+  (reset! $ nil))
 
 (s/def ::state-obj true)
 (s/def ::number number?)
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
-
-(defn finish
-  "This is called last in user code to account for the difference between a.b and a.b.$"
-  [obj]
-  (jsonata-flatten obj))
 
 ;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
 (defn singlize [v] (if (vector? v) v (vector v)))
@@ -65,6 +60,11 @@
         (== 1 len) (first res)
         :else res))
     s))
+
+(defn finish
+  "This is called last in user code to account for the difference between a.b and a.b.$"
+  [obj]
+  (jsonata-flatten obj))
 
 ;;;========================= JSONata built-ins  =========================================
 (defn + "plus" [x y]
@@ -125,7 +125,7 @@
   "Perform the mapping activity of the 'a' in $.a, for example.
    This function is called with the state object. It returns the
    state object with :sys/$ updated."
-  ([prop|fn] (dot-map @current-context prop|fn))
+  ([prop|fn] (dot-map @$ prop|fn))
   ([sobj prop|fn]
    (s/assert ::state-obj sobj)
    (let [obj (if (vector? sobj) sobj (vector sobj))
@@ -139,25 +139,77 @@
      res)))
 
 ;;; ToDo: Currently the only thing that can be inside step-> is dot-map.
-;;;       So is :advance? really necessary? I'm not using it here. 
+;;;       So is :advance? really necessary? I'm not using it here.
 (defmacro step->
-  "Save the current context, walk through dot-map navigation, and restore 
+  "Save the current context, walk through dot-map navigation, and restore
    current  context from what is saved. The topic provided is a state-obj."
   [topic & body]
   `(let [top# ~topic
-         pre-excursion# @current-context]
+         pre-excursion# @$]
      (let [res# (-> top# ~@body)]
-       (reset! current-context pre-excursion#)
+       (reset! $ pre-excursion#)
        res#)))
 
 (defn apply-map
   "mapv the argument object over the argument fn."
   [obj fn]
-  (binding [current-context (atom obj)] ; Because fn might start with single-arg dot-map.
+  (binding [$ (atom obj)] ; Because fn might start with single-arg dot-map.
     (->> obj
          singlize
          (mapv fn)
          jsonata-flatten)))
+
+(defn apply-filter|aref
+  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
+    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
+        then it is treated as a predicate.
+    (2) Negative indexes count from the end of the array, for example, arr[-1] will select the last value, arr[-2] the second to last, etc.
+        If an index is specified that exceeds the size of the array, then nothing is selected.
+    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
+        If the array contains objects, and the location path selects fields within these objects, then each object within the array
+        will be queried for selection. [This rule has nothing to do with filtering!]"
+  [obj pred|ix-fn]
+  (let [obj  (singlize obj)
+        prix (try (pred|ix-fn obj) (catch Exception _e nil))]
+    (if (number? prix) ; Array behavior.
+      (let [ix  (-> prix Math/floor int) ; Really! I checked!
+            len (count obj)]
+        (if (or (and (pos? ix) (>= ix len))
+                (and (neg? ix) (> (Math/abs ix) len)))
+          nil ; Rule 2, above.
+          (if (neg? ix)
+            (nth obj (clojure.core/+ len ix))
+            (nth obj ix))))
+      ;; Filter behavior.
+      (filterv pred|ix-fn obj))))
+
+;;; ToDo: No eval was needed, but is making it a function possible?
+;;; Could the pred-ix thing be a function in the case of an aref?
+#_(defmacro apply-filter|aref
+  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
+    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
+        then it is treated as a predicate.
+    (2) Negative indexes count from the end of the array, for example, arr[-1] will select the last value, arr[-2] the second to last, etc.
+        If an index is specified that exceeds the size of the array, then nothing is selected.
+    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
+        If the array contains objects, and the location path selects fields within these objects, then each object within the array
+        will be queried for selection. [This rule has nothing to do with filtering!]"
+  [obj pred|ix]
+  (binding [$ (atom obj)] ; Because fn might start with single-arg dot-map.
+    `(let [fun#  (fn [_] ~pred|ix)
+           prix# (try (fun# (deref $)) (catch Exception _e# nil))
+           obj#  (singlize ~obj)]
+       (if (number? prix#) ; Array behavior.
+         (let [ix#  (-> prix# Math/floor int) ; Really! I checked!
+               len# (count obj#)]
+           (if (or (and (pos? ix#) (>= ix# len#))
+                   (and (neg? ix#) (> (Math/abs ix#) len#)))
+             nil ; Rule 2, above.
+             (if (neg? ix#)
+               (nth obj# (clojure.core/+ len# ix#))
+               (nth obj# ix#))))
+         ;; Filter behavior.
+         (filterv fun# obj#)))))
 
 ;;; ToDo: Review value of meta in the following.
 ;;;----------------- Higher Order Functions --------------------------------
@@ -342,47 +394,19 @@
   (letfn [(sba-aux [form]
             (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
                   (vector? form) (mapv sba-aux form)
-                  (seq? form) (if (and (= (first form) 'bi/dot-map) (== 2 (count form)))
-                                (list 'bi/dot-map sym (second form))
-                                (map sba-aux form))
+                  (seq? form) (cond (and (= (first form) 'bi/dot-map) (== 2 (count form)))
+                                    (list 'bi/dot-map sym (second form))
+                                    (= form '(clojure.core/deref rad-mapper.builtins/$)) sym ; 2022-05-29, added.
+                                    :else (map sba-aux form))
                   :else form))]
     (sba-aux form)))
 
 (def ^:dynamic *test-sym* "Used with sym-bi-access calls in testing" 'foo) ; <========== ToDo: Why can't this be nil?
-(defn filter-fn
+#_(defn filter-fn
   "Return a function for form, making the sym-bi-access insertions."
   [form]
   (let [sym (or *test-sym* (gensym "x"))]
     (eval `(fn [~sym] ~(sym-bi-access form sym)))))
-
-;;; ToDo I don't think this is a candidate for defn. [<exp>] returns the value of <exp> (which in JSONata is same as a singleton array).
-(defmacro filter-aref
-  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
-    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
-        then it is treated as a predicate.
-    (2) Negative indexes count from the end of the array, for example, arr[-1] will select the last value, arr[-2] the second to last, etc.
-        If an index is specified that exceeds the size of the array, then nothing is selected.
-    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
-        If the array contains objects, and the location path selects fields within these objects, then each object within the array
-        will be queried for selection."
-  [obj pred|ix]
-  `(let [prix# (try ~pred|ix (catch Exception _e# nil))
-         obj# ~obj]
-     (if (number? prix#)
-       ;; Array behavior.
-       ;; Singletons are treated as values, AND values are treated as singletons!
-       (let [obj# (if (vector? obj#) obj# (vector obj#))
-             ix#  (-> prix# Math/floor int) ; Really! I checked!
-             len# (count obj#)]
-         ;; [:a :b :c :d][0] ==> :a ; [:a :b :c :d][-4] ==> :a.
-         (if (or (and (pos? ix#) (>= ix# len#))
-                 (and (neg? ix#) (> (Math/abs ix#) len#)))
-           nil ; Rule 2, above.
-           (if (neg? ix#)
-             (nth obj# (clojure.core/+ len# ix#))
-             (nth obj# ix#))))
-       ;; Filter behavior
-       (filterv (fn [arg#] arg# ~pred|ix) obj#))))
 
 ;;;--------------------------- JSONata mostly-one-liners ------------------------------------
 
