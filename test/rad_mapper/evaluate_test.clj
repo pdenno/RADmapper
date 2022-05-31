@@ -3,7 +3,8 @@
   (:require
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins :as bi]
-   [rad-mapper.rewrite  :as rew]))
+   [rad-mapper.rewrite  :as rew]
+   [rad-mapper.devl.devl-util :refer [nicer]]))
 
 (defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
   (let [execute? (not (or simplify? rewrite?))]
@@ -26,6 +27,9 @@
     (testing "simple navigation, more efficiently"
       (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.(c +f) )"))))
 
+    (testing "navigation with aref"
+      (is (= 525 (run "( $ := {'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500};  a + b.e * c[1] + d )"))))
+
     (testing "jsonata flatten (1)"
       (is (= [1 2 3 4] (run "[[1,2,3], [4]].$"))))
 
@@ -45,21 +49,23 @@
       (is (= 1 (run "1[0]"))))
 
     ;; I think the weirdness of 2a/2b suggests that you don't do jsonata-flatten until the end (in bi/finish).
-    (testing "Jsonata quirk 2a: compare to 2b. Stop here, you merge results."
-      (is (= [11 22 33 44 55 66 77 88]
-             (run "[{'number' : [11, 22, 33, 44]}, {'number' : [55, 66, 77, 88]}].number"))))
+    (testing "Jsonata quirk 2a: compare to 2b. If you stop here, you merge results."
+      (is (= [1 2 3 4 5 6]
+             (run "[{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums"))))
 
     (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
-      (is (= [44 88]
-             (run "[{'number' : [11, 22, 33, 44]}, {'number' : [55, 66, 77, 88]}].number[3]"))))
+      (is (= [3 6]
+             (run "[{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums[2]"))))
 
+    ;; By the way, Jsonata allows single quotes in the expression; JSON doesn't allow them in the data.
     (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
-      (is (= [1] (run "{'numbers' : [[1], 2, 3]}.numbers[0]"))))
+      (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]"))))
 
     (testing "Jsonata quirk 3: Note that it doesn't flatten to singleton here."
-      (is (= [1] (run "{'numbers' : [[1], 2, 3]}.numbers[0]")))) ; Same as above; this one mentions quirk.
+      (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]")))) ; Same as above; this one mentions quirk.
 
-    (testing "simple aref"
+    ;; bi/passing-singleton? fixes (only) this one.
+    (testing "simple aref" 
       (is (= 33 (run "{'number' : [11, 22, 33, 44]}.number[2]"))))
 
     (testing "simple filter"
@@ -70,6 +76,10 @@
              (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].num[x = 2]"))))
 
     (testing "simple filter, needs thought"
+      (is (= {"num" {"x" 2}}
+             (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}][num.x = 2]"))))
+
+    #_(testing "simple filter, needs thought"
       (is (= [[false] [true] [false]]
              (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]"))))
 
@@ -233,7 +243,7 @@
 (defn tryme2 []
   (bi/finish
    (let [_x1 (bi/set-context! 1)]
-     (bi/apply-filter|aref
+     (bi/apply-filter
       (bi/step-> (bi/deref$) (bi/deref$))
       (fn [_x1] 0)))))
 
@@ -253,3 +263,54 @@
                (nth obj (+ len ix))
                (nth obj ix))))
          (filterv fun obj))))))
+
+(defn tryme4 []
+  (bi/finish
+   (bi/step->
+    [[1 2 3] 4]
+    (bi/apply-filter (bi/deref$) (fn [_x1] 1)))))
+
+(defn tryme5 []
+  (bi/finish
+   (bi/step->
+    [[1 2 3] 4]
+    (bi/apply-filter (fn [_x1] 0))
+    (bi/apply-filter (fn [_x1] 0))
+    (bi/apply-filter (fn [_x1] 0))
+    (bi/apply-filter (fn [_x1] 0)))))
+
+(defn tryme6 []
+  (bi/finish
+   (let
+       [_x1
+        (bi/set-context!
+         (->
+          {}
+          (assoc "a" 5)
+          (assoc "b" (-> {} (assoc "e" 2)))
+          (assoc "c" [0 10])
+          (assoc "d" 500)))]
+     (bi/+
+      (bi/+
+       (bi/dot-map "a")
+       (bi/*
+        (bi/step-> (bi/dot-map "b") (bi/dot-map "e"))
+        (bi/apply-filter (bi/dot-map "c") (fn [_x1] 1))))
+      (bi/dot-map "d")))))
+
+;;; [{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]
+;;; [{"num" : {"x" : 1}}, {"num" : {"x" : 2}}, {"num" : {"x" : 3}}]
+(defn tryme7 []
+  (bi/finish
+   (bi/step->
+    [(-> {} (assoc "num" (-> {} (assoc "x" 1))))
+     (-> {} (assoc "num" (-> {} (assoc "x" 2))))
+     (-> {} (assoc "num" (-> {} (assoc "x" 3))))]
+    (bi/apply-filter
+     nil
+     (fn
+       [_x1]
+       (println "_x1 =" _x1)
+       (bi/step-> _x1 (bi/dot-map "num") (= (bi/dot-map "x") 2)))))))
+
+

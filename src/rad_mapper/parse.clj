@@ -68,12 +68,12 @@
 (def builtin-un-op #{\+, \- :not})
 
 ;;; Binary operators.
-(def numeric-operators '{\% bi/%, \* bi/*, \+ bi/+, \- bi/-, \/ bi//}) ; :range is not one of these.
+(def numeric-operators    '{\% bi/%, \* bi/*, \+ bi/+, \- bi/-, \/ bi//}) ; :range is not one of these.
 (def comparison-operators '{:<= <=, :>= >=, :!= not=, \< <, \= =, \> >, "in" bi/in})
-(def boolean-operators '{:and and :or or})
-(def string-operators '{\& bi/&})
-(def other-operators '{\. bi/step->, :thread bi/thread :apply-map bi/apply-map :apply-filter bi/apply-filter|aref
-                       :apply-reduce bi/apply-reduce})
+(def boolean-operators    '{:and and :or or})
+(def string-operators     '{\& bi/&})
+(def other-operators      '{\. bi/step->, :thread bi/thread :apply-map bi/apply-map :apply-filter bi/apply-filter
+                           :apply-reduce bi/apply-reduce})
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
@@ -611,7 +611,7 @@
 
 (defrecord JaBinOpSeq [seq])
 ;;;=============================== Grammar ===============================
-;;; <exp> ::= <base-exp> ( ( <bin-op> <base-exp> )+ | '?' <conditional-tail> ) ?
+;;; <exp> ::= <base-exp> (  <bin-op-continuation>  | '?' <conditional-tail> ) ?
 (defparse :ptag/exp
   [ps]
   (let [base-ps (-> (parse :ptag/base-exp ps) (store :operand-1) (look 1))
@@ -652,6 +652,7 @@
                       (parse :ptag/base-exp ?ps :operand-2? true)
                       (look ?ps 1)))]
         (recur p (-> oseq (conj cont?) (conj (:result p)))))))))
+
 
 ;;; ToDo: qvar here might make it permissive of nonsense. Needs thought.
 ;;; <base-exp> ::= <delimited-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <field> | <jvar> | <qvar>

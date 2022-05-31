@@ -41,7 +41,7 @@
             (if rewrite?
               (->> (if skip-top? ?r {:_type :toplevel :top ?r}) rewrite)
               ?r)
-            (if execute?  (ev/user-eval ?r :verbose? verbose?) ?r)
+            (if execute? (ev/user-eval ?r :verbose? verbose?) ?r)
             (if (:rewrite-error? ?r)
               (throw (ex-info "Error in rewriting" {:result (with-out-str (pprint ?r))}))
               ?r))
@@ -229,22 +229,50 @@
 
 (declare rewrite-bvec-as-sexp precedence rewrite-nav)
 
+;;; Filter path elements (at least(?) -- maybe map and reduce too) consist of a field path element
+;;; followed by the body enclosed in the delimiters; the two are not separate path elements.
+;;; compress-filter rewrites a bin-op-seq to deal with this.  Do this will remove :apply-filter as
+;;; an operator, to be replaced by a sexp that handles both the last dot-map and the filter/aref.
+(defn compress-filter
+  "Replace a sequence such as
+  [... {:_type :JaField, :field-name 'c'}... :apply-filter {:_type :JaApplyFilter, :body 2}...]
+  with [... {:type :JaApplyFilter :operand {:_type :JaField, :field-name 'c'} :body 2}...]."
+  [bin-op-seq]
+  (loop [sequ (seq bin-op-seq)
+         res []]
+    (cond (empty? sequ) res,
+          (not= :apply-filter (second sequ))
+          (recur (rest sequ) (conj res (first sequ))),
+          :else
+          (recur (drop 3 sequ)
+                 (conj res (assoc (nth sequ 2) :operand (first sequ)))))))
+
 (defrewrite :JaBinOpSeq [m]
   (->> m
-      :seq
-      rewrite-bvec-as-sexp ; Then you have s-expressions.
-      rewrite-nav))        ; A simplification on sexps, compressing out bi/step->
+       :seq
+       compress-filter
+       rewrite-bvec-as-sexp ; This orders element and rewrites them to s-expressions.
+       rewrite-nav))        ; A simplification on sexps, compressing out bi/step->
 
 ;;; ToDo: Could sub in var?
 (defrewrite :JaApplyMap
   [m]
   `(fn [~(dgensym!)] ~@(-> m :body rewrite)))
 
-(defrewrite :JaApplyFilter [m]
+#_(defrewrite :JaApplyFilter [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
     `(fn [~sym] ~(bi/sym-bi-access body sym))))
+
+(defrewrite :JaApplyFilter [m]
+  (reset-dgensym!)
+  (let [sym (dgensym!)
+        body (-> m :body rewrite)]
+    `(bi/apply-filter
+      ~(-> m :operand rewrite) ; This is typically a field, rewritten to a dot-map.
+      (fn [~sym] (bi/with-context ~sym ~body))
+     #_(fn [~sym] ~(bi/sym-bi-access body sym)))))
 
 (defrewrite :JaApplyReduce [m]
   `(-> {}
@@ -260,36 +288,6 @@
 (s/def ::operators (s/coll-of ::info-op :kind vector?))
 (s/def ::info (s/keys :req-un [::args ::operators]))
 
-;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
-;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
-(def op-precedence-tbl ; lower :val means binds tighter.
-  {:or               {:assoc :left :val 1000}
-   :and              {:assoc :left :val 900}
-   \<                {:assoc :none :val 800}
-   \>                {:assoc :none :val 800}
-   :<=               {:assoc :none :val 800}
-   :>=               {:assoc :none :val 800}
-   \=                {:assoc :none :val 800}
-   :!=               {:assoc :none :val 800}
-   :in               {:assoc :none :val 700}
-   :thread           {:assoc :left :val 700} ; ToDo guessing
-   'bi/&             {:assoc :left :val 400} ; ToDo guessing
-   'bi/+             {:assoc :left :val 400}
-   'bi/-             {:assoc :left :val 400}
-   :range            {:assoc :left :val 400} ; ToDo guessing
-   'bi/*             {:assoc :left :val 300}
-   'bi/%             {:assoc :left :val 300}
-   'bi//             {:assoc :left :val 300}
-   'bi/step->        {:assoc :left :val 150}
-   'bi/apply-map     {:assoc :left :val 150}
-   'bi/apply-filter|aref  {:assoc :left :val 150}
-   'bi/apply-reduce  {:assoc :left :val 150}})
-
-(defn precedence [op]
-  (if (contains? op-precedence-tbl op)
-    (-> op op-precedence-tbl :val)
-    100))
-
 (defn bvec2info
   "Using the bin-op-vec (at any level of processing), create a map containing information about it."
   [bvec]
@@ -300,7 +298,7 @@
          (-> res
              (update :operators #(conj % {:pos k
                                           :op op
-                                          :prec (-> op op-precedence-tbl :val)}))
+                                          :prec (precedence op)}))
            (update :args #(conj % :$op$))))
        (update res :args #(conj % (rewrite v)))))
    {:operators [] :args []}
@@ -353,7 +351,7 @@
   "Process the :seq of a JaBinOpSeq a sexp conforming to
     (1) precedence rules (which are only a concern in languages that have C-language-like syntax).
     (2) lisp-like operator before operand ordering (which is a concern for all).
-  The result can have embedded un-rewritten stuff in it. Will hit that with be rewritten later."
+  The result can have embedded un-rewritten stuff in it; that will be rewritten later."
   [bvec]
   (let [info (bvec2info bvec)]
     (s/assert ::info info)
@@ -404,3 +402,35 @@
         (if (-> progress? deref not) exp
             (do (reset! progress? false)
                 (recur (one-step exp))))))))
+
+;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
+;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
+(def op-precedence-tbl ; lower :val means binds tighter.
+  {:or               {:path? false :assoc :left :val 1000}
+   :and              {:path? true  :assoc :left :val 900}
+   '<                {:path? false :assoc :none :val 800}
+   '>                {:path? false :assoc :none :val 800}
+   :<=               {:path? false :assoc :none :val 800}
+   :>=               {:path? false :assoc :none :val 800}
+   '=                {:path? false :assoc :none :val 800}
+   :!=               {:path? false :assoc :none :val 800}
+   :in               {:path? false :assoc :none :val 700}
+   'bi/thread        {:path? true  :assoc :left :val 700} ; ToDo guessing
+   'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
+   'bi/+             {:path? false :assoc :left :val 400}
+   'bi/-             {:path? false :assoc :left :val 400}
+   :range            {:path? false :assoc :left :val 400} ; ToDo guessing
+   'bi/*             {:path? false :assoc :left :val 300}
+   'bi/%             {:path? false :assoc :left :val 300}
+   'bi//             {:path? false :assoc :left :val 300}
+   'bi/step->        {:path? true  :assoc :left :val 150}
+   'bi/apply-map     {:path? true  :assoc :left :val 150}
+   'bi/apply-filter  {:path? true  :assoc :left :val 100}
+   'bi/apply-reduce  {:path? true  :assoc :left :val 150}})
+
+(defn precedence [op]
+  (if (contains? op-precedence-tbl op)
+    (-> op op-precedence-tbl :val)
+    (do (println "****** No precedence:" op)
+        (reset! diag op)
+        100)))

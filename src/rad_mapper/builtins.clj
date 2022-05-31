@@ -31,14 +31,15 @@
    state object matters."
   (atom nil))
 
+;;; ToDo: Swap atom value or create new atom as I'm doing now?
+(defmacro with-context
+  "Dynamically bind $ to the value provided."
+  [val & body]
+  `(binding [$ (atom ~val)] ~@body))
+
 ;;; ToDo: Write some documentation once you figure it out!
 ;;; So far, this is called by step->, but I think there may be other forms where it makes sense to do.
 (defn set-context! [val] (reset! $ val))
-
-(defn reset-env
-  "Clean things up just prior to running user code."
-  []
-  (reset! $ nil))
 
 (s/def ::state-obj true) ; ToDo: Can it be useful?
 (s/def ::number number?)
@@ -46,31 +47,53 @@
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
 (defn singlize [v] (if (vector? v) v (vector v)))
-#_(defn singlize [v] (vector v))
 
 (def passing-singleton?
-  "To weird to describe currently."
+  "Too weird to describe currently."
   (atom false))
 
+(defn reset-env
+  "Clean things up just prior to running user code."
+  []
+  (reset! $ nil)
+  (reset! passing-singleton? false))
+
+;;; Currently jsonata-singleton is only called in dot-map and jsonata-flatten.
+;;; Its purpose is to deal with the quirkyness of
+;;;    * this [{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums    returning [1 2 3 4 5 6], versus
+;;;    * this [{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums[2] returning [3 6], versus
+;;;    * this {'number' : [11, 22, 33, 44]}.number[2]              returning 33.
+;;;
+;;; I might also want to use it to help with how
+;;;    * this {'nums' : [[1], 2, 3]}.nums[0]                       returns [1], not 1.
+;;; That might involve using it in jsonata-flatten.
+;;;
+;;; But I'm guessing, for the most part! Suddenly the language doesn't look so well thought out.
+
+;;; ToDo: It has a side-effect. Do I need to go back to a context object with :sys/$?
 (defn jsonata-singleton
-  "If the argument is a vector, return nil if empty, the elem it it contains only one,
-   otherwise the argument" ; ToDo: Do I really want nil when empty?
+  "If the argument is a vector:
+     * return nil if empty,
+     * the elem it it contains only one, or
+     * the argument, otherwise."
   [obj]
   (let [len (count obj)]
-    (cond (== 0 len) nil,
-          (== 1 len) (do (reset! passing-singleton? true) (first obj)) ;<================
-          :else obj)))
+    (cond (== 0 len) nil, ; ToDo: Do I really want to return nil?
+          (== 1 len) (do (reset! passing-singleton? true)  (first obj)) ;<=== side-effect!
+          :else      (do (reset! passing-singleton? false) obj))))      ;<=== side-effect!
 
-;;; To accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
+;;; Currently this is only called by finish.
+;;; That might be good, since it is an information-losing operation!
 (defn jsonata-flatten
-  "See http://docs.jsonata.org/processing section 'Sequences'"
+  "Accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
+   See http://docs.jsonata.org/processing section 'Sequences'"
   [s]
   (if (vector? s)
     (->> s flatten (remove nil?) vec jsonata-singleton)
     s))
 
 (defn finish
-  "This is called last in user code to account for the difference between a.b and a.b.$"
+  "This is called last in user code to account for the difference between a.b and a.b.$" ; <====== Explain
   [obj]
   (jsonata-flatten obj))
 
@@ -131,13 +154,23 @@
           jsonata-singleton))))
 
 (defmacro step->
-  "Save the current context, walk through dot-map navigation, and restore
+  "Save the current context, walk through the body navigation, and restore
+   current  context from what is saved. The topic provided is a state-obj."
+  [topic & body]
+  `(let [top# ~topic]
+     (with-context top#
+       (let [res# (-> top# ~@(interpose '(rad-mapper.builtins/set-context!) body))]
+         res#))))
+
+#_(defmacro step->
+  "Save the current context, walk through the body navigation, and restore
    current  context from what is saved. The topic provided is a state-obj."
   [topic & body]
   `(let [top# ~topic
          pre-excursion# @$]
-     (let [res# (-> top# ~@body)]
-       (reset! $ pre-excursion#)
+     (set-context! top#)
+     (let [res# (-> top# ~@(interpose '(rad-mapper.builtins/set-context!) body))]
+       (set-context! pre-excursion#)
        res#)))
 
 (defn apply-map
@@ -150,7 +183,7 @@
          (remove nil?)
          vec)))
 
-(defn apply-filter|aref
+(defn apply-filter
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
     (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
         then it is treated as a predicate.
@@ -159,30 +192,26 @@
     (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
         If the array contains objects, and the location path selects fields within these objects, then each object within the array
         will be queried for selection. [This rule has nothing to do with filtering!]"
-  [obj pred|ix-fn]
-  (let [prix (try (pred|ix-fn obj) (catch Exception _e nil))] ; On obj??? Don't I want the index here? (Or does it not matter?)
-    (if (number? prix) ; Array behavior.
-      (let [ix  (-> prix Math/floor int)] ; Really! I checked!
-        (letfn [(access [obj]
-                  (let [len (if (vector? obj) (count obj) 1)
-                        ix  (if (neg? ix) (clojure.core/+ len ix) ix)]
-                    (if (or (and (pos? ix) (>= ix len))
-                            (and (neg? ix) (> (Math/abs ix) len)))
-                      nil ; Rule 2, above.
-                      (if (vector? obj) (nth obj ix) obj))))]
-        (if @passing-singleton?
-          (access obj)
-          (mapv #(let [len (if (vector? %) (count %) 1)
-                       ix  (if (neg? ix) (clojure.core/+ len ix) ix)]
-                   (if (or (and (pos? ix) (>= ix len))
-                           (and (neg? ix) (> (Math/abs ix) len)))
-                     nil ; Rule 2, above.
-                     (if (vector? %) (nth % ix) %)))
-                (singlize obj)))))
-      ;; Filter behavior.
-      (->> obj
-           singlize
-           (filterv #(do (set-context! %) (pred|ix-fn %))))))) ; ToDo: Arg to function is not used.
+  ([obj* obj pred|ix-fn] (apply-filter (or obj obj*) pred|ix-fn)) ; First arg in this case is threaded context.
+  ([obj pred|ix-fn]
+   (let [prix (try (pred|ix-fn obj) (catch Exception _e nil))] ; On obj??? Don't I want the index here? (Or does it not matter?)
+     (if (number? prix) ; Array behavior.
+       (let [ix  (-> prix Math/floor int)] ; Really! I checked!
+         (letfn [(access [obj]
+                   (let [len (if (vector? obj) (count obj) 1)
+                         ix  (if (neg? ix) (clojure.core/+ len ix) ix)]
+                     (if (or (and (pos? ix) (>= ix len))
+                             (and (neg? ix) (> (Math/abs ix) len)))
+                       nil ; Rule 2, above.
+                       (if (vector? obj) (nth obj ix) obj))))]
+           (if @passing-singleton?
+             (access obj)
+             (mapv access (singlize obj)))))
+       ;; Filter behavior.
+       (->> obj
+            singlize
+            (filterv pred|ix-fn)
+            #_(filterv #(do (set-context! %) (pred|ix-fn %)))))))) ; ToDo: Arg to function is not used.
 
 (defn $map
   "Signature: $map(array, function)
@@ -318,7 +347,7 @@
 ;;; ToDo: sym-bi-access IS executed for $map in rewrite. So can that for filter too?
 (defn sym-bi-access
   "When doing mapping such as '$.(A * B)' the expressions A and B
-   were rewritten (bi/get-field 'A'). There needs to be a first argument
+   were rewritten (bi/dot-map 'A'). There needs to be a first argument
    to that, before the 'A'. This function inserts the argument symbol
    in such forms so that they can be wrapped in (fn [<that symbol>] ...)
    and called in map/filter/reduce settings."
