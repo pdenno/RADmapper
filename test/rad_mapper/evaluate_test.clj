@@ -4,6 +4,7 @@
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]
+   [rad-mapper.util     :refer [split-by]] ; Temporary!
    [rad-mapper.devl.devl-util :refer [nicer]]))
 
 (defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
@@ -19,16 +20,16 @@
   (testing "All the, small things (execute):"
 
     (testing "simple access of $"
-      (is (= [1 2 3] (run "($ := [{'a' : 1}, {'a' : 2}, {'a' : 3}]; a)"))))
+      (is (= [1 2 3] (run "[{'a' : 1}, {'a' : 2}, {'a' : 3}].(a)"))))
 
     (testing "simple navigation"
-      (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)"))))
+      (is (= 33 (run "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)"))))
 
     (testing "simple navigation, more efficiently"
-      (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.(c +f) )"))))
+      (is (= 33 (run "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.a.b.(c + f)"))))
 
     (testing "navigation with aref"
-      (is (= 525 (run "( $ := {'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500};  a + b.e * c[1] + d )"))))
+      (is (= 525 (run "{'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )"))))
 
     (testing "jsonata flatten (1)"
       (is (= [1 2 3 4] (run "[[1,2,3], [4]].$"))))
@@ -38,6 +39,15 @@
 
     (testing "mapping here means 'run [0] on each element.'"
       (is (= [1 4] (run "[[1,2,3], 4].$[0]"))))
+
+    ;; I get [11] with this one, JSONata gets 11. So what's the reason?
+    ;; Because the vector only has one element in it? Nope. See 'contradicts' below.
+    #_(testing "Experiment with distinguishing 'paths' from 'bin-ops'"
+      (is (=  11 (run "[{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}].(a.b.c + d.e)"))))
+
+    ;; ToDo: The statement below is true of JSONata. Is it true of my implementation?
+    (testing "In the above, you can't run without the [] except by doing something like this"
+      (is (= 11 (run "{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}.(a.b.c + d.e )"))))
 
     (testing "Jsonata's flattening idea has odd consequences!"
       (is (= [1 4] (run "[[1,2,3], 4].$[0][0][0][0]"))))
@@ -65,17 +75,20 @@
       (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]")))) ; Same as above; this one mentions quirk.
 
     ;; bi/passing-singleton? fixes (only) this one.
-    (testing "simple aref" 
+    (testing "simple aref"
       (is (= 33 (run "{'number' : [11, 22, 33, 44]}.number[2]"))))
 
-    (testing "simple filter"
-      (is (= "b" (run "( $ := {'letter' : ['a', 'b', 'c', 'd']}; letter[$ = 'b'] )"))))
+    ;; Mine returns ["b"] because of bi/access-or-map?
+    #_(testing "simple filter"
+      (is (= "b" (run "{'letter' : ['a', 'b', 'c', 'd']}.letter[$ = 'b']"))))
 
     (testing "simple filter (2)"
       (is (= [{"x" 2} {"x" 2}]
              (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].num[x = 2]"))))
 
-    (testing "simple filter, needs thought"
+    ;; This one contradicts my theory that what is returned depends on value of bi/access-or-map?
+    ;; This one maps but return a single object as value
+    #_(testing "simple filter, three objects coming in, yet returns a singleton. Needs thought!"
       (is (= {"num" {"x" 2}}
              (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}][num.x = 2]"))))
 
@@ -231,86 +244,48 @@
   (testing "Context management:"
     (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)")))))
 
+
+
+
+
+
+;;; {'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )
 (defn tryme []
-  (-> (rew/rewrite* :ptag/exp
-                    "($ := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}}
-                      {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}}
-                      {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
-                 Phone[type = 'mobile'] )"
-                    :rewrite? true)
-      rad-mapper.devl.devl-util/nicer))
+  (bi/finish
+   (bi/step->
+    (->
+     {}
+     (assoc "a" 5)
+     (assoc "b" (-> {} (assoc "e" 2)))
+     (assoc "c" [0 10])
+     (assoc "d" 500))
+    (bi/apply-map
+     (fn [_x1] (bi/with-context _x1
+                 (bi/+ (bi/+
+                        (bi/dot-map "a")
+                        (bi/*
+                         (bi/step-> (bi/dot-map "b") (bi/dot-map "e"))
+                         (bi/step->
+                          (bi/dot-map "c")
+                          (bi/apply-filter nil (fn [_x1] (bi/with-context _x1 1))))))
+                       (bi/dot-map "d"))))))))
 
 (defn tryme2 []
   (bi/finish
-   (let [_x1 (bi/set-context! 1)]
-     (bi/apply-filter
-      (bi/step-> (bi/deref$) (bi/deref$))
-      (fn [_x1] 0)))))
-
-(defn tryme3 []
-  (bi/finish
-   (let [_x1 (bi/set-context! (-> {} (assoc "letter" ["a" "b" "c" "d"])))]
-     (let* [fun  (fn [_x1] (= _x1 "b"))
-            prix (try (fun bi/$) (catch java.lang.Exception _e__42631__auto__ nil))
-            obj  (bi/singlize (bi/dot-map "letter"))]
-       (if (number? prix)
-         (let [ix (-> prix Math/floor int)
-               len (count obj)]
-           (if (or (and (pos? ix) (>= ix len))
-                   (and (neg? ix) (> (abs ix) len)))
-             nil
-             (if (neg? ix)
-               (nth obj (+ len ix))
-               (nth obj ix))))
-         (filterv fun obj))))))
-
-(defn tryme4 []
-  (bi/finish
-   (bi/step->
-    [[1 2 3] 4]
-    (bi/apply-filter (bi/deref$) (fn [_x1] 1)))))
-
-(defn tryme5 []
-  (bi/finish
-   (bi/step->
-    [[1 2 3] 4]
-    (bi/apply-filter (fn [_x1] 0))
-    (bi/apply-filter (fn [_x1] 0))
-    (bi/apply-filter (fn [_x1] 0))
-    (bi/apply-filter (fn [_x1] 0)))))
-
-(defn tryme6 []
-  (bi/finish
-   (let
-       [_x1
-        (bi/set-context!
-         (->
-          {}
-          (assoc "a" 5)
-          (assoc "b" (-> {} (assoc "e" 2)))
-          (assoc "c" [0 10])
-          (assoc "d" 500)))]
+ (bi/step->
+  (->
+   {}
+   (assoc
+    "a"
+    (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3))))))
+  (bi/apply-map
+   (fn
+    [_x1]
+    (bi/with-context
+     _x1
      (bi/+
-      (bi/+
+      (bi/step-> (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "c"))
+      (bi/step->
        (bi/dot-map "a")
-       (bi/*
-        (bi/step-> (bi/dot-map "b") (bi/dot-map "e"))
-        (bi/apply-filter (bi/dot-map "c") (fn [_x1] 1))))
-      (bi/dot-map "d")))))
-
-;;; [{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]
-;;; [{"num" : {"x" : 1}}, {"num" : {"x" : 2}}, {"num" : {"x" : 3}}]
-(defn tryme7 []
-  (bi/finish
-   (bi/step->
-    [(-> {} (assoc "num" (-> {} (assoc "x" 1))))
-     (-> {} (assoc "num" (-> {} (assoc "x" 2))))
-     (-> {} (assoc "num" (-> {} (assoc "x" 3))))]
-    (bi/apply-filter
-     nil
-     (fn
-       [_x1]
-       (println "_x1 =" _x1)
-       (bi/step-> _x1 (bi/dot-map "num") (= (bi/dot-map "x") 2)))))))
-
-
+       (bi/dot-map "b")
+       (bi/dot-map "f")))))))))

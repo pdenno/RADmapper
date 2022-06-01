@@ -72,7 +72,7 @@
 (def comparison-operators '{:<= <=, :>= >=, :!= not=, \< <, \= =, \> >, "in" bi/in})
 (def boolean-operators    '{:and and :or or})
 (def string-operators     '{\& bi/&})
-(def other-operators      '{\. bi/step->, :thread bi/thread :apply-map bi/apply-map :apply-filter bi/apply-filter
+(def other-operators      '{#_#_\. bi/step->, \. bi/dot-map :thread bi/thread :apply-map bi/apply-map :apply-filter bi/apply-filter
                            :apply-reduce bi/apply-reduce})
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))

@@ -15,7 +15,7 @@
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
 (def locals (atom [{}]))
-(declare map-simplify rewrite rewrite-nav)
+(declare map-simplify rewrite)
 (def diag (atom nil))
 
 (defn rewrite*
@@ -92,9 +92,14 @@
 
 (defmulti rewrite-meth #'rewrite-dispatch)
 
+;;; ToDo: Investigate how this happens. It started with including the rewrite in gather-paths.
+(defmethod rewrite-meth :default [& args]
+  ;(println "****Called :default rewrite-meth")
+  {})
+
 (defn rewrite [obj & keys]
   (cond (map? obj)                  (rewrite-meth (:_type obj) obj keys)
-        (seq? obj)                  (map  rewrite obj)
+        (seq? obj)                  (map  rewrite obj) ; ToDo: review this. I think I might be able to just return it.
         (vector? obj)               (mapv rewrite obj)
         (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords and chars correspond to operators.
         (string? obj)               obj
@@ -102,6 +107,8 @@
         (symbol? obj)               obj
         (= obj :true)               true
         (= obj :false)              false
+        (= obj true)                true
+        (= obj false)               false
         (nil? obj)                  obj                    ; for optional things like (-> m :where rewrite)
         (= java.util.regex.Pattern (type obj)) obj
         :else
@@ -109,10 +116,7 @@
 
 (defrewrite :toplevel [m]
   `(~'bi/finish
-    (~@(->> m
-            :top
-            rewrite
-            rewrite-nav))))
+    (~@(->> m :top rewrite))))
 
 ;;; ToDo: Return to the let-style implementation; assignments are expressions
 (defrewrite :JaCodeBlock [m]
@@ -227,56 +231,43 @@
 
 ;;;----------------------------- Rewriting binary operations (the remainder of this file) -------------
 
-(declare rewrite-bvec-as-sexp precedence rewrite-nav)
+(declare rewrite-bvec-as-sexp precedence op-precedence-tbl)
 
 ;;; Filter path elements (at least(?) -- maybe map and reduce too) consist of a field path element
 ;;; followed by the body enclosed in the delimiters; the two are not separate path elements.
-;;; compress-filter rewrites a bin-op-seq to deal with this.  Do this will remove :apply-filter as
-;;; an operator, to be replaced by a sexp that handles both the last dot-map and the filter/aref.
-(defn compress-filter
-  "Replace a sequence such as
-  [... {:_type :JaField, :field-name 'c'}... :apply-filter {:_type :JaApplyFilter, :body 2}...]
-  with [... {:type :JaApplyFilter :operand {:_type :JaField, :field-name 'c'} :body 2}...]."
-  [bin-op-seq]
-  (loop [sequ (seq bin-op-seq)
-         res []]
-    (cond (empty? sequ) res,
-          (not= :apply-filter (second sequ))
-          (recur (rest sequ) (conj res (first sequ))),
-          :else
-          (recur (drop 3 sequ)
-                 (conj res (assoc (nth sequ 2) :operand (first sequ)))))))
-
 (defrewrite :JaBinOpSeq [m]
-  (->> m
-       :seq
-       compress-filter
-       rewrite-bvec-as-sexp ; This orders element and rewrites them to s-expressions.
-       rewrite-nav))        ; A simplification on sexps, compressing out bi/step->
+  (->> m :seq rewrite-bvec-as-sexp)) ; This orders element and rewrites them to s-expressions.
 
-;;; ToDo: Could sub in var?
-(defrewrite :JaApplyMap
-  [m]
-  `(fn [~(dgensym!)] ~@(-> m :body rewrite)))
+;;; JaPath are created in gather-paths.
+(defrewrite :JaPath [m]
+  `(bi/step->
+    ~@(->> m
+           :path
+           (remove #(or (symbol? %) (keyword? %)))
+           (map rewrite))))
 
-#_(defrewrite :JaApplyFilter [m]
+(defrewrite :JaApplyMap [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
-    `(fn [~sym] ~(bi/sym-bi-access body sym))))
+    `(bi/apply-map
+      (fn [~sym]
+        (bi/with-context ~sym ~@body)))))
 
 (defrewrite :JaApplyFilter [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
     `(bi/apply-filter
-      ~(-> m :operand rewrite) ; This is typically a field, rewritten to a dot-map.
-      (fn [~sym] (bi/with-context ~sym ~body))
-     #_(fn [~sym] ~(bi/sym-bi-access body sym)))))
+      ~(-> m :operand rewrite)
+      (fn [~sym] (bi/with-context ~sym ~body)))))
 
 (defrewrite :JaApplyReduce [m]
-  `(-> {}
-    ~@(map rewrite (:exp m))))
+  (let [sym (dgensym!)
+        body (-> m :body rewrite)]
+    `(bi/apply-reduce
+      ~(-> m :operand rewrite)
+      (fn [~sym] (bi/with-context ~sym ~body)))))
 
 (def spec-ops (-> par/binary-op? vals set)) ; ToDo: Not necessary?
 
@@ -288,7 +279,31 @@
 (s/def ::operators (s/coll-of ::info-op :kind vector?))
 (s/def ::info (s/keys :req-un [::args ::operators]))
 
-(defn bvec2info
+(defn gather-paths
+  "Step through the bvec and collect segments that include :path?=true operators/operands into
+   JaPath objects."
+  [bvec]
+  (loop [bv bvec
+         res []]
+    (cond (empty? bv) res
+          (-> bv first op-precedence-tbl :path?)
+          (let [steal (last res)                           ; Last operand belongs with path...
+                actual (subvec res 0 (-> res count dec))   ; ...so this is what res should be before gather path.
+                collected (loop [bv2 bv
+                                 path [steal]]
+                            (cond (empty? bv2) path
+                                  (and (contains? op-precedence-tbl (first bv2))
+                                       (-> bv2 first op-precedence-tbl :path? not)) path
+                                  :else
+                                  (recur (drop 1 bv2)
+                                         (-> path (conj (first bv2))))))]
+            (recur (drop (-> collected count dec) bv)
+                   (conj actual (rewrite {:_type :JaPath :path collected}))))
+            :else
+            (recur (drop 1 bv)
+                   (conj res (first bv))))))
+
+(defn basic-info
   "Using the bin-op-vec (at any level of processing), create a map containing information about it."
   [bvec]
   (reduce
@@ -303,6 +318,11 @@
        (update res :args #(conj % (rewrite v)))))
    {:operators [] :args []}
    (map #(vector %1 %2) (range (count bvec)) bvec)))
+
+(defn bvec2info
+  "Gather paths so that they their internal navigation isn't visible, then create the info object."
+  [bvec]
+  (reset! diag (-> bvec gather-paths basic-info)))
 
 (defn update-op-pos
   "Update the :pos values in operators according to new shortened :operands."
@@ -383,26 +403,6 @@
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
 
-(defn rewrite-nav
-  "Iteratively walk a nested s-expression rewriting and 'compressing' nested bi/step-> expression."
-  [exp]
-  (let [progress? (atom true)]
-    (letfn [(one-step [exp]
-              (cond (and (-> progress? deref not)
-                         (seq? exp)
-                         (= 'bi/step-> (first exp))
-                         (= 'bi/step-> (-> exp second first)))
-                    (do (reset! progress? true)
-                        `(~'bi/step-> ~@(-> exp second rest) ~@(-> exp rest rest)))
-                    (vector? exp) (->> exp (map rewrite-nav) doall vec)
-                    (seq? exp)    (->> exp (map rewrite-nav) doall)
-                    (map? exp) (reduce-kv (fn [m k v] (assoc m k (rewrite-nav v))) {} exp)
-                    :else exp))]
-      (loop [exp exp]
-        (if (-> progress? deref not) exp
-            (do (reset! progress? false)
-                (recur (one-step exp))))))))
-
 ;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 ;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
 (def op-precedence-tbl ; lower :val means binds tighter.
@@ -423,10 +423,13 @@
    'bi/*             {:path? false :assoc :left :val 300}
    'bi/%             {:path? false :assoc :left :val 300}
    'bi//             {:path? false :assoc :left :val 300}
-   'bi/step->        {:path? true  :assoc :left :val 150}
-   'bi/apply-map     {:path? true  :assoc :left :val 150}
-   'bi/apply-filter  {:path? true  :assoc :left :val 100}
-   'bi/apply-reduce  {:path? true  :assoc :left :val 150}})
+   #_#_'bi/step->    {:path? true  :assoc :left :val 150}
+   'bi/dot-map       {:path? true  :assoc :left :val 150}
+   #_#_'bi/apply-map     {:path? true  :assoc :left :val 150}
+   #_#_'bi/apply-filter  {:path? true  :assoc :left :val 100}
+   :apply-map        {:path? true  :assoc :left :val 100}
+   :apply-filter     {:path? true  :assoc :left :val 100}
+   :apply-reduce     {:path? true  :assoc :left :val 100}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)

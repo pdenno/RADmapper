@@ -12,7 +12,6 @@
    [clojure.walk                 :refer [keywordize-keys]]
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
- #_[datahike.pull-api            :as dp]
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util]))
 
@@ -48,54 +47,38 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-(def passing-singleton?
-  "Too weird to describe currently."
+(def access-not-map?
+  "An atom that is set to true when the last delimited expression (apply-{map, filter, reduce}
+   did not receive a vector as an argument and false in the converse case.
+   This behavior that carries  through to bi/finish." ; ToDo: If you can eliminate bi/finish (a goal) rewrite this comment.
   (atom false))
 
 (defn reset-env
   "Clean things up just prior to running user code."
   []
   (reset! $ nil)
-  (reset! passing-singleton? false))
-
-;;; Currently jsonata-singleton is only called in dot-map and jsonata-flatten.
-;;; Its purpose is to deal with the quirkyness of
-;;;    * this [{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums    returning [1 2 3 4 5 6], versus
-;;;    * this [{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums[2] returning [3 6], versus
-;;;    * this {'number' : [11, 22, 33, 44]}.number[2]              returning 33.
-;;;
-;;; I might also want to use it to help with how
-;;;    * this {'nums' : [[1], 2, 3]}.nums[0]                       returns [1], not 1.
-;;; That might involve using it in jsonata-flatten.
-;;;
-;;; But I'm guessing, for the most part! Suddenly the language doesn't look so well thought out.
-
-;;; ToDo: It has a side-effect. Do I need to go back to a context object with :sys/$?
-(defn jsonata-singleton
-  "If the argument is a vector:
-     * return nil if empty,
-     * the elem it it contains only one, or
-     * the argument, otherwise."
-  [obj]
-  (let [len (count obj)]
-    (cond (== 0 len) nil, ; ToDo: Do I really want to return nil?
-          (== 1 len) (do (reset! passing-singleton? true)  (first obj)) ;<=== side-effect!
-          :else      (do (reset! passing-singleton? false) obj))))      ;<=== side-effect!
+  (reset! access-not-map? false))
 
 ;;; Currently this is only called by finish.
 ;;; That might be good, since it is an information-losing operation!
 (defn jsonata-flatten
   "Accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
    See http://docs.jsonata.org/processing section 'Sequences'"
-  [s]
-  (if (vector? s)
-    (->> s flatten (remove nil?) vec jsonata-singleton)
-    s))
+  [obj]
+  (if (vector? obj)
+    (let [res (->> obj flatten (remove nil?) vec)
+          len (count res)]
+      (cond (== 0 len) nil
+            (== 1 len) (first res)
+            :else res))
+    obj))
 
 (defn finish
-  "This is called last in user code to account for the difference between a.b and a.b.$" ; <====== Explain
+  "This is called last in user code to account for the difference between a.b and a.b.$" ; ToDo: Explain. I've forgotten.
   [obj]
-  (jsonata-flatten obj))
+  ;; The test is to handle code like {'nums' : [[1], 2, 3]}.nums[0], which should return [1].
+  ;; But it seems like a quirk of JSONata that this wouldn't return the scalar, 1.
+  (if @access-not-map? obj (jsonata-flatten obj)))
 
 (defn deref$
   "Expressions such as [[1,2,3], [1]].$ will translate to (bi/step-> [[1 2 3] [1]] (deref bi/$))
@@ -138,20 +121,20 @@
    This function is called with the state object. It returns the
    state object with :sys/$ updated."
   ([prop|fn] (dot-map @$ prop|fn))
-  ([sobj prop|fn]
-   (s/assert ::state-obj sobj)
-   (let [obj (singlize sobj)]
-     (->> (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
-                (string? prop|fn)              (->> (mapv #(get % prop|fn) obj)
-                                                    (remove nil?)
-                                                    vec),
-                (fn? prop|fn)                  (->> (mapv prop|fn obj)
-                                                    (remove nil?)
-                                                    vec)
-                :else (throw (ex-info "Expected function to map over" {:got prop|fn}))) ; ToDo: Probably remove this.
-          (remove nil?)
-          vec
-          jsonata-singleton))))
+  ([obj prop|fn]
+   (as-> (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
+              (string? prop|fn)              (if-let [res (get obj prop|fn)]
+                                               (do (reset! access-not-map? true) res)
+                                               (do (reset! access-not-map? false)
+                                                   (->> (mapv #(get % prop|fn) obj)
+                                                        (remove nil?)
+                                                        vec))),
+              (fn? prop|fn)                  (->> (mapv prop|fn obj)
+                                                  (remove nil?)
+                                                  vec)
+              :else (throw (ex-info "Expected function to map over" {:got prop|fn}))) ; ToDo: Probably remove this.
+       ?res
+     (if (vector? ?res) (vec (remove nil? ?res)) ?res))))
 
 (defmacro step->
   "Save the current context, walk through the body navigation, and restore
@@ -162,26 +145,14 @@
        (let [res# (-> top# ~@(interpose '(rad-mapper.builtins/set-context!) body))]
          res#))))
 
-#_(defmacro step->
-  "Save the current context, walk through the body navigation, and restore
-   current  context from what is saved. The topic provided is a state-obj."
-  [topic & body]
-  `(let [top# ~topic
-         pre-excursion# @$]
-     (set-context! top#)
-     (let [res# (-> top# ~@(interpose '(rad-mapper.builtins/set-context!) body))]
-       (set-context! pre-excursion#)
-       res#)))
-
 (defn apply-map
   "mapv the argument object over the argument fn."
-  [obj fn]
-  (binding [$ (atom obj)] ; Because fn might start with single-arg dot-map.
-    (->> obj
-         singlize
-         (mapv fn)
-         (remove nil?)
-         vec)))
+  [obj fun]
+  (if (vector? obj)
+    (do (reset! access-not-map? false)
+        (->> obj (mapv fun) (remove nil?) vec))
+    (do (reset! access-not-map? true)
+        (fun obj))))
 
 (defn apply-filter
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
@@ -204,14 +175,13 @@
                              (and (neg? ix) (> (Math/abs ix) len)))
                        nil ; Rule 2, above.
                        (if (vector? obj) (nth obj ix) obj))))]
-           (if @passing-singleton?
+           (if @access-not-map?
              (access obj)
              (mapv access (singlize obj)))))
        ;; Filter behavior.
        (->> obj
             singlize
-            (filterv pred|ix-fn)
-            #_(filterv #(do (set-context! %) (pred|ix-fn %)))))))) ; ToDo: Arg to function is not used.
+            (filterv pred|ix-fn))))))
 
 (defn $map
   "Signature: $map(array, function)
