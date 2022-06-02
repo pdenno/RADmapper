@@ -244,48 +244,10 @@
   (testing "Context management:"
     (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)")))))
 
-
-
-
-
-
-;;; {'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )
+;;; "($v := ['a', 'b', 'c' 'd']; $v[1])"
 (defn tryme []
   (bi/finish
-   (bi/step->
-    (->
-     {}
-     (assoc "a" 5)
-     (assoc "b" (-> {} (assoc "e" 2)))
-     (assoc "c" [0 10])
-     (assoc "d" 500))
-    (bi/apply-map
-     (fn [_x1] (bi/with-context _x1
-                 (bi/+ (bi/+
-                        (bi/dot-map "a")
-                        (bi/*
-                         (bi/step-> (bi/dot-map "b") (bi/dot-map "e"))
-                         (bi/step->
-                          (bi/dot-map "c")
-                          (bi/apply-filter nil (fn [_x1] (bi/with-context _x1 1))))))
-                       (bi/dot-map "d"))))))))
-
-(defn tryme2 []
-  (bi/finish
- (bi/step->
-  (->
-   {}
-   (assoc
-    "a"
-    (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3))))))
-  (bi/apply-map
-   (fn
-    [_x1]
-    (bi/with-context
-     _x1
-     (bi/+
-      (bi/step-> (bi/dot-map "a") (bi/dot-map "b") (bi/dot-map "c"))
-      (bi/step->
-       (bi/dot-map "a")
-       (bi/dot-map "b")
-       (bi/dot-map "f")))))))))
+   (let [$v ["a" "b" "c" "d"]]
+     (bi/step->
+      $v
+      (bi/apply-filter nil (fn [_x1] (bi/with-context _x1 1)))))))

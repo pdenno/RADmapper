@@ -175,9 +175,14 @@
                              (and (neg? ix) (> (Math/abs ix) len)))
                        nil ; Rule 2, above.
                        (if (vector? obj) (nth obj ix) obj))))]
-           (if @access-not-map?
+            (if @access-not-map?
              (access obj)
-             (mapv access (singlize obj)))))
+             (mapv access (singlize obj)))
+           ;; ToDo: The following code is speculative and temporary (and doesn't work!).
+           #_(cond
+             (-> obj vector? not)                          obj
+             (or @access-not-map? (not-any? vector? obj)) (access obj)
+             :else                                        (mapv access (singlize obj)))))
        ;; Filter behavior.
        (->> obj
             singlize
