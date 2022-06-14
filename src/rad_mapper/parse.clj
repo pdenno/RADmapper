@@ -515,9 +515,9 @@
   "Does parse parametrically for <open-char> ( <item> ( <char-sep> <item>)? )? <close-char>"
   ([pstate char-open char-close char-sep]
    (parse-list pstate char-open char-close char-sep :ptag/exp))
-  ([pstate char-open char-close char-sep parse-tag]
+  ([pstate char-open char-close char-sep item-tag]
    (when *debugging?*
-     (cl-format *out* "~%>>>>>>>>>>>>>> parse-list (~A) >>>>>>>>>>>>>>>>>>" parse-tag))
+     (cl-format *out* "~%>>>>>>>>>>>>>> parse-list (~A) >>>>>>>>>>>>>>>>>>" item-tag))
    (let [final-ps
          (as-> pstate ?ps
            (eat-token ?ps char-open)
@@ -525,14 +525,14 @@
            (loop [ps ?ps]
              (cond
                (= ::eof (:head ps))
-               (ps-throw ps "parsing a list" {:tag parse-tag}),
+               (ps-throw ps "parsing a list" {:tag item-tag}),
                (= char-close (:head ps))
                (as-> ps ?ps1
                  (eat-token ?ps1)
                  (assoc ?ps1 :result (recall ?ps1 :items))),
                :else
                (as-> ps ?ps1
-                 (parse parse-tag ?ps1)
+                 (parse item-tag ?ps1)
                  (update-in ?ps1 [:local 0 :items] conj (:result ?ps1))
                  (recur (cond-> ?ps1 (= char-sep (:head ?ps1)) (eat-token char-sep)))))))]
      (when *debugging?*
@@ -543,23 +543,26 @@
 ;;; ToDo: Have a separate variable to turn off debugging on the auto things.
 (defn parse-list-terminated
   "Does parse parametrically for '[ <item> ','... ] <terminator>'. Does not eat terminator."
-  [pstate & {:keys [term-fn sep-fn parse-tag] :or {sep-fn #(= \; %)
-                                                   term-fn #(= \} %)
-                                                   parse-tag :ptag/exp}}]
+  [pstate & {:keys [term-fn sep-fn item-tag] :or {sep-fn #(= \; %)
+                                                  term-fn #(= \} %)
+                                                  item-tag :ptag/exp}}]
   (when *debugging?*
-    (cl-format *out* "~%>>>>>>>>>>>>>> parse-list-terminated (~A) >>>>>>>>>>>>>>>>>>" parse-tag))
+    (cl-format *out* "~%>>>>>>>>>>>>>> parse-list-terminated (~A) >>>>>>>>>>>>>>>>>>" item-tag))
   (let [final-ps
         (as-> pstate ?ps
           (assoc-in ?ps [:local 0 :items] [])
           (loop [ps ?ps]
             (cond
-              (= ::eof (:head ps)) (ps-throw ps "parsing a terminated list" {:tag parse-tag}),
+              (= ::eof (:head ps)) (ps-throw ps "parsing a terminated list" {:tag item-tag}),
               (term-fn (:head ps)) (assoc ps :result (recall ps :items)),
               :else
               (as-> ps ?ps
-                (parse parse-tag ?ps)
+                (parse item-tag ?ps)
                 (update-in ?ps [:local 0 :items] conj (:result ?ps))
-                (recur (cond-> ?ps (sep-fn (:head ?ps)) (eat-token #{\,\;})))))))]
+                (if (or (-> ?ps :head sep-fn) (-> ?ps :head term-fn))
+                  (recur (cond-> ?ps (sep-fn (:head ?ps)) (eat-token sep-fn)))
+                  (ps-throw ?ps "Parsing a terminated list, expected separator or terminator."
+                            {:got (:head ?ps)}))))))]
     (when *debugging?*
       (println "\nCollected" (:result final-ps))
       (println "\n<<<<<<<<<<<<<<<<< parse-list-terminated <<<<<<<<<<<<<<<<"))
@@ -968,7 +971,7 @@
   (as-> ps ?ps
     (eat-token ?ps :function)
     (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/jvar)
+    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/jvar)
     (store ?ps :jvars)
     (eat-token ?ps \))
     (eat-token ?ps \{)
@@ -984,7 +987,7 @@
   (as-> ps ?ps
     (eat-token ?ps :query)
     (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/jvar)
+    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/jvar)
     (store ?ps :params)
     (eat-token ?ps \))
     (eat-token ?ps \{)
@@ -1000,7 +1003,7 @@
   (as-> ps ?ps
     (eat-token ?ps :enforce)
     (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/exp)
+    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/exp)
     (store ?ps :params)
     (eat-token ?ps \))
     (eat-token ?ps \{)
@@ -1022,7 +1025,7 @@
       (as-> ps ?ps
         (store ?ps :def)
         (eat-token ?ps)
-        (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :parse-tag :ptag/exp)
+        (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/exp)
         (store ?ps :args)
         (eat-token ?ps \))
         (assoc ?ps :result (->JaImmediateUse (recall ?ps :def) (recall ?ps :args))))

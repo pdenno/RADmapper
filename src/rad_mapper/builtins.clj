@@ -45,9 +45,7 @@
 (s/def ::non-zero (s/and number? #(-> % zero? not)))
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
-(defn singlize [v] (if (vector? v) v (vector v)))
-
-(def access-not-map?
+#_(def access-not-map?
   "An atom that is set to true when the last delimited expression (apply-{map, filter, reduce}
    did not receive a vector as an argument and false in the converse case.
    This behavior that carries  through to bi/finish." ; ToDo: If you can eliminate bi/finish (a goal) rewrite this comment.
@@ -57,28 +55,67 @@
   "Clean things up just prior to running user code."
   []
   (reset! $ nil)
-  (reset! access-not-map? false))
+  #_(reset! access-not-map? false))
 
-;;; Currently this is only called by finish.
-;;; That might be good, since it is an information-losing operation!
+(defn flatten-except-json
+  "Adapted from core/flatten:
+   Takes any nested combination of sequential things (lists, vectors, etc.)
+   and returns their contents as a single, flat lazy sequence.
+   (flatten nil) returns an empty sequence. 
+   EXCEPTION: If the thing is a vector with metadata :type :bi/json-array, it isn't flattened. "
+  {:added "1.2"
+   :static true}
+  [x]
+  (letfn [(seq-except? [o] 
+            (and (sequential? o)
+                 (not= :bi/json-array (-> o meta :bi/type))))]
+    (-> (remove seq-except? (tree-seq seq-except? seq x))
+        vec)))
+
 (defn jsonata-flatten
   "Accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
-   See http://docs.jsonata.org/processing section 'Sequences'"
+   See http://docs.jsonata.org/processing section 'Sequences', which currenlty reads as follows:
+       The sequence flattening rules are as follows:
+
+    1) An empty sequence is a sequence with no values and is considered to be 'nothing' or 'no match'.
+       It won't appear in the output of any expression.
+       If it is associated with an object property (key/value) pair in a result object, then that object will not have that property.
+
+    2) A singleton sequence is a sequence containing a single value.
+       It is considered equivalent to that value itself, and the output from any expression, or sub-expression will be
+       that value without any surrounding structure.
+
+    3) A sequence containing more than one value is represented in the output as a JSON array.
+       This is still internally flagged as a sequence and subject to the next rule.
+       Note that if an expression matches an array from the input JSON, or a JSON array is explicitly constructed in
+       the query using the array constructor, then this remains an array of values rather than a sequence of values and
+       will not be subject to the sequence flattening rules.
+       However, if this array becomes the context of a subsequent expression, then the result of that will be a sequence.
+
+    4) If a sequence contains one or more (sub-)sequences, then the values from the sub-sequence are pulled up to
+       the level of the outer sequence. A result sequence will never contain child sequences (they are flattened)."
   [obj]
-  (if (vector? obj)
-    (let [res (->> obj flatten (remove nil?) vec)
-          len (count res)]
-      (cond (== 0 len) nil
-            (== 1 len) (first res)
-            :else res))
-    obj))
+  (letfn [(rule-1-objs [o]
+            (if (map? o)
+              (reduce-kv (fn [m k v] (if (and (vector? v) (empty? v)) m (assoc m k v))) {} o)
+              o))]
+    (cond (vector? obj)
+          (let [res (->> obj flatten-except-json (remove nil?) (mapv rule-1-objs)) ; (-> Rule 4, Rule 1)
+                len (count res)]
+            (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
+                  (== 1 len) (-> res first rule-1-objs) ; (-> Rule 2, Rule 1)
+                  :else (rule-1-objs res)))             ; Rule 1
+          (map? obj) (rule-1-objs obj),
+          :else obj)))
+
+(defn singlize [v] (if (vector? v) v (vector v)))
 
 (defn finish
   "This is called last in user code to account for the difference between a.b and a.b.$" ; ToDo: Explain. I've forgotten.
   [obj]
   ;; The test is to handle code like {'nums' : [[1], 2, 3]}.nums[0], which should return [1].
   ;; But it seems like a quirk of JSONata that this wouldn't return the scalar, 1.
-  (if @access-not-map? obj (jsonata-flatten obj)))
+  (if false #_@access-not-map? obj (jsonata-flatten obj)))
 
 (defn deref$
   "Expressions such as [[1,2,3], [1]].$ will translate to (bi/step-> [[1 2 3] [1]] (deref bi/$))
@@ -124,8 +161,8 @@
   ([obj prop|fn]
    (as-> (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
               (string? prop|fn)              (if-let [res (get obj prop|fn)]
-                                               (do (reset! access-not-map? true) res)
-                                               (do (reset! access-not-map? false)
+                                               (do #_(reset! access-not-map? true) res)
+                                               (do #_(reset! access-not-map? false)
                                                    (->> (mapv #(get % prop|fn) obj)
                                                         (remove nil?)
                                                         vec))),
@@ -149,9 +186,9 @@
   "mapv the argument object over the argument fn."
   [obj fun]
   (if (vector? obj)
-    (do (reset! access-not-map? false)
+    (do #_(reset! access-not-map? false)
         (->> obj (mapv fun) (remove nil?) vec))
-    (do (reset! access-not-map? true)
+    (do #_(reset! access-not-map? true)
         (fun obj))))
 
 (defn apply-filter
@@ -175,7 +212,7 @@
                              (and (neg? ix) (> (Math/abs ix) len)))
                        nil ; Rule 2, above.
                        (if (vector? obj) (nth obj ix) obj))))]
-            (if @access-not-map?
+            (if (and (vector? obj) (not-any? vector? obj)) ; 2022-06-13 was @access-not-map?
              (access obj)
              (mapv access (singlize obj)))
            ;; ToDo: The following code is speculative and temporary (and doesn't work!).

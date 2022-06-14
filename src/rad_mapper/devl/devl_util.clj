@@ -5,7 +5,7 @@
    #_[clojure.set         :as set]
    #_[clojure.spec.alpha  :as s]))
 
-;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])q
+;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])
 
 (defn nicer
   "Show macroexpand-1 printed sans package names.

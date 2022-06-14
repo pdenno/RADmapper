@@ -98,8 +98,8 @@
   {})
 
 (defn rewrite [obj & keys]
-  (cond (map? obj)                  (rewrite-meth (:_type obj) obj keys)
-        (seq? obj)                  (map  rewrite obj) ; ToDo: review this. I think I might be able to just return it.
+  (cond (map? obj)                  (if-let [typ (:_type obj)] (rewrite-meth typ obj keys) obj)
+        (seq? obj)                  obj #_(map  rewrite obj) ; ToDo: review this. I think I might be able to just return it.
         (vector? obj)               (mapv rewrite obj)
         (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords and chars correspond to operators.
         (string? obj)               obj
@@ -127,16 +127,19 @@
       `(-> (bi/init-state-obj) ~(rewrite returned-exp))
       `(let [~@(mapcat rewrite others)] ~(rewrite returned-exp)))))
 
+(def ^:dynamic *assume-json-data?* false)
+
 ;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JaJvarDecl [m]
-  (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
-        `(~(dgensym!) (bi/set-context! ~(-> m :init-val rewrite))),
-        ;; ToDo: Is setting $$ a legit user activity?
-        (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
-        `(~(dgensym!) (reset! bi/$$ ~(-> m :init-val rewrite))),
-        :else
-        `(~(->> m :var rewrite)
-          ~(-> m :init-val rewrite))))
+  (binding [*assume-json-data?* true] ; This is for bi/jsonata-flatten, Rule 3.
+    (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
+          `(~(dgensym!) (bi/set-context! ~(-> m :init-val rewrite))),
+          ;; ToDo: Is setting $$ a legit user activity?
+          (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
+          `(~(dgensym!) (reset! bi/$$ ~(-> m :init-val rewrite))),
+          :else
+          `(~(->> m :var rewrite)
+            ~(-> m :init-val rewrite)))))
 
 (defrewrite :JaJvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
@@ -189,7 +192,11 @@
   `(range ~(rewrite (:start m)) (inc ~(rewrite (:stop m)))))
 
 (defrewrite :JaArray [m]
-  (mapv rewrite (:exprs m)))
+  (if *assume-json-data?*
+    `(with-meta
+       ~(mapv rewrite (:exprs m))
+       {:bi/type :bi/json-array})
+    (mapv rewrite (:exprs m))))
 
 (defrewrite :JaQueryDef [m]
   `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:triples m))))
@@ -315,7 +322,7 @@
                                           :op op
                                           :prec (precedence op)}))
            (update :args #(conj % :$op$))))
-       (update res :args #(conj % (rewrite v)))))
+        (update res :args #(conj % (rewrite v)))))
    {:operators [] :args []}
    (map #(vector %1 %2) (range (count bvec)) bvec)))
 

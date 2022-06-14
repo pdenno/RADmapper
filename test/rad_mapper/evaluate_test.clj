@@ -31,11 +31,24 @@
     (testing "navigation with aref"
       (is (= 525 (run "{'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )"))))
 
-    (testing "jsonata flatten (1)"
+    ;; Note that to get the following result from JSONata Exerciser, you have to put the data on the LHS,
+    ;; It flattens when done inline as [[1,2,3], [4]].$ because that array is JSONata, not JSON.
+    ; *THIS*
+    (testing "jsonata flatten (1); JSON data"
+      (is (= [[1 2 3] [4]] (run "($ := [[1, 2, 3], [4]]; $)"))))
+
+    (testing "jsonata flatten (2) in-line data"
       (is (= [1 2 3 4] (run "[[1,2,3], [4]].$"))))
 
-    (testing "jsonata flatten (2)"
+    (testing "jsonata flatten (3) in-line data"
       (is (= 2 (run "[[1,2,3], 4].$[1]"))))
+
+    ; *THIS*
+    (testing "Jsonata's flattening odd consequences (1) in-line data"
+      (is (= [1 4] (run "[[1,2,3], 4].$[0][0][0][0]"))))
+
+    (testing "Jsonata's flattening odd consequences! (2) JSON data."
+      (is (= 1 (run "($v := [[1,2,3], 4]; $v[0][0][0][0])"))))
 
     (testing "mapping here means 'run [0] on each element.'"
       (is (= [1 4] (run "[[1,2,3], 4].$[0]"))))
@@ -49,9 +62,6 @@
     (testing "In the above, you can't run without the [] except by doing something like this"
       (is (= 11 (run "{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}.(a.b.c + d.e )"))))
 
-    (testing "Jsonata's flattening idea has odd consequences!"
-      (is (= [1 4] (run "[[1,2,3], 4].$[0][0][0][0]"))))
-
     (testing "Jsonata quirk 1: you can't use literal 1 here, but you can set $=1.'"
       (is (= 1 (run "($ := 1; $[0])"))))
 
@@ -59,6 +69,7 @@
       (is (= 1 (run "1[0]"))))
 
     ;; I think the weirdness of 2a/2b suggests that you don't do jsonata-flatten until the end (in bi/finish).
+    ; *THIS*
     (testing "Jsonata quirk 2a: compare to 2b. If you stop here, you merge results."
       (is (= [1 2 3 4 5 6]
              (run "[{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums"))))
@@ -68,9 +79,11 @@
              (run "[{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums[2]"))))
 
     ;; By the way, Jsonata allows single quotes in the expression; JSON doesn't allow them in the data.
+    ; *THIS*
     (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
       (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]"))))
 
+    ; *THIS*
     (testing "Jsonata quirk 3: Note that it doesn't flatten to singleton here."
       (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]")))) ; Same as above; this one mentions quirk.
 
@@ -96,6 +109,7 @@
       (is (= [[false] [true] [false]]
              (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]"))))
 
+    ; *THIS*
     (testing "use of $match (1)"
       (is (= {"match" "foo", "index" 2, "groups" []}  (run "$match(\"bbfoovar\", /foo/)"))))
 
@@ -121,7 +135,7 @@
     #_(testing "That you can return functions for built-ins"
         (is (= [bi/$sum bi/$sum] (run "[1,2].$sum"))))))
 
-(deftest code-block-evaluations true
+(deftest code-block-evaluations
   (testing "Code block:"
     (testing "simple code-blocks."
       (is (= [2 3 4 5 6] (run "($inc := function($i)    {$i + 1};  $map([1..5], $inc))")))
@@ -129,10 +143,11 @@
       (is (= 115         (run "($add := function($i, $j){$i + $j}; $reduce([1..5], $add, 100))"))))
 
     (testing "array indexing."
-      (is (= "b"         (run "($v := ['a', 'b', 'c' 'd']; $v[1])" )))
-      (is (= "a"         (run "($v := ['a', 'b', 'c' 'd']; $v[-4])")))
-      (is (= "a"         (run "($v := ['a', 'b', 'c' 'd']; $v[0])" ))))
+      (is (= "b"         (run "($v := ['a', 'b', 'c', 'd']; $v[1])" )))
+      (is (= "a"         (run "($v := ['a', 'b', 'c', 'd']; $v[-4])")))
+      (is (= "a"         (run "($v := ['a', 'b', 'c', 'd']; $v[0])" ))))
 
+    ; *THIS*
     (testing "filter 'delimited expressions."
       (is (= [{"type" "mobile", "num" "555-123-4567"} {"type" "mobile", "num" "555-333-4444"}]
              (run "($ := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}}
@@ -140,6 +155,7 @@
                           {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
                       Phone[type = 'mobile'] )"))))
 
+    ; *THIS*
     (testing "map 'delimited expressions'."
       (is (= [100 200]
              (run "($ := [{'Product' : {'price' : 50, 'quantity' : 2}}
@@ -150,6 +166,7 @@
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
       (is (= "abc" (run "'abc'[$]"))))
 
+    ; *THIS*
     (testing "Maybe this is no match because the data is neither object nor array???"
       (is (= :no-match (run "'abc'.$"))))))
 
@@ -164,6 +181,7 @@
     (testing "simple use of context variable (3)"
       (is (= 123 (run "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c.$ )"))))
 
+    ; *THIS*
     (testing "Last part of path expression creates an array."
       (is (= [[1] [2] [3]] (run "[1,2,3].[$]"))))
 
@@ -179,6 +197,7 @@
     (testing "implicit mapping and strange argument"
       (is (= [100 100 100] (run "['a', 'b', 'c'].$sum([50, 50])"))))
 
+    ; *THIS*
     (testing "implicit mapping with use of $."
       (is (= 6 (run "( $ := [1, 2, 3]; $sum($) )"))))
 
@@ -188,20 +207,24 @@
     (testing "binary precedence and non-advancing context variable (2)."
       (is (= 11 (run "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)"))))
 
+    ; *THIS*
     (testing "'code-block' is just an expression"
       (is (= 22 (run "{'a' : 1, 'b' : 22}.($x := 2; $y:= 4; b)"))))
 
     (testing "code-blocks allow closures"
       (is (=  8 (run "($incAmt := 3; $inc := function($n){$n + $incAmt}; $inc(5))"))))
 
+    ; *THIS*
     (testing "assignments return values; semicolon is a separator."
       (is (= 1 (run "{'a' : 1, 'b' : 2}.($x := 3)"))))
 
+    ; *THIS*
     (testing "advancing context variable on apply-map."
       (is (= [68.9, 21.67, 137.8, 107.99]
              (run "( $:= $readFile('data/testing/jsonata/try.json');
                                                Account.Order.Product.(Price*Quantity) )"))))
 
+    ; *THIS*
     (testing "like the try.jsonata page"
       (is (= 336.36
              (run "( $:= $readFile('data/testing/jsonata/try.json');
@@ -233,10 +256,15 @@
   (testing "small code examples from the user's guide"
     (is (= ["20898" "07010-3544" "10878"]
            (run (str addr-data "$ADDR.zipcode )"))))
+
+    ; *THIS*
     (is (= ["20898" "10878"]
            (run (str addr-data "$ADDR.zipcode[$match(/^[0-9]+$/)] )"))))
+
     (is (= "123-456-7890"
            (run (str addr-data "$ADDR.phone.mobile )"))))
+
+    ; *THIS*
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
 
