@@ -64,16 +64,16 @@
                 "$MCgetSource" bi/$MCgetSource, "$MCgetTarget" bi/$MCgetTarget, "$MCnewContext" $MCnewContext})
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns mc-fns))
-(def builtin? (-> builtin-fns keys (into ["$$$" "$$" "$"]) set))
+(def builtin? (-> builtin-fns keys (into ["$$" "$"]) set))
 (def builtin-un-op #{\+, \- :not})
 
 ;;; Binary operators.
 (def numeric-operators    '{\% bi/%, \* bi/*, \+ bi/+, \- bi/-, \/ bi//}) ; :range is not one of these.
-(def comparison-operators '{:<= <=, :>= >=, :!= not=, \< <, \= =, \> >, "in" bi/in})
+(def comparison-operators '{:<= bi/<=, :>= bi/>=, :!= bi/!=, \< bi/<, \= bi/=, \> bi/>, "in" bi/in})
 (def boolean-operators    '{:and and :or or})
 (def string-operators     '{\& bi/&})
-(def other-operators      '{#_#_\. bi/step->, \. bi/dot-map :thread bi/thread :apply-map bi/apply-map :apply-filter bi/apply-filter
-                           :apply-reduce bi/apply-reduce})
+(def other-operators      '{:apply-map bi/dot-map :apply-filter bi/apply-filter :apply-reduce bi/apply-reduce
+                            :thread bi/thread })
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
@@ -510,7 +510,6 @@
          (or (not (contains? (s/registry) tag))
              (s/valid? tag (:result ?pstate))))))
 
-
 (defn parse-list
   "Does parse parametrically for <open-char> ( <item> ( <char-sep> <item>)? )? <close-char>"
   ([pstate char-open char-close char-sep]
@@ -796,14 +795,15 @@
                                            (recall ?ps :then)
                                            (:result ?ps)))))
 
-;;; <code-block> := '(' ( <jvar-decl> | <exp> )* ')'
-;;; <map-exp>    := '(' ( <jvar-decl> | <exp> )* ')'
-(defrecord JaApplyMap [body])
+;;; <map-exp>    := '(' <exp> ')'
+(defrecord JaPrimary [exp])
 (defparse :ptag/apply-map
   [ps]
-    (as-> ps ?ps
-      (parse-list ?ps \( \) \; :ptag/block-elem)
-      (assoc ?ps :result (->JaApplyMap (:result ?ps)))))
+  (as-> ps ?ps
+    (eat-token ?ps \()
+    (parse :ptag/exp ?ps)
+    (eat-token ?ps \))
+    (assoc ?ps :result (->JaPrimary (:result ?ps)))))
 
 ;;; <filter-exp> := '[' <exp> ']'
 (defrecord JaApplyFilter [body]) ; This accommodates aref expressions too.

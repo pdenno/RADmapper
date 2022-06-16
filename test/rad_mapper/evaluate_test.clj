@@ -19,8 +19,17 @@
 (deftest small-things
   (testing "All the, small things (execute):"
 
-    (testing "simple access of $"
-      (is (= [1 2 3] (run "[{'a' : 1}, {'a' : 2}, {'a' : 3}].(a)"))))
+    (testing "JSONata doesn't recognize assignment to $ inside a code block."
+      (is (nil? (run "($ := [1]; $)"))))
+
+    (testing "simple mapping"
+      (is (= [1 2 3] (run "[{'a' : 1}, {'a' : 2}, {'a' : 3}].a"))))
+
+    (testing "simple mapping (2)"
+      (is (= [2 3 4] (run "[{'a' : 1}, {'a' : 2}, {'a' : 3}].(a + 1)"))))
+
+    (testing "simple mapping (3)"
+      (is (= [2 3 4] (run "($f := function($x){$x+1}; [1,2,3].$f($))"))))
 
     (testing "simple navigation"
       (is (= 33 (run "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)"))))
@@ -31,11 +40,12 @@
     (testing "navigation with aref"
       (is (= 525 (run "{'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )"))))
 
-    ;; Note that to get the following result from JSONata Exerciser, you have to put the data on the LHS,
-    ;; It flattens when done inline as [[1,2,3], [4]].$ because that array is JSONata, not JSON.
-    ; *THIS*
+    ;; Note that JSONata Exerciser assumes JSON data if
+    ;; (1) the data is in the LHS pane, or
+    ;; (2) the data is assigned to a $var in a code block.
+    ;; Otherwise, it is treated as JSONata data and flattening is applied.
     (testing "jsonata flatten (1); JSON data"
-      (is (= [[1 2 3] [4]] (run "($ := [[1, 2, 3], [4]]; $)"))))
+      (is (= [[1 2 3] [4]] (run "($v := [[1, 2, 3], [4]]; $v)"))))
 
     (testing "jsonata flatten (2) in-line data"
       (is (= [1 2 3 4] (run "[[1,2,3], [4]].$"))))
@@ -43,7 +53,6 @@
     (testing "jsonata flatten (3) in-line data"
       (is (= 2 (run "[[1,2,3], 4].$[1]"))))
 
-    ; *THIS*
     (testing "Jsonata's flattening odd consequences (1) in-line data"
       (is (= [1 4] (run "[[1,2,3], 4].$[0][0][0][0]"))))
 
@@ -63,7 +72,7 @@
       (is (= 11 (run "{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}.(a.b.c + d.e )"))))
 
     (testing "Jsonata quirk 1: you can't use literal 1 here, but you can set $=1.'"
-      (is (= 1 (run "($ := 1; $[0])"))))
+      (is (= 1 (run "($v := 1; $v[0])"))))
 
     (testing "Jsonata quirk 1: ToDo: Note that RADmapper doesn't mind."
       (is (= 1 (run "1[0]"))))
@@ -150,17 +159,17 @@
     ; *THIS*
     (testing "filter 'delimited expressions."
       (is (= [{"type" "mobile", "num" "555-123-4567"} {"type" "mobile", "num" "555-333-4444"}]
-             (run "($ := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}}
-                          {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}}
-                          {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
-                      Phone[type = 'mobile'] )"))))
+             (run "($p := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}}
+                           {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}}
+                           {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
+                      $p.Phone[type = 'mobile'] )"))))
 
     ; *THIS*
     (testing "map 'delimited expressions'."
       (is (= [100 200]
-             (run "($ := [{'Product' : {'price' : 50, 'quantity' : 2}}
-                          {'Product' : {'price' : 50, 'quantity' : 4}}];
-                    Product.(price * quantity) )"))))))
+             (run "($p := [{'Product' : {'price' : 50, 'quantity' : 2}}
+                           {'Product' : {'price' : 50, 'quantity' : 4}}];
+                    $p.Product.(price * quantity) )"))))))
 (deftest why
   (testing "Why:"
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
@@ -179,14 +188,14 @@
       (is (= [1 2 3] (run "[1 , 2, 3].$"))))
 
     (testing "simple use of context variable (3)"
-      (is (= 123 (run "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c.$ )"))))
+      (is (= 123 (run "( $v := {'a' : {'b' : {'c' : 123}}}; $v.a.b.c.$ )"))))
 
     ; *THIS*
     (testing "Last part of path expression creates an array."
       (is (= [[1] [2] [3]] (run "[1,2,3].[$]"))))
 
     (testing "simple use of contex variable, or not (1)"
-      (is (= 123 (run "( $ := {'a' : {'b' : {'c' : 123}}}; a.b.c )"))))
+      (is (= 123 (run "( $v := {'a' : {'b' : {'c' : 123}}}; $v.a.b.c )"))))
 
     (testing "simple use of contex variable, or not (2)"
       (is (= 123 (run "{'a' : {'b' : {'c' : 123}}}.a.b.c"))))
@@ -199,10 +208,10 @@
 
     ; *THIS*
     (testing "implicit mapping with use of $."
-      (is (= 6 (run "( $ := [1, 2, 3]; $sum($) )"))))
+      (is (= 6 (run "( $v := [1, 2, 3]; $sum($v) )"))))
 
     (testing "binary precedence and non-advancing context variable (1)."
-      (is (= 11 (run "($ := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; a + b * c + d)"))))
+      (is (= 11 (run "($v := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; $v(a + b * c + d) )"))))
 
     (testing "binary precedence and non-advancing context variable (2)."
       (is (= 11 (run "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)"))))
@@ -268,14 +277,17 @@
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
 
-(deftest context
-  (testing "Context management:"
-    (is (= 33 (run "( $ := {'a' : {'b' : {'c' : 30, 'f' : 3}}}; a.b.c + a.b.f)")))))
-
-;;; "($v := ['a', 'b', 'c' 'd']; $v[1])"
+;;; {'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)
 (defn tryme []
   (bi/finish
-   (let [$v ["a" "b" "c" "d"]]
-     (bi/step->
-      $v
-      (bi/apply-filter nil (fn [_x1] (bi/with-context _x1 1)))))))
+   (bi/map-step->
+    (-> {} (assoc "a" (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3))))))
+    (bi/+
+     (bi/map-step->
+      (bi/dot-field "a")
+      (bi/dot-field "b")
+      (bi/dot-field "c"))
+     (bi/map-step->
+      (bi/dot-field "a")
+      (bi/dot-field "b")
+      (bi/dot-field "f"))))))

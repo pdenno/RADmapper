@@ -2,6 +2,7 @@
 {:lint-as {#_#_rad-mapper.builtins/defn*      clojure.core/defn
            rad-mapper.builtins/enforce    clojure.core/defmacro
            rad-mapper.builtins/step->     clojure.core/defmacro
+           rad-mapper.builtins/defn*      clojure.core/defn
            rad-mapper.parse/defparse      clojure.core/defn
            rad-mapper.rewrite/defrewrite  clojure.core/defn
            

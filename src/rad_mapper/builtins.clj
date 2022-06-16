@@ -1,11 +1,12 @@
 (ns rad-mapper.builtins
   "Built-in functions implementing the expression language of the mapping language.
    Functions with names beginning with a '$' are available to the user (e.g. $filter).
-   Others (such as bi/dot-map and bi/strcat) implement other parts of the expression language
+   Others (such as bi/dot-field and bi/strcat) implement other parts of the expression language
    but are not available directly to the user except through the operators (e.g. the dot, and &
    respectively for navigation to a property and concatenation)."
-  (:refer-clojure :exclude [+ - * /])
+  (:refer-clojure :exclude [+ - * / < > <= >= =]) ; So be careful!
   (:require
+   [clojure.core                 :as core]
    [clojure.data.json            :as json]
    [clojure.spec.alpha           :as s]
    [clojure.string               :as str]
@@ -17,18 +18,9 @@
 
 ;;; ToDo:
 ;;;   1) Investigate Small Clojure Interpreter.
-;;;   2) Simplify use of singlize and jsonata-flatten.
 
-(def $$
-  "The root context data, like in JSONata."
-  (atom nil))
-
-(def ^:dynamic $
-  "In evaluating code, $ := ... or use of $ 'out of the blue' might occur.
-   This is used to find the value of $ set by those means.
-   It is only valid before the action starts; after that, only the threaded
-   state object matters."
-  (atom nil))
+(def $$ "The root context data, like in JSONata." (atom nil))
+(def ^:dynamic $ "Context variable"   (atom nil))
 
 ;;; ToDo: Swap atom value or create new atom as I'm doing now?
 (defmacro with-context
@@ -37,7 +29,7 @@
   `(binding [$ (atom ~val)] ~@body))
 
 ;;; ToDo: Write some documentation once you figure it out!
-;;; So far, this is called by step->, but I think there may be other forms where it makes sense to do.
+;;; So far, this is called by map-step->>, but I think there may be other forms where it makes sense to do.
 (defn set-context! [val] (reset! $ val))
 
 (s/def ::state-obj true) ; ToDo: Can it be useful?
@@ -45,17 +37,10 @@
 (s/def ::non-zero (s/and number? #(-> % zero? not)))
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
-#_(def access-not-map?
-  "An atom that is set to true when the last delimited expression (apply-{map, filter, reduce}
-   did not receive a vector as an argument and false in the converse case.
-   This behavior that carries  through to bi/finish." ; ToDo: If you can eliminate bi/finish (a goal) rewrite this comment.
-  (atom false))
-
 (defn reset-env
   "Clean things up just prior to running user code."
   []
-  (reset! $ nil)
-  #_(reset! access-not-map? false))
+  (reset! $ nil))
 
 (defn flatten-except-json
   "Adapted from core/flatten:
@@ -115,35 +100,44 @@
   [obj]
   ;; The test is to handle code like {'nums' : [[1], 2, 3]}.nums[0], which should return [1].
   ;; But it seems like a quirk of JSONata that this wouldn't return the scalar, 1.
-  (if false #_@access-not-map? obj (jsonata-flatten obj)))
+  (jsonata-flatten obj))
 
 (defn deref$
-  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/step-> [[1 2 3] [1]] (deref bi/$))
+  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/map-step->> [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
   ([] @$)
   ([val] (set-context! val) val))
 
+;;; ToDo: I think when things settle down, flattening won't be needed here.
+(defmacro defn*
+  "Convenience macro for numerical relationships."
+  [fn-name doc-string [& args] & body]
+  `(defn ~fn-name
+     ~doc-string
+     [~@args]
+     (let [~@(mapcat #(list % `(jsonata-flatten ~%)) args)]
+       ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
+       ~@body)))
+
 ;;;========================= JSONata built-ins  =========================================
-(defn + "plus" [x y]
-  (s/assert ::number x)
-  (s/assert ::number y)
-  (clojure.core/+ x y))
+(defn* +  "plus"   [x y]   (core/+ x y))
+(defn* -  "minus"  [x y]   (core/- x y))
+(defn* *  "times"  [x y]   (core/* x y))
+(defn* /  "divide" [x y]   (s/assert ::non-zero y) (double (core// x y)))
+(defn* >  "greater-than"          [x y] (core/>  x y))
+(defn* <  "less-than "            [x y] (core/<  x y))
+(defn* >= "greater-than-or-equal" [x y] (core/>= x y))
+(defn* <= "less-than-or-equal"    [x y] (core/<= x y))
 
-(defn - "minus" [x y]
-  (s/assert ::number x)
-  (s/assert ::number y)
-  (clojure.core/- x y))
+(defn =
+  "equal, need not be numbers"
+  [x y]
+  (core/= (jsonata-flatten x) (jsonata-flatten y)))
 
-(defn * "times"  [x y]
-  (s/assert ::number x)
-  (s/assert ::number y)
-  (clojure.core/* x y))
-
-(defn / "divide" [x y]
-  (s/assert ::number x)
-  (s/assert ::number y)
-  (s/assert ::non-zero y)
-  (double (clojure.core// x y)))
+(defn !=
+  "not equal, need not be numbers"
+  [x y]
+  (core/= (jsonata-flatten x) (jsonata-flatten y)))
 
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
@@ -153,19 +147,18 @@
   [x y]
   `(-> ~x ~y))
 
-(defn dot-map
+(defn dot-field
   "Perform the mapping activity of the 'a' in $.a, for example.
    This function is called with the state object. It returns the
    state object with :sys/$ updated."
-  ([prop|fn] (dot-map @$ prop|fn))
+  ([prop|fn] (dot-field @$ prop|fn))
   ([obj prop|fn]
-   (as-> (cond (= prop|fn 'bi/$)              obj ; For example a.b.$
-              (string? prop|fn)              (if-let [res (get obj prop|fn)]
-                                               (do #_(reset! access-not-map? true) res)
-                                               (do #_(reset! access-not-map? false)
-                                                   (->> (mapv #(get % prop|fn) obj)
-                                                        (remove nil?)
-                                                        vec))),
+   (as-> (cond (core/= prop|fn 'bi/$)              obj ; For example a.b.$
+               (string? prop|fn)              (if-let [res (get obj prop|fn)]
+                                                res
+                                                (->> (mapv #(get % prop|fn) obj)
+                                                     (remove nil?)
+                                                     vec)),
               (fn? prop|fn)                  (->> (mapv prop|fn obj)
                                                   (remove nil?)
                                                   vec)
@@ -173,23 +166,27 @@
        ?res
      (if (vector? ?res) (vec (remove nil? ?res)) ?res))))
 
-(defmacro step->
-  "Save the current context, walk through the body navigation, and restore
-   current  context from what is saved. The topic provided is a state-obj."
+;;; This is the ultimate effect of :apply-map in the grammar (especially a series of them).
+(defmacro map-step->>
+  "This implements the JSONata '.' mapping operator.
+   Walk through the body mapping (see mbody's reduce below).
+   The topic provided is assumed to be the context obj."
   [topic & body]
-  `(let [top# ~topic]
-     (with-context top#
-       (let [res# (-> top# ~@(interpose '(rad-mapper.builtins/set-context!) body))]
-         res#))))
+  (let [mbody (map (fn [body-step] 
+                     `(reduce (fn [res# arg#]
+                                (let [func# (fn [elem#] (binding [bi/$ (atom elem#)] ~body-step))]
+                                  (conj res# (func# (bi/singlize arg#)))))
+                              []))
+                     body)]
+    `(let [top# ~topic]
+       (with-context top#
+         (let [res# (->> top# ~@(interpose '(rad-mapper.builtins/set-context!) mbody))]
+           (jsonata-flatten res#))))))
 
-(defn apply-map
-  "mapv the argument object over the argument fn."
-  [obj fun]
-  (if (vector? obj)
-    (do #_(reset! access-not-map? false)
-        (->> obj (mapv fun) (remove nil?) vec))
-    (do #_(reset! access-not-map? true)
-        (fun obj))))
+;;; ToDo: This one is a bit of a hack!
+#_(defmacro primary [topic & body]
+  "Set the context and a variable to topic. If the 
+   If the top-level of body has (...")
 
 (defn apply-filter
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
@@ -205,21 +202,16 @@
    (let [prix (try (pred|ix-fn obj) (catch Exception _e nil))] ; On obj??? Don't I want the index here? (Or does it not matter?)
      (if (number? prix) ; Array behavior.
        (let [ix  (-> prix Math/floor int)] ; Really! I checked!
-         (letfn [(access [obj]
+         (letfn [(aref [obj]
                    (let [len (if (vector? obj) (count obj) 1)
-                         ix  (if (neg? ix) (clojure.core/+ len ix) ix)]
-                     (if (or (and (pos? ix) (>= ix len))
-                             (and (neg? ix) (> (Math/abs ix) len)))
+                         ix  (if (neg? ix) (core/+ len ix) ix)]
+                     (if (or (and (pos? ix) (core/>= ix len))
+                             (and (neg? ix) (core/> (Math/abs ix) len)))
                        nil ; Rule 2, above.
                        (if (vector? obj) (nth obj ix) obj))))]
-            (if (and (vector? obj) (not-any? vector? obj)) ; 2022-06-13 was @access-not-map?
-             (access obj)
-             (mapv access (singlize obj)))
-           ;; ToDo: The following code is speculative and temporary (and doesn't work!).
-           #_(cond
-             (-> obj vector? not)                          obj
-             (or @access-not-map? (not-any? vector? obj)) (access obj)
-             :else                                        (mapv access (singlize obj)))))
+           (if (core/= :bi/json-array (-> obj meta :bi/type))
+               (-> obj aref jsonata-flatten)
+               (->> obj singlize (mapv aref) jsonata-flatten))))
        ;; Filter behavior.
        (->> obj
             singlize
@@ -342,7 +334,7 @@
   If not supplied, the initial value is the first value in the array parameter"
   ([coll func init]  (if (-> func meta :enforce?)
                        (reduce-body-enforce coll func init)
-                       (if (<= 2 (-> func meta :params count) 4)
+                       (if (core/<= 2 (-> func meta :params count) 4)
                          ($reduce (into (vector init) coll) func)
                          (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
                                          {:vars (-> func meta :params)})))))
@@ -359,7 +351,7 @@
 ;;; ToDo: sym-bi-access IS executed for $map in rewrite. So can that for filter too?
 (defn sym-bi-access
   "When doing mapping such as '$.(A * B)' the expressions A and B
-   were rewritten (bi/dot-map 'A'). There needs to be a first argument
+   were rewritten (bi/dot-field 'A'). There needs to be a first argument
    to that, before the 'A'. This function inserts the argument symbol
    in such forms so that they can be wrapped in (fn [<that symbol>] ...)
    and called in map/filter/reduce settings."
@@ -367,9 +359,9 @@
   (letfn [(sba-aux [form]
             (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
                   (vector? form) (mapv sba-aux form)
-                  (seq? form) (cond (and (= (first form) 'bi/dot-map) (== 2 (count form)))
-                                    (list 'bi/dot-map sym (second form))
-                                    (= form '(clojure.core/deref rad-mapper.builtins/$)) sym ; 2022-05-29, added.
+                  (seq? form) (cond (and (core/= (first form) 'bi/dot-field) (== 2 (count form)))
+                                    (list 'bi/dot-field sym (second form))
+                                    (core/= form '(core/deref rad-mapper.builtins/$)) sym ; 2022-05-29, added.
                                     :else (map sba-aux form))
                   :else form))]
     (sba-aux form)))
@@ -458,6 +450,7 @@
     (int (Math/pow x y))
     (Math/pow x y)))
 
+;;; ToDo: Maybe these should be defn* ?
 ;;; $max
 (defn $max
   "Return the largest the numeric argument (an array or singleton)."
@@ -483,7 +476,7 @@
   "Return the sum of the argument (a vector of numbers)."
   [obj v]
   (let [v (singlize v)]
-     (mapv #(let [_ignore %] (apply clojure.core/+ v)) obj)))
+     (mapv #(let [_ignore %] (apply core/+ v)) obj)))
 
 ;;; $sqrt
 (defn $sqrt
@@ -612,7 +605,7 @@
    (reset! $$ (when-let [sheet (->> (ss/load-workbook filename) (ss/select-sheet sheet-name))]
                (let [row1 (mapv ss/read-cell (-> sheet ss/row-seq first ss/cell-seq ss/into-seq))
                      len  (loop [n (dec (-> sheet ss/row-seq first .getLastCellNum))]
-                            (cond (= n 0) 0,
+                            (cond (core/= n 0) 0,
                                   (not (nth row1 n)) (recur (dec n)),
                                   :else (inc n)))
                      keys (map keyword (take len (util/string-permute "ABCDEFGHIJKLMNOPQRSTUVWXYZ")))
@@ -654,12 +647,12 @@
     "Return a function that can be used immediately to make the query defined in body."
   [body]
   (fn [data|db]
-    (let [conn (if (= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
+    (let [conn (if (core/= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
       (->> (d/q (qform-runtime-sub body {}) conn) ; This is possible because body is data to d/q.
            ;; Remove binding sets that involve a schema entity.
            (remove (fn [bset] (some (fn [bval]
                                       (and (keyword? bval)
-                                           (= "db" (namespace bval))))
+                                           (core/= "db" (namespace bval))))
                                     (vals bset))))
            vec))))
 
@@ -670,12 +663,12 @@
   (fn [& args]
     (let [param-subs (zipmap params args)] ; the closure.
       (fn [data|db]
-        (let [conn (if (= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
+        (let [conn (if (core/= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
            (->> (d/q (qform-runtime-sub body param-subs) conn)
                 ;; Remove binding sets that involve a schema entity.
                 (remove (fn [bset] (some (fn [bval]
                                            (and (keyword? bval)
-                                                (= "db" (namespace bval))))
+                                                (core/= "db" (namespace bval))))
                                          (vals bset))))
                 vec))))))
 

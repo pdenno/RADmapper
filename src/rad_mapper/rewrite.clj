@@ -133,7 +133,8 @@
 (defrewrite :JaJvarDecl [m]
   (binding [*assume-json-data?* true] ; This is for bi/jsonata-flatten, Rule 3.
     (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
-          `(~(dgensym!) (bi/set-context! ~(-> m :init-val rewrite))),
+          ;; JSONata doesn't recognize assigment to $ in a code block; it returns *no match*
+          `(~(dgensym!) (bi/set-context! nil #_(-> m :init-val rewrite))),
           ;; ToDo: Is setting $$ a legit user activity?
           (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
           `(~(dgensym!) (reset! bi/$$ ~(-> m :init-val rewrite))),
@@ -159,7 +160,7 @@
 (defrewrite :JaField [m]
   (if inside-delim?
     (-> m :field-name)
-    `(~'bi/dot-map  ~(-> m :field-name))))
+    `(~'bi/dot-field  ~(-> m :field-name))))
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
@@ -247,19 +248,14 @@
 
 ;;; JaPath are created in gather-paths.
 (defrewrite :JaPath [m]
-  `(bi/step->
+  `(bi/map-step->>
     ~@(->> m
            :path
            (remove #(or (symbol? %) (keyword? %)))
            (map rewrite))))
 
-(defrewrite :JaApplyMap [m]
-  (reset-dgensym!)
-  (let [sym (dgensym!)
-        body (-> m :body rewrite)]
-    `(bi/apply-map
-      (fn [~sym]
-        (bi/with-context ~sym ~@body)))))
+(defrewrite :JaPrimary [m]
+  `(bi/primary ~@(-> m :body rewrite)))
 
 (defrewrite :JaApplyFilter [m]
   (reset-dgensym!)
@@ -286,9 +282,10 @@
 (s/def ::operators (s/coll-of ::info-op :kind vector?))
 (s/def ::info (s/keys :req-un [::args ::operators]))
 
-(defn gather-paths
-  "Step through the bvec and collect segments that include :path?=true operators/operands into
-   JaPath objects."
+;;; Note that this obviates the need for :apply-map to do anything but provide the body function.
+(defn gather-paths ; ToDo: Should :apply-reduce really be :path?=true ?
+  "Step through the bvec and collect segments that include :path?=true operators/operands into JaPath objects.
+   The :path?=true things are bi/jmap, :apply-map, :apply-filter, bi/thread and :apply-reduce." 
   [bvec]
   (loop [bv bvec
          res []]
@@ -410,16 +407,17 @@
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
 
-;;; A lower :val means tighter binding. For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
+;;; A lower :val means tighter binding. ToDo: That's a leftover from MiniZinc!
+;;; For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 ;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
 (def op-precedence-tbl ; lower :val means binds tighter.
   {:or               {:path? false :assoc :left :val 1000}
    :and              {:path? true  :assoc :left :val 900}
-   '<                {:path? false :assoc :none :val 800}
-   '>                {:path? false :assoc :none :val 800}
-   :<=               {:path? false :assoc :none :val 800}
-   :>=               {:path? false :assoc :none :val 800}
-   '=                {:path? false :assoc :none :val 800}
+   'bi/<             {:path? false :assoc :none :val 800}
+   'bi/>             {:path? false :assoc :none :val 800}
+   'bi/<=            {:path? false :assoc :none :val 800}
+   'bi/>=            {:path? false :assoc :none :val 800}
+   'bi/=             {:path? false :assoc :none :val 800}
    :!=               {:path? false :assoc :none :val 800}
    :in               {:path? false :assoc :none :val 700}
    'bi/thread        {:path? true  :assoc :left :val 700} ; ToDo guessing
@@ -430,11 +428,7 @@
    'bi/*             {:path? false :assoc :left :val 300}
    'bi/%             {:path? false :assoc :left :val 300}
    'bi//             {:path? false :assoc :left :val 300}
-   #_#_'bi/step->    {:path? true  :assoc :left :val 150}
-   'bi/dot-map       {:path? true  :assoc :left :val 150}
-   #_#_'bi/apply-map     {:path? true  :assoc :left :val 150}
-   #_#_'bi/apply-filter  {:path? true  :assoc :left :val 100}
-   :apply-map        {:path? true  :assoc :left :val 100}
+   'bi/dot-map       {:path? true  :assoc :left :val 100}
    :apply-filter     {:path? true  :assoc :left :val 100}
    :apply-reduce     {:path? true  :assoc :left :val 100}})
 
