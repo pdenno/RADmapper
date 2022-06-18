@@ -72,7 +72,7 @@
 (def comparison-operators '{:<= bi/<=, :>= bi/>=, :!= bi/!=, \< bi/<, \= bi/=, \> bi/>, "in" bi/in})
 (def boolean-operators    '{:and and :or or})
 (def string-operators     '{\& bi/&})
-(def other-operators      '{:apply-map bi/dot-map :apply-filter bi/apply-filter :apply-reduce bi/apply-reduce
+(def other-operators      '{\. bi/get-step :apply-filter bi/filter-step :apply-reduce bi/reduce-step
                             :thread bi/thread })
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
@@ -434,18 +434,15 @@
          (assoc :result (:head pstate#))
          (eat-token pstate# ~test))))
 
-;;; This is an abstraction to protect :result while something else is swapped in.
-;;; The 'from' is what key of ps to take from (defaults to :result).
-(defmacro store [ps key & [from]]
-  `(let [ps# ~ps
-         key# ~key]
-     (assoc-in ps# [:local 0 key#]
-               (~(or from :result) ps#))))
+(defn store
+  "This and recall are used to keep parsed content tucked away on the parse state object."
+  ([ps key] (store ps key (:result ps)))
+  ([ps key val] (assoc-in ps [:local 0 key] val)))
 
-;;; ...and this is for getting the value back.
-(defmacro recall [ps tag]
-  `(let [ps# ~ps]
-     (-> ~ps :local first ~tag)))
+(defn recall
+  "This and store are used to keep parsed content tucked away on the parse state object."
+  [ps key]
+  (-> ps :local first key))
 
 (defn parse-dispatch [tag & _] tag)
 
@@ -601,28 +598,20 @@
 (s/def ::tokens (s/and vector? (s/coll-of ::token)))
 (s/def ::token  (s/and map? #(contains? % :tkn) #(-> % :tkn nil? not)))
 (s/def ::head #(not (nil? %)))
-(declare operand-exp? delimited-next? binary-next?)
+(declare operand-exp?)
 
-(defn exp-continuable?
-  "Return the operator represented by the token (or token pair), if any."
-  [tkn1 tkn2]
-  (let [bin-op? (binary-op? tkn1)]
-    (cond (and bin-op? (= \( tkn2)) :apply-map
-          bin-op? bin-op?
-          :else ({\[ :apply-filter \{ :apply-reduce} tkn1))))
+(def bin-op-plus? (merge binary-op? '{\[ bi/filter-step \{ bi/reduce-step}))
 
 (defrecord JaBinOpSeq [seq])
 ;;;=============================== Grammar ===============================
 ;;; <exp> ::= <base-exp> (  <bin-op-continuation>  | '?' <conditional-tail> ) ?
 (defparse :ptag/exp
   [ps]
-  (let [base-ps (-> (parse :ptag/base-exp ps) (store :operand-1) (look 1))
-        tkn2 (-> base-ps :look (get 1))
-        tkn1 (:head base-ps)]
-    (cond (= \? tkn1)
+  (let [base-ps (-> (parse :ptag/base-exp ps) (store :operand-1))]
+    (cond (= \? (:head base-ps))
           (parse :ptag/conditional-tail base-ps :predicate (:result base-ps)),
 
-          (exp-continuable? tkn1 tkn2)
+          (-> base-ps :head bin-op-plus?)
           (as-> base-ps ?ps
             (parse :ptag/bin-op-continuation ?ps)
             (assoc ?ps :result (->JaBinOpSeq (into (vector (recall ?ps :operand-1))
@@ -632,29 +621,20 @@
 (defrecord JaOpOperandSeq [op-operand-seq])
 (defparse :ptag/bin-op-continuation
   [ps]
-  (loop [ps (look ps 1)
+  (loop [ps ps
          oseq []]
-    (let [tkn1 (:head ps)
-          tkn2 (-> ps :look (get 1))
-          cont? (exp-continuable? tkn1 tkn2)]
-    (if (not cont?)
+    (let [bin-op (-> ps :head bin-op-plus?)]
+    (if (not bin-op)
       (assoc ps :result (->JaOpOperandSeq oseq))
-      (let [p (cond (= cont? :apply-map)
-                    (as-> ps ?ps
-                      (eat-token ?ps \.)
-                      (parse :ptag/delimited-exp ?ps :operand-2? true)
-                      (look ?ps 1)),
-                    (#{:apply-filter :apply-reduce} cont?)
-                    (as-> ps ?ps
-                      (parse :ptag/delimited-exp ?ps :operand-2? true)
-                      (look ?ps 1)),
-                    :else
-                    (as-> ps ?ps
-                      (eat-token ?ps)
-                      (parse :ptag/base-exp ?ps :operand-2? true)
-                      (look ?ps 1)))]
-        (recur p (-> oseq (conj cont?) (conj (:result p)))))))))
-
+      (let [p (if (#{\[ \}} (:head ps))
+                (as-> ps ?ps
+                  (store ?ps :operator (-> ?ps :head bin-op-plus?))
+                  (parse :ptag/base-exp ?ps :operand-2? true))
+                (as-> ps ?ps
+                  (store ?ps :operator bin-op)
+                  (eat-token ?ps) ; ToDo: I think this is necessarily \.
+                  (parse :ptag/base-exp ?ps :operand-2? true)))]
+        (recur p (-> oseq (conj (recall p :operator)) (conj (:result p)))))))))
 
 ;;; ToDo: qvar here might make it permissive of nonsense. Needs thought.
 ;;; <base-exp> ::= <delimited-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <field> | <jvar> | <qvar>
@@ -687,15 +667,15 @@
 
 ;;;  But see $.{ in http://docs.jsonata.org/sorting-grouping.
 
-;;; <delimited-exp> ::= <code-block> | <filter-exp> | <reduce-exp> | <range|array-exp> | <obj-exp>
+;;; <delimited-exp> ::= <code-block> | <primary> | <filter-exp> | <reduce-exp> | <range|array-exp> | <obj-exp>
 (defparse :ptag/delimited-exp
   [ps & {:keys [operand-2?]}]
   (let [head (:head ps)]
     (if operand-2? ; http://docs.jsonata.org/path-operators
       (case head
-        \(  (parse :ptag/apply-map    ps)
-        \[  (parse :ptag/apply-filter ps) ; Includes aref.
-        \{  (parse :ptag/apply-reduce ps))
+        \(  (parse :ptag/primary    ps)
+        \[  (parse :ptag/filter-exp ps) ; Includes aref.
+        \{  (parse :ptag/reduce-exp ps))
       (case head
         \(  (parse :ptag/code-block ps)
         \[  (parse :ptag/range|array-exp ps)
@@ -720,20 +700,6 @@
   (binding [*debugging?* false] ; I don't think we need to see this!
     (continue-mac ps [:ptag/field :ptag/jvar :ptag/literal :ptag/fn-call :ptag/unary-op-exp])))
 
-
-(defn delimited-next?
-  "Check 'next-tkns' from operand-exp?. Return true if the tokens
-   start a delimited-exp (as opposed to a fn-call, etc.)."
-  [{:keys [next-tkns]}]
-  (or (= [\., \(] next-tkns)
-      (#{\[ \{} (first next-tkns))))
-
-(defn binary-next?
-  "Check 'next-tkns' from operand-exp?. Return true if the tokens
-   start a delimited-exp (as opposed to a fn-call, etc.)."
-  [{:keys [next-tkns]}]
-  (-> next-tkns first binary-op?))
-
 (defparse :ptag/field
   [ps]
   (as-> ps ?ps
@@ -756,7 +722,8 @@
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
     (assoc ?ps :result (map->JaObjExp {:exp (:result ?ps)}))))
 
-(defparse :ptag/apply-reduce
+;;; <reduce-exp> ::= '{' <obj-kv-pair>* '}'
+(defparse :ptag/reduce-exp
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
@@ -795,9 +762,9 @@
                                            (recall ?ps :then)
                                            (:result ?ps)))))
 
-;;; <map-exp>    := '(' <exp> ')'
+;;; <primary>    := '(' <exp> ')'
 (defrecord JaPrimary [exp])
-(defparse :ptag/apply-map
+(defparse :ptag/primary
   [ps]
   (as-> ps ?ps
     (eat-token ?ps \()
@@ -807,7 +774,7 @@
 
 ;;; <filter-exp> := '[' <exp> ']'
 (defrecord JaApplyFilter [body]) ; This accommodates aref expressions too.
-(defparse :ptag/apply-filter
+(defparse :ptag/filter-exp
   [ps]
   (as-> ps ?ps
     (eat-token ?ps \[)
@@ -851,22 +818,12 @@
     (assoc ?ps :result (->JaJvarDecl (recall ?ps :jvar)
                                      (recall ?ps :init-val)))))
 
-;;; This should return a <call-exp> at the end of path.
-(defparse :ptag/map-call
-  [pstate]
-  (parse :ptag/exp pstate))
-
-(defparse :ptag/map-comprehension
-  [pstate]
-  (parse :ptag/list-comprehension pstate))
-
-
 ;;; <unary-exp> ::= <unary-operator> <exp>
 (defrecord JaUniOpExp [uni-op exp])
 (defparse :ptag/unary-op-exp
   [ps]
     (as-> ps ?ps
-      (store ?ps :op :head)
+      (store ?ps :op (:head ?ps))
       (eat-token ?ps builtin-un-op)
       (let [{:keys [operand-tag]} (operand-exp? ?ps)] ; ToDo was operand-exp-no-operator?
         (as-> ?ps ?ps1
@@ -924,13 +881,12 @@
 (defparse :ptag/fn-call
   [ps]
     (as-> ps ?ps
-      (store ?ps :fn-name :head)
+      (store ?ps :fn-name (:head ?ps))
       (eat-token ?ps jvar?)
       (eat-token ?ps \()
       (parse-list-terminated ?ps :term-fn #(= % \)) :sep-fn #(= % \,))
-      (store ?ps :args)
       (eat-token ?ps \))
-      (assoc ?ps :result (->JaFnCall (-> ?ps (recall :fn-name) :jvar-name) (recall ?ps :args)))))
+      (assoc ?ps :result (->JaFnCall (-> ?ps (recall :fn-name) :jvar-name) (:result ?ps)))))
 
 ;;; <triples> ::= <triple>+
 (defparse :ptag/triples
@@ -950,13 +906,13 @@
   [ps]
   (as-> ps ?ps
     (eat-token ?ps \[)
-    (store ?ps :ent :head)
+    (store ?ps :ent (:head ?ps))
     (eat-token ?ps qvar?)
-    (store ?ps :role :head)
+    (store ?ps :role (:head ?ps))
     (eat-token ?ps #(or (triple-role? %) (qvar? %)))
     (if (qvar? (:head ?ps))
       (as-> ?ps ?ps1
-          (store ?ps1 :third :head)
+          (store ?ps1 :third (:head ?ps1))
           (eat-token ?ps1))
       (as-> ?ps ?ps1
           (parse :ptag/exp ?ps1)

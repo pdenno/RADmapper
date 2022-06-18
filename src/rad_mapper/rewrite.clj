@@ -92,7 +92,7 @@
 
 (defmulti rewrite-meth #'rewrite-dispatch)
 
-;;; ToDo: Investigate how this happens. It started with including the rewrite in gather-paths.
+;;; ToDo: Investigate how this happens. It started with including the rewrite in gather-steps.
 (defmethod rewrite-meth :default [& args]
   ;(println "****Called :default rewrite-meth")
   {})
@@ -114,9 +114,7 @@
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
-(defrewrite :toplevel [m]
-  `(~'bi/finish
-    (~@(->> m :top rewrite))))
+(defrewrite :toplevel [m] (->> m :top rewrite))
 
 ;;; ToDo: Return to the let-style implementation; assignments are expressions
 (defrewrite :JaCodeBlock [m]
@@ -144,7 +142,7 @@
 
 (defrewrite :JaJvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
-        `(bi/deref$)
+        `bi/deref$
         (and (:special? m) (= "$$" (:jvar-name m)))
         `(deref bi/$$)
         :else (-> m :jvar-name symbol)))
@@ -160,7 +158,7 @@
 (defrewrite :JaField [m]
   (if inside-delim?
     (-> m :field-name)
-    `(~'bi/dot-field  ~(-> m :field-name))))
+    `(~'bi/get-step  ~(-> m :field-name))))
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
@@ -217,7 +215,7 @@
   (let [vars (mapv #(-> % :jvar-name symbol) (:vars m))
         body (-> m :body rewrite)]
     `(-> (fn ~(mapv rewrite (:vars m)) ~body)
-      (with-meta {:params '~vars :body '~body}))))
+      (with-meta {:bi/params '~vars :bi/type :bi/user-fn}))))
 
 (defrewrite :JaTripleRole [m] (:role-name m))
 
@@ -246,29 +244,43 @@
 (defrewrite :JaBinOpSeq [m]
   (->> m :seq rewrite-bvec-as-sexp)) ; This orders element and rewrites them to s-expressions.
 
-;;; JaPath are created in gather-paths.
+(def path-fn? #{:get-step :filter-step :reduce-step :primary :deref$})
+
+(defn wrap-non-path
+  "The steps of bi/map-steps that aren't expressly path functions (for example,
+   they aren't in the set path-fn but rather define data) are wrapped in a function
+   of no arguments. This function takes a form, analyzes it and does that work."
+  [form]
+  (if (or
+       (and (symbol? form) (-> form name keyword path-fn?))
+       (and (seq? form) (-> form first name keyword path-fn?)))
+    form
+    `(bi/stepable ~form)))
+
+;;; JaPath are created in gather-steps.
 (defrewrite :JaPath [m]
-  `(bi/map-step->>
+  `(bi/map-steps
     ~@(->> m
            :path
            (remove #(or (symbol? %) (keyword? %)))
-           (map rewrite))))
+           (map rewrite)
+           (map wrap-non-path))))
 
 (defrewrite :JaPrimary [m]
-  `(bi/primary ~@(-> m :body rewrite)))
+  `(bi/primary ~(-> m :exp rewrite)))
 
 (defrewrite :JaApplyFilter [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
-    `(bi/apply-filter
-      ~(-> m :operand rewrite)
+    `(bi/filter-step
+      #_~(-> m :operand rewrite) ; ToDo: This was part of dealing with the non-compositional semantics. Okay?
       (fn [~sym] (bi/with-context ~sym ~body)))))
 
 (defrewrite :JaApplyReduce [m]
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
-    `(bi/apply-reduce
+    `(bi/reduce-step
       ~(-> m :operand rewrite)
       (fn [~sym] (bi/with-context ~sym ~body)))))
 
@@ -282,10 +294,10 @@
 (s/def ::operators (s/coll-of ::info-op :kind vector?))
 (s/def ::info (s/keys :req-un [::args ::operators]))
 
-;;; Note that this obviates the need for :apply-map to do anything but provide the body function.
-(defn gather-paths ; ToDo: Should :apply-reduce really be :path?=true ?
+;;; Note: If support of filter-step non-compositional semantics is still "a thing" this is the place to fix it.
+(defn gather-steps ; ToDo: Should :reduce-step really be :path?=true ?
   "Step through the bvec and collect segments that include :path?=true operators/operands into JaPath objects.
-   The :path?=true things are bi/jmap, :apply-map, :apply-filter, bi/thread and :apply-reduce." 
+   The :path?=true things are bi/get-step, bi/filter-step, bi/reduce-step, bi/primary."
   [bvec]
   (loop [bv bvec
          res []]
@@ -326,7 +338,7 @@
 (defn bvec2info
   "Gather paths so that they their internal navigation isn't visible, then create the info object."
   [bvec]
-  (reset! diag (-> bvec gather-paths basic-info)))
+  (-> bvec gather-steps basic-info))
 
 (defn update-op-pos
   "Update the :pos values in operators according to new shortened :operands."
@@ -412,7 +424,7 @@
 ;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
 (def op-precedence-tbl ; lower :val means binds tighter.
   {:or               {:path? false :assoc :left :val 1000}
-   :and              {:path? true  :assoc :left :val 900}
+   :and              {:path? false :assoc :left :val 900}
    'bi/<             {:path? false :assoc :none :val 800}
    'bi/>             {:path? false :assoc :none :val 800}
    'bi/<=            {:path? false :assoc :none :val 800}
@@ -420,7 +432,7 @@
    'bi/=             {:path? false :assoc :none :val 800}
    :!=               {:path? false :assoc :none :val 800}
    :in               {:path? false :assoc :none :val 700}
-   'bi/thread        {:path? true  :assoc :left :val 700} ; ToDo guessing
+   'bi/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
    'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
    'bi/+             {:path? false :assoc :left :val 400}
    'bi/-             {:path? false :assoc :left :val 400}
@@ -428,9 +440,9 @@
    'bi/*             {:path? false :assoc :left :val 300}
    'bi/%             {:path? false :assoc :left :val 300}
    'bi//             {:path? false :assoc :left :val 300}
-   'bi/dot-map       {:path? true  :assoc :left :val 100}
-   :apply-filter     {:path? true  :assoc :left :val 100}
-   :apply-reduce     {:path? true  :assoc :left :val 100}})
+   'bi/get-step      {:path? true  :assoc :left :val 100}
+   'bi/filter-step   {:path? true  :assoc :left :val 100}
+   'bi/reduce-step   {:path? true  :assoc :left :val 100}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)

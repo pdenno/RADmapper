@@ -1,7 +1,7 @@
 (ns rad-mapper.builtins
   "Built-in functions implementing the expression language of the mapping language.
    Functions with names beginning with a '$' are available to the user (e.g. $filter).
-   Others (such as bi/dot-field and bi/strcat) implement other parts of the expression language
+   Others (such as bi/key and bi/strcat) implement other parts of the expression language
    but are not available directly to the user except through the operators (e.g. the dot, and &
    respectively for navigation to a property and concatenation)."
   (:refer-clojure :exclude [+ - * / < > <= >= =]) ; So be careful!
@@ -29,8 +29,9 @@
   `(binding [$ (atom ~val)] ~@body))
 
 ;;; ToDo: Write some documentation once you figure it out!
-;;; So far, this is called by map-step->>, but I think there may be other forms where it makes sense to do.
+;;; So far, this is called by map-steps, but I think there may be other forms where it makes sense to do.
 (defn set-context! [val] (reset! $ val))
+(s/check-asserts true) ; ToDo: Wrap this somewhere.
 
 (s/def ::state-obj true) ; ToDo: Can it be useful?
 (s/def ::number number?)
@@ -46,12 +47,10 @@
   "Adapted from core/flatten:
    Takes any nested combination of sequential things (lists, vectors, etc.)
    and returns their contents as a single, flat lazy sequence.
-   (flatten nil) returns an empty sequence. 
+   (flatten nil) returns an empty sequence.
    EXCEPTION: If the thing is a vector with metadata :type :bi/json-array, it isn't flattened. "
-  {:added "1.2"
-   :static true}
   [x]
-  (letfn [(seq-except? [o] 
+  (letfn [(seq-except? [o]
             (and (sequential? o)
                  (not= :bi/json-array (-> o meta :bi/type))))]
     (-> (remove seq-except? (tree-seq seq-except? seq x))
@@ -95,29 +94,22 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-(defn finish
-  "This is called last in user code to account for the difference between a.b and a.b.$" ; ToDo: Explain. I've forgotten.
-  [obj]
-  ;; The test is to handle code like {'nums' : [[1], 2, 3]}.nums[0], which should return [1].
-  ;; But it seems like a quirk of JSONata that this wouldn't return the scalar, 1.
-  (jsonata-flatten obj))
-
+;;; It exists so that rew/wrap-non-path won't wrap it
 (defn deref$
-  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/map-step->> [[1 2 3] [1]] (deref bi/$))
+  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/map-steps [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
   ([] @$)
-  ([val] (set-context! val) val))
+  ([val] (set-context! val) val)) ; ToDo: Is this still necessary?
 
-;;; ToDo: I think when things settle down, flattening won't be needed here.
 (defmacro defn*
-  "Convenience macro for numerical relationships."
+  "Convenience macro for numerical relationships. They can be passed functions."
   [fn-name doc-string [& args] & body]
-  `(defn ~fn-name
+  `(def ~fn-name
      ~doc-string
-     [~@args]
-     (let [~@(mapcat #(list % `(jsonata-flatten ~%)) args)]
-       ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
-       ~@body)))
+     (fn [~@args]
+       (let [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jsonata-flatten)) args)]
+         ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
+         ~@body))))
 
 ;;;========================= JSONata built-ins  =========================================
 (defn* +  "plus"   [x y]   (core/+ x y))
@@ -147,48 +139,49 @@
   [x y]
   `(-> ~x ~y))
 
-(defn dot-field
+;;; -------------------------------- Path implementation ---------------------------------
+
+;;; ToDo: So far, the value of this over threading is only realized in bi/primary.
+(defn map-steps
+  "Run or map over each path step function, passing the result to the next step."
+  [& steps]
+  (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
+    (-> (if (-> steps rest empty?)
+          (set-context! (mapv #(binding [$ (atom %)] ((first steps) %)) (singlize @$)))
+          (reduce (fn [res sfn] (set-context! (mapv #(binding [$ (atom %)] (sfn %)) (singlize res))))
+                  ((first steps) @$)
+                  (rest steps)))
+        jsonata-flatten)))
+
+;;; ToDo: Meta here is not being used. Remove? Good for diagnostics?
+(defn get-step
   "Perform the mapping activity of the 'a' in $.a, for example.
-   This function is called with the state object. It returns the
-   state object with :sys/$ updated."
-  ([prop|fn] (dot-field @$ prop|fn))
-  ([obj prop|fn]
-   (as-> (cond (core/= prop|fn 'bi/$)              obj ; For example a.b.$
-               (string? prop|fn)              (if-let [res (get obj prop|fn)]
-                                                res
-                                                (->> (mapv #(get % prop|fn) obj)
-                                                     (remove nil?)
-                                                     vec)),
-              (fn? prop|fn)                  (->> (mapv prop|fn obj)
-                                                  (remove nil?)
-                                                  vec)
-              :else (throw (ex-info "Expected function to map over" {:got prop|fn}))) ; ToDo: Probably remove this.
-       ?res
-     (if (vector? ?res) (vec (remove nil? ?res)) ?res))))
+   This function is called with the state object.
+   It returns the state object with :sys/$ updated."
+  [k]
+  (with-meta
+    (fn get-step [& obj] ; No arg if called in a primary.
+      (let [obj (if (empty? obj) @$ (first obj))]
+        (get obj k)))
+    {:bi/step-type :bi/get-step}))
 
-;;; This is the ultimate effect of :apply-map in the grammar (especially a series of them).
-(defmacro map-step->>
-  "This implements the JSONata '.' mapping operator.
-   Walk through the body mapping (see mbody's reduce below).
-   The topic provided is assumed to be the context obj."
-  [topic & body]
-  (let [mbody (map (fn [body-step] 
-                     `(reduce (fn [res# arg#]
-                                (let [func# (fn [elem#] (binding [bi/$ (atom elem#)] ~body-step))]
-                                  (conj res# (func# (bi/singlize arg#)))))
-                              []))
-                     body)]
-    `(let [top# ~topic]
-       (with-context top#
-         (let [res# (->> top# ~@(interpose '(rad-mapper.builtins/set-context!) mbody))]
-           (jsonata-flatten res#))))))
+(defmacro primary
+  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
+   the context atom and runs the body."
+  [body]
+  `(with-meta
+     (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
+     {:bi/step-type :bi/primary}))
 
-;;; ToDo: This one is a bit of a hack!
-#_(defmacro primary [topic & body]
-  "Set the context and a variable to topic. If the 
-   If the top-level of body has (...")
+(defmacro stepable
+  "All the arguments of bi/map-steps are functions, they either get-step, get-filter,
+   reduce-step, primary or are one of these, with metadata :bi/step-type = :bi/steapable."
+  [body]
+  `(with-meta
+     (fn [_x#] ~body)
+     {:bi/step-type :bi/stepable}))
 
-(defn apply-filter
+(defn filter-step
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
     (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
         then it is treated as a predicate.
@@ -197,26 +190,28 @@
     (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
         If the array contains objects, and the location path selects fields within these objects, then each object within the array
         will be queried for selection. [This rule has nothing to do with filtering!]"
-  ([obj* obj pred|ix-fn] (apply-filter (or obj obj*) pred|ix-fn)) ; First arg in this case is threaded context.
-  ([obj pred|ix-fn]
-   (let [prix (try (pred|ix-fn obj) (catch Exception _e nil))] ; On obj??? Don't I want the index here? (Or does it not matter?)
-     (if (number? prix) ; Array behavior.
-       (let [ix  (-> prix Math/floor int)] ; Really! I checked!
-         (letfn [(aref [obj]
-                   (let [len (if (vector? obj) (count obj) 1)
-                         ix  (if (neg? ix) (core/+ len ix) ix)]
-                     (if (or (and (pos? ix) (core/>= ix len))
-                             (and (neg? ix) (core/> (Math/abs ix) len)))
-                       nil ; Rule 2, above.
-                       (if (vector? obj) (nth obj ix) obj))))]
-           (if (core/= :bi/json-array (-> obj meta :bi/type))
-               (-> obj aref jsonata-flatten)
-               (->> obj singlize (mapv aref) jsonata-flatten))))
-       ;; Filter behavior.
-       (->> obj
-            singlize
-            (filterv pred|ix-fn))))))
+  [pred|ix-fn]
+  (with-meta
+    (fn filter-step [obj]
+      (-> (let [prix (try (pred|ix-fn obj) (catch Exception _e nil))] ; On obj? @$? Or does it not matter?
+            (if (number? prix) ; Array behavior.
+              (let [ix  (-> prix Math/floor int)] ; Really! I checked!
+                (letfn [(aref [obj]
+                          (let [len (if (vector? obj) (count obj) 1)
+                                ix  (if (neg? ix) (core/+ len ix) ix)]
+                            (if (or (and (pos? ix) (core/>= ix len))
+                                    (and (neg? ix) (core/> (Math/abs ix) len)))
+                              nil ; Rule 2, above.
+                              (if (vector? obj) (nth obj ix) obj))))]
+                    (aref obj)))
+              ;; Filter behavior.
+              (->> obj
+                   singlize
+                   (filterv pred|ix-fn))))
+          jsonata-flatten))
+    {:bi/step-type :bi/filter-step}))
 
+;;; ---------------------- JSONata an RADmapper functions (needs to be reordered  ----------------
 (defn $map
   "Signature: $map(array, function)
 
@@ -229,7 +224,7 @@
 
    Example: $map([1..5], $string) => ['1', '2', '3', '4', '5']"
   [coll func]
-  (let [nvars  (-> func meta :params count)]
+  (let [nvars  (-> func meta :bi/params count)]
     (cond
       (== nvars 3)
       (loop [c coll, i 0, r []]
@@ -247,13 +242,13 @@
           r
           (recur (rest c) (conj r (func (first c))))))
       :else (throw (ex-info "$map expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :params)})))))
+                            {:vars (-> func meta :bi/params)})))))
 
-;;; (bi/$filter [1 2 3 4] (with-meta (fn [v i a] (when (even? v) v)) {:params {:val-var 'v :index-var 'i :array-var 'a}}))
+;;; (bi/$filter [1 2 3 4] (with-meta (fn [v i a] (when (even? v) v)) {:bi/params {:val-var 'v :index-var 'i :array-var 'a}}))
 (defn $filter
   "Return a function for the argument form."
   [coll_ func]
-  (let [nvars (-> func meta :params count)]
+  (let [nvars (-> func meta :bi/params count)]
     (cond
       (== nvars 3)
                 (loop [c coll_, i 0, r []]
@@ -274,7 +269,7 @@
                     (let [val (when (func (first c)) (first c))]
                       (recur (rest c) (if val (conj r val) r)))))
                 :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
-                                      {:vars (-> func meta :params)})))))
+                                      {:vars (-> func meta :bi/params)})))))
 
 (defn reduce-body-enforce
   "This is for reducing with an enforce function, where metadata on the
@@ -298,7 +293,7 @@
 (defn reduce-body-typical
   "This is for $reduce with JSONata semantics."
   [coll func]
-  (let [num-params (-> func meta :params count)]
+  (let [num-params (-> func meta :bi/params count)]
     (loop [c (rest coll),
            r (first coll)
            i 0]
@@ -334,10 +329,10 @@
   If not supplied, the initial value is the first value in the array parameter"
   ([coll func init]  (if (-> func meta :enforce?)
                        (reduce-body-enforce coll func init)
-                       (if (core/<= 2 (-> func meta :params count) 4)
+                       (if (core/<= 2 (-> func meta :bi/params count) 4)
                          ($reduce (into (vector init) coll) func)
                          (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
-                                         {:vars (-> func meta :params)})))))
+                                         {:vars (-> func meta :bi/params)})))))
   ([coll func] (if (-> func meta :enforce?)
                  (reduce-body-enforce coll func [])
                  (reduce-body-typical coll func))))
@@ -351,7 +346,7 @@
 ;;; ToDo: sym-bi-access IS executed for $map in rewrite. So can that for filter too?
 (defn sym-bi-access
   "When doing mapping such as '$.(A * B)' the expressions A and B
-   were rewritten (bi/dot-field 'A'). There needs to be a first argument
+   were rewritten (bi/key 'A'). There needs to be a first argument
    to that, before the 'A'. This function inserts the argument symbol
    in such forms so that they can be wrapped in (fn [<that symbol>] ...)
    and called in map/filter/reduce settings."
@@ -359,8 +354,8 @@
   (letfn [(sba-aux [form]
             (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
                   (vector? form) (mapv sba-aux form)
-                  (seq? form) (cond (and (core/= (first form) 'bi/dot-field) (== 2 (count form)))
-                                    (list 'bi/dot-field sym (second form))
+                  (seq? form) (cond (and (core/= (first form) 'bi/key) (== 2 (count form)))
+                                    (list 'bi/key sym (second form))
                                     (core/= form '(core/deref rad-mapper.builtins/$)) sym ; 2022-05-29, added.
                                     :else (map sba-aux form))
                   :else form))]
@@ -534,7 +529,7 @@
    The index (position) of that value in the input array is passed in as the second parameter,
    if specified. The whole input array is passed in as the third parameter, if specified."
   [coll func]
-  (let [nvars  (-> func meta :params count)]
+  (let [nvars  (-> func meta :bi/params count)]
     (cond
       (== nvars 3)
       (loop [c coll, i 0, r false]
@@ -552,7 +547,7 @@
               (empty? c) false
               :else (recur (rest c) (func (first c))))),
       :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :params)})))))
+                            {:vars (-> func meta :bi/params)})))))
 
 ;;;==========================================================================
 ;;;=================== Non-JSONata functions ================================
@@ -702,11 +697,11 @@
     ;; The immediate function.
     `(->
       (fn [~'b-set] ~body)
-      (with-meta {:params '[~'b-set] :enforce? true}))
+      (with-meta {:bi/params '[~'b-set] :enforce? true}))
     `(fn [~@params]
        (->
         (fn [~'b-set] ~body)
-        (with-meta {:params '[~'b-set] :enforce? true})))))
+        (with-meta {:bi/params '[~'b-set] :enforce? true})))))
 
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
 (defn update-db

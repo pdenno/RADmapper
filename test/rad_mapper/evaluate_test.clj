@@ -4,7 +4,6 @@
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]
-   [rad-mapper.util     :refer [split-by]] ; Temporary!
    [rad-mapper.devl.devl-util :refer [nicer]]))
 
 (defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
@@ -30,6 +29,9 @@
 
     (testing "simple mapping (3)"
       (is (= [2 3 4] (run "($f := function($x){$x+1}; [1,2,3].$f($))"))))
+
+    (testing "simple mapping (4)"
+      (is (= 111 (run "{'a' : {'b' : 111}}.a.b"))))
 
     (testing "simple navigation"
       (is (= 33 (run "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)"))))
@@ -277,17 +279,50 @@
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
 
+;;; The problem with using function composition (rather than threading) on the next one is the bi/primary.
+;;; Q: Does that get wrapped too?
+;;;     A: Yes, but the trick will be adding metadata to say it is primary.
+;;;        Then use that to control how map-steps behaves. <===========  But wouldn't it also be a mapping thing?
+;;;                                                        <===========  What are the args to the bi/+ here?
+
 ;;; {'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)
 (defn tryme []
   (bi/finish
-   (bi/map-step->
-    (-> {} (assoc "a" (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3))))))
-    (bi/+
-     (bi/map-step->
-      (bi/dot-field "a")
-      (bi/dot-field "b")
-      (bi/dot-field "c"))
-     (bi/map-step->
-      (bi/dot-field "a")
-      (bi/dot-field "b")
-      (bi/dot-field "f"))))))
+   (bi/map-steps
+    (bi/pathable
+     (->
+      {}
+      (assoc "a" 5)
+      (assoc "b" (-> {} (assoc "e" 2)))
+      (assoc "c" 10)
+      (assoc "d" 500)))
+    (bi/primary
+     (bi/+
+      (bi/+
+       (bi/get-step "a")
+       (bi/*
+        (bi/map-steps (bi/get-step "b") (bi/get-step "e"))
+        (bi/get-step "c")))
+      (bi/get-step "d"))))))
+
+
+(defn tryme-with-filter []
+  (bi/finish
+   (bi/map-steps
+    (bi/pathable
+     (->
+      {}
+      (assoc "a" 5)
+      (assoc "b" (-> {} (assoc "e" 2)))
+      (assoc "c" [0 10])
+      (assoc "d" 500)))
+    (bi/primary
+     (bi/+
+      (bi/+
+       (bi/map-steps (bi/get-step "a"))
+       (bi/*
+        (bi/map-steps (bi/get-step "b") (bi/get-step "e"))
+        (bi/map-steps
+         (bi/get-step "c")
+         (bi/filter-step (fn [_x1] (bi/with-context _x1 1))))))
+      (bi/map-steps (bi/get-step "d")))))))
