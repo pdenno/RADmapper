@@ -15,6 +15,10 @@
                   :debug? debug?
                   :debug-parse? debug-parse?)))
 
+;;; CIDER visual cues:
+;;;  * bright red background on 'is' means is failed.
+;;;  * washed out background on 'is' means execution failed
+;;;  * washed out background elsewhere appears to mark more specifically what failed, typically the 'run'.
 (deftest small-things
   (testing "All the, small things (execute):"
 
@@ -38,6 +42,15 @@
 
     (testing "simple navigation, more efficiently"
       (is (= 33 (run "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.a.b.(c + f)"))))
+
+    (testing "simple aref (1)" ; JSONata returns no match on this. I think it should match!
+      (is (= 1 (run "[{'a' : 1}][0].a)"))))
+
+    (testing "simple aref (2)" ; JSONata is okay with this one.
+      (is (= 1 (run "($c := [{'a' : 1}]; $c[0].a)"))))
+      
+    (testing "simple aref (2)" ; JSONata is okay with this one too.
+      (is (= {"a" 1} (run "[{'a' : 1}][0]"))))
 
     (testing "navigation with aref"
       (is (= 525 (run "{'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )"))))
@@ -79,15 +92,15 @@
     (testing "Jsonata quirk 1: ToDo: Note that RADmapper doesn't mind."
       (is (= 1 (run "1[0]"))))
 
-    ;; I think the weirdness of 2a/2b suggests that you don't do jsonata-flatten until the end (in bi/finish).
-    ; *THIS*
+    ;; The next two are concern the issue I raised in JSONata slack about "non-compositionality".
+    ;; The answer I got is that nums[1] should be viewed as a term. 
     (testing "Jsonata quirk 2a: compare to 2b. If you stop here, you merge results."
-      (is (= [1 2 3 4 5 6]
-             (run "[{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums"))))
+      (is (= [1 2 3 4]
+             (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums"))))
 
     (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
       (is (= [3 6]
-             (run "[{'nums' : [1, 2, 3]}, {'nums' : [4, 5, 6]}].nums[2]"))))
+             (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]"))))
 
     ;; By the way, Jsonata allows single quotes in the expression; JSON doesn't allow them in the data.
     ; *THIS*
@@ -154,9 +167,10 @@
       (is (= 115         (run "($add := function($i, $j){$i + $j}; $reduce([1..5], $add, 100))"))))
 
     (testing "array indexing."
-      (is (= "b"         (run "($v := ['a', 'b', 'c', 'd']; $v[1])" )))
-      (is (= "a"         (run "($v := ['a', 'b', 'c', 'd']; $v[-4])")))
-      (is (= "a"         (run "($v := ['a', 'b', 'c', 'd']; $v[0])" ))))
+      (is (= "b"            (run "($v := ['a', 'b', 'c', 'd']; $v[1])" )))
+      (is (= "a"            (run "($v := ['a', 'b', 'c', 'd']; $v[-4])")))
+      (is (= "a"            (run "($v := ['a', 'b', 'c', 'd']; $v[0])" )))
+      (is (= [[1][1][1][1]] (run "['a', 'b', 'c', 'd'].[1]"))))
 
     ; *THIS*
     (testing "filter 'delimited expressions."
@@ -218,7 +232,9 @@
     (testing "binary precedence and non-advancing context variable (2)."
       (is (= 11 (run "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)"))))
 
-    ; *THIS*
+    (testing "code block or primary doesn't matter"
+      (is (= 1 (run "{'b' : 1}.(b)"))))
+
     (testing "'code-block' is just an expression"
       (is (= 22 (run "{'a' : 1, 'b' : 22}.($x := 2; $y:= 4; b)"))))
 
@@ -279,50 +295,20 @@
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
 
-;;; The problem with using function composition (rather than threading) on the next one is the bi/primary.
-;;; Q: Does that get wrapped too?
-;;;     A: Yes, but the trick will be adding metadata to say it is primary.
-;;;        Then use that to control how map-steps behaves. <===========  But wouldn't it also be a mapping thing?
-;;;                                                        <===========  What are the args to the bi/+ here?
-
-;;; {'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)
-(defn tryme []
-  (bi/finish
-   (bi/map-steps
-    (bi/pathable
-     (->
-      {}
-      (assoc "a" 5)
-      (assoc "b" (-> {} (assoc "e" 2)))
-      (assoc "c" 10)
-      (assoc "d" 500)))
-    (bi/primary
+#_(defn tryme []
+  (bi/map-steps
+   (bi/stepable
+    (->
+     {}
+     (assoc "a" 5)
+     (assoc "b" (-> {} (assoc "e" 2)))
+     (assoc "c" [0 10])
+     (assoc "d" 500)))
+   (bi/primary
+    (bi/+
      (bi/+
-      (bi/+
-       (bi/get-step "a")
-       (bi/*
-        (bi/map-steps (bi/get-step "b") (bi/get-step "e"))
-        (bi/get-step "c")))
-      (bi/get-step "d"))))))
-
-
-(defn tryme-with-filter []
-  (bi/finish
-   (bi/map-steps
-    (bi/pathable
-     (->
-      {}
-      (assoc "a" 5)
-      (assoc "b" (-> {} (assoc "e" 2)))
-      (assoc "c" [0 10])
-      (assoc "d" 500)))
-    (bi/primary
-     (bi/+
-      (bi/+
-       (bi/map-steps (bi/get-step "a"))
-       (bi/*
-        (bi/map-steps (bi/get-step "b") (bi/get-step "e"))
-        (bi/map-steps
-         (bi/get-step "c")
-         (bi/filter-step (fn [_x1] (bi/with-context _x1 1))))))
-      (bi/map-steps (bi/get-step "d")))))))
+      (bi/get-step "a")
+      (bi/*
+       (bi/map-steps (bi/get-step "b") (bi/get-step "e"))
+       (bi/aref (bi/get* "c") (fn [_x1] (bi/with-context _x1 1)))))
+     (bi/get-step "d")))))

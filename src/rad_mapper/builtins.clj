@@ -29,7 +29,7 @@
   `(binding [$ (atom ~val)] ~@body))
 
 ;;; ToDo: Write some documentation once you figure it out!
-;;; So far, this is called by map-steps, but I think there may be other forms where it makes sense to do.
+;;; So far, this is called by run-steps, but I think there may be other forms where it makes sense to do.
 (defn set-context! [val] (reset! $ val))
 (s/check-asserts true) ; ToDo: Wrap this somewhere.
 
@@ -96,7 +96,7 @@
 
 ;;; It exists so that rew/wrap-non-path won't wrap it
 (defn deref$
-  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/map-steps [[1 2 3] [1]] (deref bi/$))
+  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
   ([] @$)
   ([val] (set-context! val) val)) ; ToDo: Is this still necessary?
@@ -141,17 +141,23 @@
 
 ;;; -------------------------------- Path implementation ---------------------------------
 
+;;; ToDo: This is starting to look unlikely....again!
 ;;; ToDo: So far, the value of this over threading is only realized in bi/primary.
-(defn map-steps
+(defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (-> (if (-> steps rest empty?)
           (set-context! (mapv #(binding [$ (atom %)] ((first steps) %)) (singlize @$)))
-          (reduce (fn [res sfn] (set-context! (mapv #(binding [$ (atom %)] (sfn %)) (singlize res))))
+          (reduce (fn [res sfn]
+                    (-> (set-context!
+                         (case (-> sfn meta :bi/step-type)
+                           :bi/filter-step (sfn (jsonata-flatten res))
+                           (mapv #(binding [$ (atom %)] (sfn %)) (singlize res))))
+                        #_jsonata-flatten)) ; Step itself decides to flatten
                   ((first steps) @$)
                   (rest steps)))
-        jsonata-flatten)))
+        #_jsonata-flatten)))
 
 ;;; ToDo: Meta here is not being used. Remove? Good for diagnostics?
 (defn get-step
@@ -170,11 +176,11 @@
    the context atom and runs the body."
   [body]
   `(with-meta
-     (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
+     (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~@body))
      {:bi/step-type :bi/primary}))
 
 (defmacro stepable
-  "All the arguments of bi/map-steps are functions, they either get-step, get-filter,
+  "All the arguments of bi/run-steps are functions, they either get-step, get-filter,
    reduce-step, primary or are one of these, with metadata :bi/step-type = :bi/steapable."
   [body]
   `(with-meta
@@ -193,7 +199,7 @@
   [pred|ix-fn]
   (with-meta
     (fn filter-step [obj]
-      (-> (let [prix (try (pred|ix-fn obj) (catch Exception _e nil))] ; On obj? @$? Or does it not matter?
+      (-> (let [prix (try (pred|ix-fn @$) (catch Exception _e nil))]
             (if (number? prix) ; Array behavior.
               (let [ix  (-> prix Math/floor int)] ; Really! I checked!
                 (letfn [(aref [obj]
@@ -208,10 +214,52 @@
               (->> obj
                    singlize
                    (filterv pred|ix-fn))))
-          jsonata-flatten))
+          #_jsonata-flatten))
     {:bi/step-type :bi/filter-step}))
 
-;;; ---------------------- JSONata an RADmapper functions (needs to be reordered  ----------------
+(defn filter-step*
+  [attr pred|ix-fn]
+  (with-meta
+    (fn filter-step [obj]
+      (-> (let [prix (try (pred|ix-fn @$) (catch Exception _e nil))]
+            (if (number? prix) ; Array behavior.
+              (let [ix  (-> prix Math/floor int)] ; Really! I checked!
+                (letfn [(aref [obj]
+                          (let [len (if (vector? obj) (count obj) 1)
+                                ix  (if (neg? ix) (core/+ len ix) ix)]
+                            (if (or (and (pos? ix) (core/>= ix len))
+                                    (and (neg? ix) (core/> (Math/abs ix) len)))
+                              nil ; Rule 2, above.
+                              (if (vector? obj) (nth obj ix) obj))))]
+                    (mapv aref (map #(get % attr) (singlize obj)))))
+              ;; Filter behavior.
+              (->> obj
+                   singlize
+                   (filterv pred|ix-fn))))
+          jsonata-flatten))
+    {:bi/step-type :bi/filter-step*}))
+
+
+;;; ---------------------- JSONata an RADmapper functions (needs to be reordered) ----------------
+#_(defn get*
+  "This is the function to access a record key when not part of path mapping."
+  ([field] (get* @$ field))
+  ([obj field] (get obj field)))
+
+#_(defn aref
+  "This is the function to do aref (It is '[]' when not part of path mapping.)"
+  ([index-fn] (aref @$ index-fn))
+  ([obj index-fn]
+   (let [ix (try (index-fn @$) (catch Exception _e nil))]
+     (when (number? ix) ; Array behavior.
+       (let [ix  (-> ix Math/floor int) ; Really! I checked!
+             len (if (vector? obj) (count obj) 1)
+             ix  (if (neg? ix) (core/+ len ix) ix)]
+         (if (or (and (pos? ix) (core/>= ix len))
+                 (and (neg? ix) (core/> (Math/abs ix) len)))
+           nil ; Rule 2, above.
+           (if (vector? obj) (nth obj ix) obj)))))))
+
 (defn $map
   "Signature: $map(array, function)
 

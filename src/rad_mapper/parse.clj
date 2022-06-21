@@ -18,14 +18,7 @@
 ;;;   :local   - temporarily stored parse content used later to form a complete grammar element.
 ;;;              It is a vector (stack) of maps. On entry, defparse pushes a new empty map on it;
 ;;;              on exit, it pops it. Macros store and recall push onto the top map of the stack.
-;;;              For example use, see :ptag/MapSpec and parse-list-terminated.
-
-;;; ToDo:
-;;;   1) $.{    See http://docs.jsonata.org/sorting-grouping
-;;;      Write a function to read in the context so you can use their data in testing,  such as shown:
-;;;      Account.Order.Product { `Product Name`: $.{"Price": Price, "Qty": Quantity}}
-;;;   2) Write defparse :ptag/exp; it should have a spec naming all expressions.
-;;;      :ptag/code-block can essentially be treated as an expression. (Could even clear $, $$$ between calls.)
+;;;              For example use, see :ptag/MapSpec and parse-list.
 
 (def ^:dynamic *debugging?* false)
 (util/config-log (if *debugging?* :debug :info))
@@ -470,7 +463,7 @@
   "Toplevel parsing function.
    NB: This function is typically used for debugging with a literal string argument.
    If the text is intended to have JS escape, \\, in it, it has to be escaped!"
-  ([str] (parse-string :ptag/code-block str))
+  ([str] (parse-string :ptag/primary str))
   ([tag str]
    (let [pstate (->> str tokenize make-pstate (parse tag))]
      (if (not= (:head pstate) ::eof)
@@ -497,7 +490,7 @@
 (defn parse-file
   "Parse a whole file given a filename string."
   [filename]
-  (parse-string :ptag/code-block (-> filename slurp esc-esc)))
+  (parse-string :ptag/primary (-> filename slurp esc-esc)))
 
 (defn parse-ok?
   "Return true if the string parses okay."
@@ -533,36 +526,8 @@
                  (recur (cond-> ?ps1 (= char-sep (:head ?ps1)) (eat-token char-sep)))))))]
      (when *debugging?*
        (println "\nCollected" (:result final-ps))
-       (println "\n<<<<<<<<<<<<<<<<<<<<< parse-list <<<<<<<<<<<<<<<<<<<<<<<"))
+       (cl-format *out* "\n<<<<<<<<<<<<<<<<<<<<< parse-list (~A) <<<<<<<<<<<<<<<<<<<<<<<" item-tag))
      final-ps)))
-
-;;; ToDo: Have a separate variable to turn off debugging on the auto things.
-(defn parse-list-terminated
-  "Does parse parametrically for '[ <item> ','... ] <terminator>'. Does not eat terminator."
-  [pstate & {:keys [term-fn sep-fn item-tag] :or {sep-fn #(= \; %)
-                                                  term-fn #(= \} %)
-                                                  item-tag :ptag/exp}}]
-  (when *debugging?*
-    (cl-format *out* "~%>>>>>>>>>>>>>> parse-list-terminated (~A) >>>>>>>>>>>>>>>>>>" item-tag))
-  (let [final-ps
-        (as-> pstate ?ps
-          (assoc-in ?ps [:local 0 :items] [])
-          (loop [ps ?ps]
-            (cond
-              (= ::eof (:head ps)) (ps-throw ps "parsing a terminated list" {:tag item-tag}),
-              (term-fn (:head ps)) (assoc ps :result (recall ps :items)),
-              :else
-              (as-> ps ?ps
-                (parse item-tag ?ps)
-                (update-in ?ps [:local 0 :items] conj (:result ?ps))
-                (if (or (-> ?ps :head sep-fn) (-> ?ps :head term-fn))
-                  (recur (cond-> ?ps (sep-fn (:head ?ps)) (eat-token sep-fn)))
-                  (ps-throw ?ps "Parsing a terminated list, expected separator or terminator."
-                            {:got (:head ?ps)}))))))]
-    (when *debugging?*
-      (println "\nCollected" (:result final-ps))
-      (println "\n<<<<<<<<<<<<<<<<< parse-list-terminated <<<<<<<<<<<<<<<<"))
-    final-ps))
 
 ;;; ToDo I'm not sure I use any of these autos!
 ;;; <builtin-num-bin-op> ::= + | - | * | / | div | mod
@@ -637,24 +602,25 @@
         (recur p (-> oseq (conj (recall p :operator)) (conj (:result p)))))))))
 
 ;;; ToDo: qvar here might make it permissive of nonsense. Needs thought.
-;;; <base-exp> ::= <delimited-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <field> | <jvar> | <qvar>
+;;; <base-exp> ::= <delimited-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <jvar-decl> | <field> | <jvar> | <qvar>
 (defparse :ptag/base-exp
   [ps & {:keys [operand-2?]}]
   (let [tkn  (:head ps)
         ps   (look ps 1)
         tkn2 (-> ps :look (get 1))]
-    (cond (#{\{ \[ \(} tkn)                  (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
-          (builtin-un-op tkn)                (parse :ptag/unary-op-exp ps)  ; <unary-op-exp>
-          (#{:function :query :enforce} tkn) (parse :ptag/construct-def ps) ; <construct-def>
+    (cond (#{\{ \[ \(} tkn)                   (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
+          (builtin-un-op tkn)                 (parse :ptag/unary-op-exp ps)  ; <unary-op-exp>
+          (#{:function :query :enforce} tkn)  (parse :ptag/construct-def ps) ; <construct-def>
           (and (= \( tkn2)
                (or (builtin-fns tkn)
-                   (jvar? tkn)))             (parse :ptag/fn-call ps)       ; <fn-call>
-          (literal? tkn)                     (parse :ptag/literal ps)       ; <literal>
+                   (jvar? tkn)))              (parse :ptag/fn-call ps)       ; <fn-call>
+          (literal? tkn)                      (parse :ptag/literal ps)       ; <literal>
+          (and (jvar? tkn) (= tkn2 :binding)) (parse :ptag/jvar-decl ps)     ; <jvar-decl>
           (or (jvar? tkn)
               (qvar? tkn) ; really?
-              (field? tkn))                  (as-> ps ?ps
-                                               (assoc ?ps :result tkn)
-                                               (eat-token ?ps)),            ; <field>, <jvar>, or <qvar>
+              (field? tkn))                   (as-> ps ?ps
+                                                (assoc ?ps :result tkn)
+                                                (eat-token ?ps)),            ; <field>, <jvar>, or <qvar>
           :else
           (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
                     {:got tkn}))))
@@ -667,7 +633,7 @@
 
 ;;;  But see $.{ in http://docs.jsonata.org/sorting-grouping.
 
-;;; <delimited-exp> ::= <code-block> | <primary> | <filter-exp> | <reduce-exp> | <range|array-exp> | <obj-exp>
+;;; <delimited-exp> ::=  <primary> | <filter-exp> | <reduce-exp> | <range|array-exp> | <obj-exp>
 (defparse :ptag/delimited-exp
   [ps & {:keys [operand-2?]}]
   (let [head (:head ps)]
@@ -677,7 +643,7 @@
         \[  (parse :ptag/filter-exp ps) ; Includes aref.
         \{  (parse :ptag/reduce-exp ps))
       (case head
-        \(  (parse :ptag/code-block ps)
+        \(  (parse :ptag/primary ps)
         \[  (parse :ptag/range|array-exp ps)
         \{  (parse :ptag/obj-exp ps)))))
 
@@ -762,14 +728,13 @@
                                            (recall ?ps :then)
                                            (:result ?ps)))))
 
-;;; <primary>    := '(' <exp> ')'
-(defrecord JaPrimary [exp])
+;;; Note that JSONata allows a final ; before the closing paren; parse-list tolerates that too.
+;;; <primary>    := '(' ( <exp> (';' <exp>)* )? ;? ')'
+(defrecord JaPrimary [exps])
 (defparse :ptag/primary
   [ps]
   (as-> ps ?ps
-    (eat-token ?ps \()
-    (parse :ptag/exp ?ps)
-    (eat-token ?ps \))
+    (parse-list ?ps \( \) \; :ptag/exp)
     (assoc ?ps :result (->JaPrimary (:result ?ps)))))
 
 ;;; <filter-exp> := '[' <exp> ']'
@@ -781,25 +746,6 @@
     (parse :ptag/exp ?ps)
     (eat-token ?ps \])
     (assoc ?ps :result (->JaApplyFilter (:result ?ps)))))
-
-(s/def ::CodeBlock (s/keys :req-un [::body]))
-(defrecord JaCodeBlock [body])
-
-;;; <code-block> := '(' ( <jvar-decl> | <exp> )* ')'
-(defparse :ptag/code-block
-  [ps]
-  (as-> ps ?ps
-    (parse-list ?ps \( \) \; :ptag/block-elem)
-    (assoc ?ps :result (->JaCodeBlock (:result ?ps)))))
-
-;;; <block-elem> ::= <jvar-decl> | <exp>
-(defparse :ptag/block-elem
-  [ps]
-  (as-> ps ?ps
-    (look ?ps 1)
-    (if (= :binding (-> ?ps :look (get 1)))
-      (parse :ptag/jvar-decl ?ps)
-      (parse :ptag/exp ?ps))))
 
 ;;; jvar-decl ::= <jvar> ':=' <exp>
 (defrecord JaJvarDecl [var init-val])
@@ -843,7 +789,7 @@
                         (recall ?ps :key)
                         (:result ?ps)))))
 
-;;;----- 'atomic' expressions, these are useful for parse-list-terminated  etc. -------
+;;;----- 'atomic' expressions, these are useful for parse-list etc. -------
 (defparse :ptag/jvar
   [ps]
   (as-> ps ?ps
@@ -871,9 +817,7 @@
 (defparse :ptag/array
   [ps]
   (as-> ps ?ps
-    (eat-token ?ps \[)
-    (parse-list-terminated ?ps :term-fn #(= % \]) :sep-fn #(= % \,))
-    (eat-token ?ps \])
+    (parse-list ?ps \[ \] \, :ptag/exp)
     (assoc ?ps :result (->JaArray (:result ?ps)))))
 
 ;;; fn-call ::=  <jvar> '(' <exp>? (',' <exp>)* ')'
@@ -883,9 +827,7 @@
     (as-> ps ?ps
       (store ?ps :fn-name (:head ?ps))
       (eat-token ?ps jvar?)
-      (eat-token ?ps \()
-      (parse-list-terminated ?ps :term-fn #(= % \)) :sep-fn #(= % \,))
-      (eat-token ?ps \))
+      (parse-list ?ps \( \) \, :ptag/exp)
       (assoc ?ps :result (->JaFnCall (-> ?ps (recall :fn-name) :jvar-name) (:result ?ps)))))
 
 ;;; <triples> ::= <triple>+
@@ -926,10 +868,8 @@
   [ps]
   (as-> ps ?ps
     (eat-token ?ps :function)
-    (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/jvar)
+    (parse-list ?ps \( \) \, :ptag/jvar)
     (store ?ps :jvars)
-    (eat-token ?ps \))
     (eat-token ?ps \{)
     (parse :ptag/exp ?ps)
     (store ?ps :body)
@@ -942,10 +882,8 @@
   [ps]
   (as-> ps ?ps
     (eat-token ?ps :query)
-    (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/jvar)
+    (parse-list ?ps \( \) \, :ptag/jvar)
     (store ?ps :params)
-    (eat-token ?ps \))
     (eat-token ?ps \{)
     (parse :ptag/triples ?ps)
     (eat-token ?ps \})
@@ -958,10 +896,8 @@
   [ps]
   (as-> ps ?ps
     (eat-token ?ps :enforce)
-    (eat-token ?ps \()
-    (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/exp)
-    (store ?ps :params)
-    (eat-token ?ps \))
+    (parse-list ?ps \( \) \, :ptag/exp)
+    (store ?ps :params)    
     (eat-token ?ps \{)
     (parse :ptag/exp ?ps)
     (store ?ps :body)
@@ -980,10 +916,8 @@
       ;; This part to wrap it in a JaImmediateUse
       (as-> ps ?ps
         (store ?ps :def)
-        (eat-token ?ps)
-        (parse-list-terminated ?ps :term-fn #{\)} :sep-fn #{\,} :item-tag :ptag/exp)
+        (parse-list ?ps \( \) \, :ptag/exp)
         (store ?ps :args)
-        (eat-token ?ps \))
         (assoc ?ps :result (->JaImmediateUse (recall ?ps :def) (recall ?ps :args))))
       ;; This if it is just a definition (which will be assigned to a $id).
       ps)))
