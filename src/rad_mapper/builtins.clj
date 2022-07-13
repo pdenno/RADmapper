@@ -21,6 +21,7 @@
 
 (def $$ "The root context data, like in JSONata." (atom nil))
 (def ^:dynamic $ "Context variable"   (atom nil))
+(declare aref)
 
 ;;; ToDo: Swap atom value or create new atom as I'm doing now?
 (defmacro with-context
@@ -56,7 +57,7 @@
     (-> (remove seq-except? (tree-seq seq-except? seq x))
         vec)))
 
-(defn jsonata-flatten
+(defn jflatten
   "Accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
    See http://docs.jsonata.org/processing section 'Sequences', which currenlty reads as follows:
        The sequence flattening rules are as follows:
@@ -107,7 +108,7 @@
   `(def ~fn-name
      ~doc-string
      (fn [~@args]
-       (let [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jsonata-flatten)) args)]
+       (let [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jflatten)) args)]
          ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
          ~@body))))
 
@@ -124,12 +125,12 @@
 (defn =
   "equal, need not be numbers"
   [x y]
-  (core/= (jsonata-flatten x) (jsonata-flatten y)))
+  (core/= (jflatten x) (jflatten y)))
 
 (defn !=
   "not equal, need not be numbers"
   [x y]
-  (core/= (jsonata-flatten x) (jsonata-flatten y)))
+  (core/= (jflatten x) (jflatten y)))
 
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
@@ -140,24 +141,60 @@
   `(-> ~x ~y))
 
 ;;; -------------------------------- Path implementation ---------------------------------
-
-;;; ToDo: This is starting to look unlikely....again!
-;;; ToDo: So far, the value of this over threading is only realized in bi/primary.
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (-> (if (-> steps rest empty?)
-          (set-context! (mapv #(binding [$ (atom %)] ((first steps) %)) (singlize @$)))
-          (reduce (fn [res sfn]
-                    (-> (set-context!
-                         (case (-> sfn meta :bi/step-type)
-                           :bi/filter-step (sfn (jsonata-flatten res))
-                           (mapv #(binding [$ (atom %)] (sfn %)) (singlize res))))
-                        #_jsonata-flatten)) ; Step itself decides to flatten
+    (loop [res (set-context!
+                (if (= :bi/stepable (-> steps first meta :bi/step-type))
                   ((first steps) @$)
-                  (rest steps)))
-        #_jsonata-flatten)))
+                  (mapv #(binding [$ (atom %)] ((first steps) %)) (singlize @$)))) ; ToDo: factor this to std-step?
+           steps (rest steps)]
+      (cond (empty? steps) res
+
+            ;; bi/get-step followed by bi/filter-step ("non-compositional" ???)
+            (and (= :bi/get-step (-> steps first meta :bi/step-type))
+                 (= :bi/filter-step (-> steps second meta :bi/step-type))) ; Then don't do next step. Steal its argument.
+            (let [sfn (second steps)              ; Run the filter specifying the previous step keyword.
+                  new-res (set-context! (-> (sfn
+                                             (jflatten res)
+                                             {:bi/call-type :bi/get-step
+                                              :bi/attr (-> steps first meta :bi/arg)})
+                                            #_jflatten))]
+              (recur new-res (-> steps rest rest))),
+
+            :else ; all other steps are single-stepping.
+            (let [sfn (first steps)
+                  new-res (set-context!
+                           (case (-> sfn meta :bi/step-type)
+                             :bi/filter-step (mapv #(binding [$ (atom %)] (sfn % nil)) (singlize res))
+                             ;; ToDo: in lieu of the jflatten here, I've wrapped eval in jflatten. Questionable.
+                             (mapv #(binding [$ (atom %)] (sfn %)) (singlize res))))]
+              (recur new-res (rest steps)))))))
+
+(defn filter-step
+  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
+    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
+        then it is treated as a predicate.
+    (2) See aref below.
+    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
+        If the array contains objects, and the location path selects fields within these objects, then each object within the array
+        will be queried for selection. [This rule has nothing to do with filtering!]"
+  [pred|ix-fn]
+  (with-meta
+    (fn filter-step [obj prior-step]
+      (-> (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
+                call-type (:bi/call-type prior-step)
+                ob  (if (= :bi/get-step call-type)
+                      (mapv #(get % (:bi/attr prior-step)) (singlize obj)) ; non-compositional semantics
+                      (singlize obj))]
+            (if (number? prix)   ; Array behavior. Caller will map over it.
+              (aref ob (-> prix Math/floor int)) ; Really! I checked!
+              (as-> ob ?o          ; Filter behavior.
+                (singlize ?o)     ; ToDo: The non-bi/get-step call-type behavior?
+                (filterv pred|ix-fn ?o)))) ; (map #(get % (:bi/attr prior-step)) ?o)
+          jflatten))
+  {:bi/step-type :bi/filter-step}))
 
 ;;; ToDo: Meta here is not being used. Remove? Good for diagnostics?
 (defn get-step
@@ -169,14 +206,19 @@
     (fn get-step [& obj] ; No arg if called in a primary.
       (let [obj (if (empty? obj) @$ (first obj))]
         (get obj k)))
-    {:bi/step-type :bi/get-step}))
+    {:bi/step-type :bi/get-step :bi/arg k}))
+
+(defn get-scoped
+  "Access map key like clj/get, but with arity overloading for $."
+  ([k] (get-scoped @$ k))
+  ([obj k] (get obj k)))
 
 (defmacro primary
   "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
    the context atom and runs the body."
   [body]
   `(with-meta
-     (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~@body))
+     (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
      {:bi/step-type :bi/primary}))
 
 (defmacro stepable
@@ -187,78 +229,17 @@
      (fn [_x#] ~body)
      {:bi/step-type :bi/stepable}))
 
-(defn filter-step
-  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
-    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
-        then it is treated as a predicate.
-    (2) Negative indexes count from the end of the array, for example, arr[-1] will select the last value, arr[-2] the second to last, etc.
-        If an index is specified that exceeds the size of the array, then nothing is selected.
-    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
-        If the array contains objects, and the location path selects fields within these objects, then each object within the array
-        will be queried for selection. [This rule has nothing to do with filtering!]"
-  [pred|ix-fn]
-  (with-meta
-    (fn filter-step [obj]
-      (-> (let [prix (try (pred|ix-fn @$) (catch Exception _e nil))]
-            (if (number? prix) ; Array behavior.
-              (let [ix  (-> prix Math/floor int)] ; Really! I checked!
-                (letfn [(aref [obj]
-                          (let [len (if (vector? obj) (count obj) 1)
-                                ix  (if (neg? ix) (core/+ len ix) ix)]
-                            (if (or (and (pos? ix) (core/>= ix len))
-                                    (and (neg? ix) (core/> (Math/abs ix) len)))
-                              nil ; Rule 2, above.
-                              (if (vector? obj) (nth obj ix) obj))))]
-                    (aref obj)))
-              ;; Filter behavior.
-              (->> obj
-                   singlize
-                   (filterv pred|ix-fn))))
-          #_jsonata-flatten))
-    {:bi/step-type :bi/filter-step}))
-
-(defn filter-step*
-  [attr pred|ix-fn]
-  (with-meta
-    (fn filter-step [obj]
-      (-> (let [prix (try (pred|ix-fn @$) (catch Exception _e nil))]
-            (if (number? prix) ; Array behavior.
-              (let [ix  (-> prix Math/floor int)] ; Really! I checked!
-                (letfn [(aref [obj]
-                          (let [len (if (vector? obj) (count obj) 1)
-                                ix  (if (neg? ix) (core/+ len ix) ix)]
-                            (if (or (and (pos? ix) (core/>= ix len))
-                                    (and (neg? ix) (core/> (Math/abs ix) len)))
-                              nil ; Rule 2, above.
-                              (if (vector? obj) (nth obj ix) obj))))]
-                    (mapv aref (map #(get % attr) (singlize obj)))))
-              ;; Filter behavior.
-              (->> obj
-                   singlize
-                   (filterv pred|ix-fn))))
-          jsonata-flatten))
-    {:bi/step-type :bi/filter-step*}))
-
-
-;;; ---------------------- JSONata an RADmapper functions (needs to be reordered) ----------------
-#_(defn get*
-  "This is the function to access a record key when not part of path mapping."
-  ([field] (get* @$ field))
-  ([obj field] (get obj field)))
-
-#_(defn aref
-  "This is the function to do aref (It is '[]' when not part of path mapping.)"
-  ([index-fn] (aref @$ index-fn))
-  ([obj index-fn]
-   (let [ix (try (index-fn @$) (catch Exception _e nil))]
-     (when (number? ix) ; Array behavior.
-       (let [ix  (-> ix Math/floor int) ; Really! I checked!
-             len (if (vector? obj) (count obj) 1)
-             ix  (if (neg? ix) (core/+ len ix) ix)]
-         (if (or (and (pos? ix) (core/>= ix len))
-                 (and (neg? ix) (core/> (Math/abs ix) len)))
-           nil ; Rule 2, above.
-           (if (vector? obj) (nth obj ix) obj)))))))
+(defn aref
+  "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
+   arr[-2] the second to last, etc.
+   If an index is specified that exceeds the size of the array, then nothing is selected."
+  [obj ix]
+  (let [len (if (vector? obj) (count obj) 1)
+        ix  (if (neg? ix) (core/+ len ix) ix)]
+    (if (or (and (pos? ix) (core/>= ix len))
+            (and (neg? ix) (core/> (Math/abs ix) len)))
+      nil ; Rule 2, above.
+      (if (vector? obj) (nth obj ix) obj))))
 
 (defn $map
   "Signature: $map(array, function)

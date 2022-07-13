@@ -99,15 +99,15 @@
              (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums"))))
 
     (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
-      (is (= [3 6]
+      (is (= [2 4]
              (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]"))))
 
     ;; By the way, Jsonata allows single quotes in the expression; JSON doesn't allow them in the data.
-    ; *THIS*
+    ;; This remails unsolved!
     (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
       (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]"))))
 
-    ; *THIS*
+    ;; This remails unsolved!
     (testing "Jsonata quirk 3: Note that it doesn't flatten to singleton here."
       (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]")))) ; Same as above; this one mentions quirk.
 
@@ -133,9 +133,8 @@
       (is (= [[false] [true] [false]]
              (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]"))))
 
-    ; *THIS*
     (testing "use of $match (1)"
-      (is (= {"match" "foo", "index" 2, "groups" []}  (run "$match(\"bbfoovar\", /foo/)"))))
+      (is (= {"match" "foo", "index" 2}  (run "$match(\"bbfoovar\", /foo/)"))))
 
     (testing "use of $match (1)"
       (is (= {"match" "xababy", "index" 6, "groups" ["ab"]} (run "$match(\"foobarxababy\",/\\d*x(ab)+y/)"))))
@@ -295,20 +294,11 @@
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
 
-#_(defn tryme []
-  (bi/map-steps
-   (bi/stepable
-    (->
-     {}
-     (assoc "a" 5)
-     (assoc "b" (-> {} (assoc "e" 2)))
-     (assoc "c" [0 10])
-     (assoc "d" 500)))
-   (bi/primary
-    (bi/+
-     (bi/+
-      (bi/get-step "a")
-      (bi/*
-       (bi/map-steps (bi/get-step "b") (bi/get-step "e"))
-       (bi/aref (bi/get* "c") (fn [_x1] (bi/with-context _x1 1)))))
-     (bi/get-step "d")))))
+(defn tryme [arg]
+  (binding [bi/$ (if (empty? arg) bi/$ (-> arg first atom))]
+   (let  [$f  (-> (fn [$x] (bi/+ $x 1))
+                  (with-meta #:bi{:type :bi/user-fn, :params '[$x]}))]
+     (bi/run-steps
+      (bi/stepable [1 2 3])
+      (bi/stepable ($f (bi/deref$)))))))
+

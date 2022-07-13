@@ -120,7 +120,7 @@
 
 ;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JaJvarDecl [m]
-  (binding [*assume-json-data?* true] ; This is for bi/jsonata-flatten, Rule 3.
+  (binding [*assume-json-data?* true] ; This is for bi/jflatten, Rule 3.
     (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
           ;; JSONata doesn't recognize assigment to $ in a code block; it returns *no match*
           `(~(dgensym!) (bi/set-context! nil #_(-> m :init-val rewrite))),
@@ -142,14 +142,18 @@
   "When true, modify rewriting behavior inside 'delimited expressions'."
   false)
 
+(def ^:dynamic inside-step?
+  "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than inside-delim?
+  false)
+
 (def ^:dynamic in-enforce?
   "While inside an enforce, qvar references are wrapped."
   false)
 
 (defrewrite :JaField [m]
-  (if inside-delim?
-    (-> m :field-name)
-    `(~'bi/get-step  ~(-> m :field-name))))
+  (cond inside-delim? (:field-name m),
+        inside-step?  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than inside-delim?
+        :else `(~'bi/get-step  ~(:field-name m))))
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
@@ -251,48 +255,51 @@
 ;;; JaPath are created in gather-steps.
 (defrewrite :JaPath [m]
   `(bi/run-steps
-    ~@(->> m
-           :path
-           (remove #(or (symbol? %) (keyword? %)))
-           (map rewrite)
-           (map wrap-non-path))))
+    ~@(binding [inside-step? false
+                inside-delim? false]
+        (->> m
+             :path
+             (remove #(or (symbol? %) (keyword? %)))
+             (map rewrite)
+             (map wrap-non-path)))))
 
 ;;; Where any of the :exps are JaJvarDecl, they need to wrap the things that follow in a let.
 ;;; Essentially, this turns a sequence into a tree.
 (defrewrite :JaPrimary [m]
-  (let [segs (util/split-by (complement #(= :JaJvarDecl (:_type %))) (:exps m)) ; split a let
-        map-vec (loop [segs segs
-                       res []]
-                  (if (empty? segs) res
-                      (let [seg (first segs)
-                            new-forms (if (= :JaJvarDecl (-> seg first :_type))
-                                        (reduce (fn [r form]
-                                                  (if (= :JaJvarDecl (:_type form))
-                                                    (update r :r/bindings conj (rewrite form))
-                                                    (update r :r/body conj (rewrite form))))
-                                                {:r/bindings [] :r/body []}
-                                                seg)
-                                        {:r/body (mapv rewrite seg)})]
-                        (recur (rest segs) (conj res new-forms)))))
-        res (reduce (fn [r m] (update r :r/body conj m)) (first map-vec) (rest map-vec))] ; nest body
-    (letfn [(rew [form] ; Rewrite nested map as a s-exp.
-              (cond (:r/bindings form) `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                                          ~@(->> form :r/body (map rew))),
-                    (:r/body form)      (->> form :r/body (map rew)),
-                    (vector? form)      (mapv rew form),
-                    (seq? form)         (map rew form),
-                    (map? form)         (reduce-kv (fn [m k v] (assoc m k (rew v))) {} form),
-                    :else                form))]
-      (cond (:r/bindings res)              (rew res),
-            (== 1 (-> res :r/body count))  (-> res :r/body first rew)
-            :else                         `(do ~@(rew (:r/body res)))))))
+  (binding [inside-step? true]
+    (let [segs (util/split-by (complement #(= :JaJvarDecl (:_type %))) (:exps m)) ; split a let
+          map-vec (loop [segs segs
+                         res []]
+                    (if (empty? segs) res
+                        (let [seg (first segs)
+                              new-forms (if (= :JaJvarDecl (-> seg first :_type))
+                                          (reduce (fn [r form]
+                                                    (if (= :JaJvarDecl (:_type form))
+                                                      (update r :r/bindings conj (rewrite form))
+                                                      (update r :r/body conj (rewrite form))))
+                                                  {:r/bindings [] :r/body []}
+                                                  seg)
+                                          {:r/body (mapv rewrite seg)})]
+                          (recur (rest segs) (conj res new-forms)))))
+          res (reduce (fn [r m] (update r :r/body conj m)) (first map-vec) (rest map-vec))] ; nest body
+      (letfn [(rew [form] ; Rewrite nested map as a s-exp.
+                (cond (:r/bindings form) `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                                            ~@(->> form :r/body (map rew))),
+                      (:r/body form)      (->> form :r/body (map rew)),
+                      (vector? form)      (mapv rew form),
+                      (seq? form)         (map rew form),
+                      (map? form)         (reduce-kv (fn [m k v] (assoc m k (rew v))) {} form),
+                      :else                form))]
+        `(bi/primary
+          ~(cond (:r/bindings res)              (rew res),
+                 (== 1 (-> res :r/body count))  (-> res :r/body first rew)
+                 :else                         `(do ~@(rew (:r/body res)))))))))
 
 (defrewrite :JaApplyFilter [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
-        body (-> m :body rewrite)]
+        body (binding [inside-step? true] (-> m :body rewrite))]
     `(bi/filter-step
-      #_~(-> m :operand rewrite) ; ToDo: This was part of dealing with the non-compositional semantics. Okay?
       (fn [~sym] (bi/with-context ~sym ~body)))))
 
 (defrewrite :JaApplyReduce [m]

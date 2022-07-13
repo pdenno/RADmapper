@@ -2,9 +2,9 @@
 
  :deps    {com.cemerick/url               {:mvn/version "0.1.1"}
            com.taoensso/timbre            {:mvn/version "5.2.1"}
-           com.wsscode/pathom3            {:mvn/version "2022.03.17-alpha"}
+           com.wsscode/pathom3            {:mvn/version "2022.07.08-alpha"}
            dk.ative/docjure               {:mvn/version "1.17.0"} ; spreadsheets
-           io.replikativ/datahike         {:mvn/version "0.4.1491"}
+           io.replikativ/datahike         {:mvn/version "0.5.1506"}
            ;org.babashka/sci               {:mvn/version "0.3.4"} ; someday soon?
            org.clojure/clojure            {:mvn/version "1.11.1"}
            org.clojure/data.zip           {:mvn/version "1.0.0"}
@@ -15,7 +15,7 @@
                  :extra-deps {com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}} ; clj -A:dev, for example. (in .dir-locals.el)
 
            :test {:extra-paths ["test"]
-                  :extra-deps  {lambdaisland/kaocha {:mvn/version "1.65.1029"}
+                  :extra-deps  {lambdaisland/kaocha {:mvn/version "1.68.1059"}
                                 com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
 
            :deploy {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}

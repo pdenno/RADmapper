@@ -16,6 +16,9 @@
   (binding [*ns* (find-ns 'user)]
     (try
       (bi/reset-env)
-      (eval form)
+      (let [res (eval form)]
+        (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
+          (bi/jflatten (res))
+          (bi/jflatten res)))
       (catch Exception e
         (log/error "\nError evaluating form:" e "\nform:" form)))))
