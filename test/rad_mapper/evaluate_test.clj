@@ -48,7 +48,7 @@
 
     (testing "simple aref (2)" ; JSONata is okay with this one.
       (is (= 1 (run "($c := [{'a' : 1}]; $c[0].a)"))))
-      
+
     (testing "simple aref (2)" ; JSONata is okay with this one too.
       (is (= {"a" 1} (run "[{'a' : 1}][0]"))))
 
@@ -68,11 +68,29 @@
     (testing "jsonata flatten (3) in-line data"
       (is (= 2 (run "[[1,2,3], 4].$[1]"))))
 
-    (testing "Jsonata's flattening odd consequences (1) in-line data"
-      (is (= [1 4] (run "[[1,2,3], 4].$[0][0][0][0]"))))
+    ;; ------------------------------
+    (testing "odd consequences"
+      (testing "(1) .$/filter"
+        (is (= [1 4]       (run "[[1,2,3], 4].$[0][0]")))) ; You can use more [0] with no effect.
 
-    (testing "Jsonata's flattening odd consequences! (2) JSON data."
-      (is (= 1 (run "($v := [[1,2,3], 4]; $v[0][0][0][0])"))))
+      (testing "(2) .$/filter"
+        (is (= [1 4]       (run "($v := [[1,2,3], 4]; $v.$[0][0])"))))
+
+      (testing "(3) no .$"
+        (is (= 1           (run "($v := [[1,2,3], 4]; $v[0][0][0])"))))
+
+      (testing "(4) no .$"
+        (is (= 1           (run "{'num' : [[1,2,3], 4]}.num[0][0]"))))
+
+      (testing "(5) .$/filter"
+        (is (= [1 4]       (run "{'num' : [[1,2,3], 4]}.num.$[0][0]"))))
+
+      (testing "(6) .$ doesn't just map, but flattens."
+        (is (= [1 2 3 4]   (run "[[1,2,3], 4]}.$"))))
+
+      (testing "(7) What about this one?"
+        (is (= [[1 2 3] 4] (run "[[[1,2,3], 4]].$")))))
+    ;; ------------------------------
 
     (testing "mapping here means 'run [0] on each element.'"
       (is (= [1 4] (run "[[1,2,3], 4].$[0]"))))
@@ -93,7 +111,7 @@
       (is (= 1 (run "1[0]"))))
 
     ;; The next two are concern the issue I raised in JSONata slack about "non-compositionality".
-    ;; The answer I got is that nums[1] should be viewed as a term. 
+    ;; The answer I got is that nums[1] should be viewed as a term.
     (testing "Jsonata quirk 2a: compare to 2b. If you stop here, you merge results."
       (is (= [1 2 3 4]
              (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums"))))
@@ -294,11 +312,32 @@
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
 
-(defn tryme [arg]
+(defn tryme []
+  (bi/run-steps
+   (bi/stepable
+    (->
+     {}
+     (assoc "a" 5)
+   (assoc "b" (-> {} (assoc "e" 2)))
+   (assoc "c" [0 10])
+   (assoc "d" 500)))
+   (bi/primary
+    (bi/+
+     (bi/+
+      (bi/get-scoped "a")
+      (bi/*
+       (bi/run-steps
+        (bi/stepable (bi/get-scoped "b"))
+        (bi/stepable (bi/get-scoped "e")))
+       (bi/run-steps
+        (bi/stepable (bi/get-scoped "c"))
+        (bi/filter-step (fn [_x1] (bi/with-context _x1 1))))))
+     (bi/get-scoped "d")))))
+
+#_(defn tryme [arg]
   (binding [bi/$ (if (empty? arg) bi/$ (-> arg first atom))]
    (let  [$f  (-> (fn [$x] (bi/+ $x 1))
                   (with-meta #:bi{:type :bi/user-fn, :params '[$x]}))]
      (bi/run-steps
       (bi/stepable [1 2 3])
       (bi/stepable ($f (bi/deref$)))))))
-

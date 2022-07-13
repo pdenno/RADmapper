@@ -167,7 +167,7 @@
             (let [sfn (first steps)
                   new-res (set-context!
                            (case (-> sfn meta :bi/step-type)
-                             :bi/filter-step (mapv #(binding [$ (atom %)] (sfn % nil)) (singlize res))
+                             :bi/filter-step (sfn res nil)
                              ;; ToDo: in lieu of the jflatten here, I've wrapped eval in jflatten. Questionable.
                              (mapv #(binding [$ (atom %)] (sfn %)) (singlize res))))]
               (recur new-res (rest steps)))))))
