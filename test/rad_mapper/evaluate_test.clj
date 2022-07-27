@@ -18,39 +18,24 @@
 (defn examine [exp]
   (-> (rew/rewrite* :ptag/exp exp :rewrite? true) nicer))
 
+(defmacro run-test
+  "Print the test form using testing, run the test."
+  [form-string expect]
+  `(testing ~(str "(run \"" form-string "\")")
+     (is (= ~expect (run ~form-string)))))
+
 (deftest today
-  (testing "(run \"[[1,2,3], 4].$[1]\")"
-    (is (= 2   (run "[[1,2,3], 4].$[1]"))))
-
-  (testing "(run \"[[1,2,3], 4].$[0][0]\")"
-    (is (= [1 4] (run "[[1,2,3], 4].$[0][0]"))))
-
-  (testing  "(run \"($v := [[1,2,3], 4]; $v.$[0][0])\")"
-    (is (= [1 4] (run "($v := [[1,2,3], 4]; $v.$[0][0])"))))
-
-  (testing "(run \"{'num' : [[1,2,3], 4]}.num.$[0][0]\")"
-    (is (= [1 4] (run "{'num' : [[1,2,3], 4]}.num.$[0][0]"))))
-
-  (testing "(run \"[[[1,2,3], 4]].$\")"
-    (is (= [[1 2 3] 4] (run "[[[1,2,3], 4]].$"))))
-
-  (testing "(run \"[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]\")"
-    (is (= [2 4] (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]"))))
-
-  (testing "(run \"{'nums' : [[1], 2, 3]}.nums[0]\")"
-    (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]"))))
-
-  (testing "(run \"{'nums' : [[1], 2, 3]}.nums\")"
-    (is (= [1 2 3 4] (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums"))))
-
-  (testing "(run \"{'number' : [11, 22, 33, 44]}.number[2]\")"
-    (is (= 33 (run "{'number' : [11, 22, 33, 44]}.number[2]"))))
-
-  (testing "(run \"['a', 'b', 'c'].[1]\")"
-    (is (= [[1][1][1]] (run "['a', 'b', 'c'].[1]"))))
-  
-  (testing "(run \"{'a' : 1, 'b' : 2}.[1]\")"
-    (is (= [1] (run "{'a' :1, 'b' :2}.[1]")))))
+  (run-test "[[1,2,3], 4].$[1]" 2)
+  (run-test "[[1,2,3], 4].$[0][0]" [1 4])
+  (run-test "($v := [[1,2,3], 4]; $v.$[0][0])" [1 4] )
+  (run-test "{'num' : [[1,2,3], 4]}.num.$[0][0]" [1 4])
+  (run-test "[[[1,2,3], 4]].$" [[1 2 3] 4])
+  (run-test "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]" [2 4])
+  (run-test "{'nums' : [[1], 2, 3]}.nums[0]" [1])
+  (run-test "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums" [1 2 3 4])
+  (run-test "{'number' : [11, 22, 33, 44]}.number[2]" 33)
+  (run-test "['a', 'b', 'c'].[1]" [[1][1][1]])
+  (run-test "{'a' :1, 'b' :2}.[1]" [1]))
 
 
 ;;; CIDER visual cues:
@@ -64,70 +49,70 @@
       (is (nil? (run "($ := [1]; $)"))))
 
     (testing "simple mapping"
-      (is (= [1 2 3] (run "[{'a' : 1}, {'a' : 2}, {'a' : 3}].a"))))
+      (run-test "[{'a' : 1}, {'a' : 2}, {'a' : 3}].a" [1 2 3]))
 
     (testing "simple mapping (2)"
-      (is (= [2 3 4] (run "[{'a' : 1}, {'a' : 2}, {'a' : 3}].(a + 1)"))))
+      (run-test "[{'a' : 1}, {'a' : 2}, {'a' : 3}].(a + 1)" [2 3 4]))
 
     (testing "simple mapping (3)"
-      (is (= [2 3 4] (run "($f := function($x){$x+1}; [1,2,3].$f($))"))))
+      (run-test "($f := function($x){$x+1}; [1,2,3].$f($))" [2 3 4]))
 
     (testing "simple mapping (4)"
-      (is (= 111 (run "{'a' : {'b' : 111}}.a.b"))))
+      (run-test "{'a' : {'b' : 111}}.a.b" 111))
 
     (testing "simple navigation"
-      (is (= 33 (run "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)"))))
+      (run-test "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.(a.b.c + a.b.f)" 33))
 
     (testing "simple navigation, more efficiently"
-      (is (= 33 (run "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.a.b.(c + f)"))))
+      (run-test "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.a.b.(c + f)" 33))
 
     (testing "simple aref (1)" ; JSONata returns no match on this. I think it should match!
-      (is (= 1 (run "[{'a' : 1}][0].a)"))))
+      (run-test "[{'a' : 1}][0].a)" 1))
 
     (testing "simple aref (2)" ; JSONata is okay with this one.
-      (is (= 1 (run "($c := [{'a' : 1}]; $c[0].a)"))))
+      (run-test "($c := [{'a' : 1}]; $c[0].a)" 1))
 
     (testing "simple aref (2)" ; JSONata is okay with this one too.
-      (is (= {"a" 1} (run "[{'a' : 1}][0]"))))
+      (run-test "[{'a' : 1}][0]" {"a" 1}))
 
     (testing "navigation with aref"
-      (is (= 525 (run "{'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )"))))
+      (run-test "{'a' : 5, 'b' : {'e' : 2}, 'c' : [0, 10], 'd' : 500}.(a + b.e * c[1] + d )" 525))
 
     ;; Note that JSONata Exerciser assumes JSON data if
     ;; (1) the data is in the LHS pane, or
     ;; (2) the data is assigned to a $var in a code block.
     ;; Otherwise, it is treated as JSONata data and flattening is applied.
     (testing "jsonata flatten (1); JSON data"
-      (is (= [[1 2 3] [4]] (run "($v := [[1, 2, 3], [4]]; $v)"))))
+      (run-test  "($v := [[1, 2, 3], [4]]; $v)" [[1 2 3] [4]]))
 
     (testing "jsonata flatten (2) in-line data"
-      (is (= [1 2 3 4] (run "[[1,2,3], [4]].$"))))
+      (run-test  "[[1,2,3], [4]].$" [1 2 3 4]))
 
     (testing "jsonata flatten (3) in-line data"
-      (is (= 2 (run "[[1,2,3], 4].$[1]"))))
+      (run-test  "[[1,2,3], 4].$[1]" 2))
 
     ;; ------------------------------
     (testing "odd consequences"
       (testing "(1) .$/filter"
-        (is (= [1 4]       (run "[[1,2,3], 4].$[0][0]")))) ; You can use more [0] with no effect.
-
+        (run-test  "[[1,2,3], 4].$[0][0]" [1 4])) ; You can use more [0] with no eff [1 4]      ))
+  
       (testing "(2) .$/filter"
-        (is (= [1 4]       (run "($v := [[1,2,3], 4]; $v.$[0][0])"))))
-
+        (run-test  "($v := [[1,2,3], 4]; $v.$[0][0])" [1 4]      ))
+      
       (testing "(3) no .$"
-        (is (= 1           (run "($v := [[1,2,3], 4]; $v[0][0][0])"))))
+        (run-test  "($v := [[1,2,3], 4]; $v[0][0][0])" 1          ))
 
       (testing "(4) no .$"
-        (is (= 1           (run "{'num' : [[1,2,3], 4]}.num[0][0]"))))
+        (run-test  "{'num' : [[1,2,3], 4]}.num[0][0]" 1          ))
 
       (testing "(5) .$/filter"
-        (is (= [1 4]       (run "{'num' : [[1,2,3], 4]}.num.$[0][0]"))))
+        (run-test  "{'num' : [[1,2,3], 4]}.num.$[0][0]" [1 4]      ))
 
       (testing "(6) .$ doesn't just map, but flattens."
-        (is (= [1 2 3 4]   (run "[[1,2,3], 4].$"))))
+        (run-test  "[[1,2,3], 4].$" [1 2 3 4]  ))
 
       (testing "(7) Flattened?"
-        (is (= [[1 2 3] 4] (run "[[[1,2,3], 4]].$")))))
+        (run-test  "[[[1,2,3], 4]].$" [[1 2 3] 4])))
     ;; ------------------------------
 
     ;; I get [11] with this one, JSONata gets 11. So what's the reason?
@@ -137,75 +122,74 @@
 
     ;; ToDo: The statement below is true of JSONata. Is it true of my implementation?
     (testing "In the above, you can't run without the [] except by doing something like this"
-      (is (= 11 (run "{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}.(a.b.c + d.e )"))))
+      (run-test  "{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}.(a.b.c + d.e )" 11))
 
     (testing "Jsonata quirk 1: you can't use literal 1 here, but you can set $=1.'"
-      (is (= 1 (run "($v := 1; $v[0])"))))
+      (run-test  "($v := 1; $v[0])" 1))
 
     (testing "Jsonata quirk 1: ToDo: Note that RADmapper doesn't mind."
-      (is (= 1 (run "1[0]"))))
+      (run-test  "1[0]" 1))
 
     ;; The next two are concern the issue I raised in JSONata slack about "non-compositionality".
     ;; The answer I got is that nums[1] should be viewed as a term.
     (testing "Jsonata quirk 2a: compare to 2b. If you stop here, you merge results."
-      (is (= [1 2 3 4]
-             (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums"))))
+      (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums" [1 2 3 4]
+            ))
 
     (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
-      (is (= [2 4]
-             (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]"))))
+      (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]" [2 4]
+            ))
 
     ;; By the way, Jsonata allows single quotes in the expression; JSON doesn't allow them in the data.
     ;; This remails unsolved!
     (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
-      (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]"))))
+      (run-test  "{'nums' : [[1], 2, 3]}.nums[0]" [1]))
 
     ;; This remails unsolved!
     (testing "Jsonata quirk 3: Note that it doesn't flatten to singleton here."
-      (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]")))) ; Same as above; this one mentions quirk.
+      (run-test  "{'nums' : [[1], 2, 3]}.nums[0]" [1])) ; Same as above; this one mentions qu [1]))
 
     ;; bi/passing-singleton? fixes (only) this one.
     (testing "simple aref"
-      (is (= 33 (run "{'number' : [11, 22, 33, 44]}.number[2]"))))
+      (run-test  "{'number' : [11, 22, 33, 44]}.number[2]" 33))
 
     ;; Mine returns ["b"] because of bi/access-or-map?
     #_(testing "simple filter"
       (is (= "b" (run "{'letter' : ['a', 'b', 'c', 'd']}.letter[$ = 'b']"))))
 
     (testing "simple filter (2)"
-      (is (= [{"x" 2} {"x" 2}]
-             (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].num[x = 2]"))))
+      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].num[x = 2]" [{"x" 2} {"x" 2}]))
 
     ;; This one contradicts my theory that what is returned depends on value of bi/access-or-map?
     ;; This one maps but return a single object as value
     #_(testing "simple filter, three objects coming in, yet returns a singleton. Needs thought!"
-      (is (= {"num" {"x" 2}}
-             (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}][num.x = 2]"))))
+      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}][num.x = 2]" {"num" {"x" 2}}
+            ))
 
     #_(testing "simple filter, needs thought"
-      (is (= [[false] [true] [false]]
-             (run "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]"))))
+      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]" [[false] [true] [false]]
+            ))
+
+    (testing "use of $match (1); note that JSONata doesn't clean up the empty groups."
+      (run-test  "$match('bbfoovar', /foo/)" {"match" "foo", "index" 2 "groups" []}))
 
     (testing "use of $match (1)"
-      (is (= {"match" "foo", "index" 2}  (run "$match(\"bbfoovar\", /foo/)"))))
-
-    (testing "use of $match (1)"
-      (is (= {"match" "xababy", "index" 6, "groups" ["ab"]} (run "$match(\"foobarxababy\",/\\d*x(ab)+y/)"))))
+       (run-test "$match('foobarxababy',/\\d*x(ab)+y/)" {"match" "xababy", "index" 6, "groups" ["ab"]}))
 
     (testing "'immediate use' of a function"
-      (is (= 4 (run "function($x){$x+1}(3)"))))
+      (run-test  "function($x){$x+1}(3)" 4))
 
     (testing "another sort of immediate use, using the threading macro"
-      (is (= 5 (run "4 ~> function($x){$x+1}()"))))
+      (run-test  "4 ~> function($x){$x+1}()" 5))
 
     (testing "reduce."
-      (is (= 15 (run "$reduce([1..5], function($i, $j){$i + $j})"))))
+      (run-test  "$reduce([1..5], function($i, $j){$i + $j})" 15))
 
     (testing "reduce on one arg"
-      (is (= 3 (run "$reduce([3], function($i, $j){$i + $j})"))))
+      (run-test  "$reduce([3], function($i, $j){$i + $j})" 3))
 
     (testing "reduce on one arg and an initial value"
-      (is (= 5 (run "$reduce([3], function($i, $j){$i + $j}, 2)"))))
+      (run-test  "$reduce([3], function($i, $j){$i + $j}, 2)" 5))
 
     ;; ToDo: Not a high priority, I think. The problem is is in parsing, I suppose.
     #_(testing "That you can return functions for built-ins"
@@ -214,15 +198,15 @@
 (deftest code-block-evaluations
   (testing "Code block:"
     (testing "simple code-blocks."
-      (is (= [2 3 4 5 6] (run "($inc := function($i)    {$i + 1};  $map([1..5], $inc))")))
-      (is (= 15          (run "($add := function($i, $j){$i + $j}; $reduce([1..5], $add))")))
-      (is (= 115         (run "($add := function($i, $j){$i + $j}; $reduce([1..5], $add, 100))"))))
+      (run-test  "($inc := function($i)    {$i + 1};  $map([1..5], $inc))" [2 3 4 5 6])
+      (run-test  "($add := function($i, $j){$i + $j}; $reduce([1..5], $add))" 15)
+      (run-test  "($add := function($i, $j){$i + $j}; $reduce([1..5], $add, 100))" 115))
 
     (testing "array indexing."
-      (is (= "b"            (run "($v := ['a', 'b', 'c', 'd']; $v[1])" )))
-      (is (= "a"            (run "($v := ['a', 'b', 'c', 'd']; $v[-4])")))
-      (is (= "a"            (run "($v := ['a', 'b', 'c', 'd']; $v[0])" )))
-      (is (= [[1][1][1]]    (run "['a', 'b', 'c'].[1]"))))
+      (run-test  "($v := ['a', 'b', 'c', 'd']; $v[1])"  "b")
+      (run-test  "($v := ['a', 'b', 'c', 'd']; $v[-4])" "a")
+      (run-test  "($v := ['a', 'b', 'c', 'd']; $v[0])"  "a")
+      (run-test  "['a', 'b', 'c'].[1]"                  [[1][1][1]]))
 
     ; *THIS*
     (testing "filter 'delimited expressions."
@@ -241,61 +225,61 @@
 (deftest why
   (testing "Why:"
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
-      (is (= "abc" (run "'abc'[$]"))))
+      (run-test  "'abc'[$]" "abc"))
 
     ; *THIS*
     (testing "Maybe this is no match because the data is neither object nor array???"
-      (is (= :no-match (run "'abc'.$"))))))
+      (run-test  "'abc'.$" :no-match))))
 
 (deftest design
   (testing "Design (evaluate):"
     (testing "simple use of context variable (1)"
-      (is (= "abc" (run "'abc'[0]"))))
+      (run-test  "'abc'[0]" "abc"))
 
     (testing "simple use of context variable (2)"
-      (is (= [1 2 3] (run "[1 , 2, 3].$"))))
+      (run-test  "[1 , 2, 3].$" [1 2 3]))
 
     (testing "simple use of context variable (3)"
-      (is (= 123 (run "( $v := {'a' : {'b' : {'c' : 123}}}; $v.a.b.c.$ )"))))
+      (run-test  "( $v := {'a' : {'b' : {'c' : 123}}}; $v.a.b.c.$ )" 123))
 
     ; *THIS*
     (testing "Last part of path expression creates an array."
-      (is (= [[1] [2] [3]] (run "[1,2,3].[$]"))))
+      (run-test  "[1,2,3].[$]" [[1] [2] [3]]))
 
     (testing "simple use of contex variable, or not (1)"
-      (is (= 123 (run "( $v := {'a' : {'b' : {'c' : 123}}}; $v.a.b.c )"))))
+      (run-test  "( $v := {'a' : {'b' : {'c' : 123}}}; $v.a.b.c )" 123))
 
     (testing "simple use of contex variable, or not (2)"
-      (is (= 123 (run "{'a' : {'b' : {'c' : 123}}}.a.b.c"))))
+      (run-test  "{'a' : {'b' : {'c' : 123}}}.a.b.c" 123))
 
     (testing "simple use of contex variable, or not (3)"
-      (is (= 123 (run "{'a' : {'b' : {'c' : 123}}}.a.b.c.$"))))
+      (run-test  "{'a' : {'b' : {'c' : 123}}}.a.b.c.$" 123))
 
     (testing "implicit mapping and strange argument"
-      (is (= [100 100 100] (run "['a', 'b', 'c'].$sum([50, 50])"))))
+      (run-test  "['a', 'b', 'c'].$sum([50, 50])" [100 100 100]))
 
     ; *THIS*
     (testing "implicit mapping with use of $."
-      (is (= 6 (run "( $v := [1, 2, 3]; $sum($v) )"))))
+      (run-test  "( $v := [1, 2, 3]; $sum($v) )" 6))
 
     (testing "binary precedence and non-advancing context variable (1)."
-      (is (= 11 (run "($v := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; $v(a + b * c + d) )"))))
+      (run-test  "($v := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; $v(a + b * c + d) )" 11))
 
     (testing "binary precedence and non-advancing context variable (2)."
-      (is (= 11 (run "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)"))))
+      (run-test  "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)" 11))
 
     (testing "code block or primary doesn't matter"
-      (is (= 1 (run "{'b' : 1}.(b)"))))
+      (run-test  "{'b' : 1}.(b)" 1))
 
     (testing "'code-block' is just an expression"
-      (is (= 22 (run "{'a' : 1, 'b' : 22}.($x := 2; $y:= 4; b)"))))
+      (run-test  "{'a' : 1, 'b' : 22}.($x := 2; $y:= 4; b)" 22))
 
     (testing "code-blocks allow closures"
-      (is (=  8 (run "($incAmt := 3; $inc := function($n){$n + $incAmt}; $inc(5))"))))
+      (run-test  "($incAmt := 3; $inc := function($n){$n + $incAmt}; $inc(5))" 8))
 
     ; *THIS*
     (testing "assignments return values; semicolon is a separator."
-      (is (= 1 (run "{'a' : 1, 'b' : 2}.($x := 3)"))))
+      (run-test  "{'a' : 1, 'b' : 2}.($x := 3)" 1))
 
     ; *THIS*
     (testing "advancing context variable on apply-map."
@@ -346,33 +330,3 @@
     ; *THIS*
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
-
-(defn tryme []
-  (bi/run-steps
-   (bi/stepable
-    (->
-     {}
-     (assoc "a" 5)
-   (assoc "b" (-> {} (assoc "e" 2)))
-   (assoc "c" [0 10])
-   (assoc "d" 500)))
-   (bi/primary
-    (bi/+
-     (bi/+
-      (bi/get-scoped "a")
-      (bi/*
-       (bi/run-steps
-        (bi/stepable (bi/get-scoped "b"))
-        (bi/stepable (bi/get-scoped "e")))
-       (bi/run-steps
-        (bi/stepable (bi/get-scoped "c"))
-        (bi/filter-step (fn [_x1] (bi/with-context _x1 1))))))
-     (bi/get-scoped "d")))))
-
-#_(defn tryme [arg]
-  (binding [bi/$ (if (empty? arg) bi/$ (-> arg first atom))]
-   (let  [$f  (-> (fn [$x] (bi/+ $x 1))
-                  (with-meta #:bi{:type :bi/user-fn, :params '[$x]}))]
-     (bi/run-steps
-      (bi/stepable [1 2 3])
-      (bi/stepable ($f (bi/deref$)))))))

@@ -58,7 +58,10 @@
         vec)))
 
 (defn container?   [obj] (-> obj meta :bi/container?))
-(defn containerize [obj] (with-meta obj (merge (meta obj) {:bi/container? true})))
+(defn containerize [obj]
+  (if (coll? obj)
+    (with-meta obj (merge (meta obj) {:bi/container? true}))
+    obj))
 
 (defn cmap
   "If the object isn't a container, run the function on it, 
@@ -122,7 +125,6 @@
   ([val] ; ToDo: Is this one ever used?
    (set-context! 
     (if (vector? val) (containerize val) val))))
-     
 
 (defmacro defn*
   "Convenience macro for numerical relationships. They can be passed functions."
@@ -182,16 +184,16 @@
                                                   :bi/attr (-> steps first meta :bi/arg)}))]
               (recur new-res (-> steps rest rest))),
 
-            :else ; All other are "compositional". BTW, we do mapping inside the step.
+            :else ; All other are "compositional".
             (let [sfn (first steps)
                   new-res (set-context!
                            (case (-> sfn meta :bi/step-type)
                              :bi/filter-step (sfn res nil)
                              :bi/get-step    (sfn res nil)
-                             :bi/value-step  (if (vector? res)
-                                               (mapv sfn res)
-                                               (sfn :ignore)) ; Special case for a map; clj would map of [k v] pairs.
-                             (cmap #(binding [$ (atom %)] (sfn %)) res)))]
+                             :bi/value-step  (if (vector? res) (mapv sfn res) (sfn :ignore)) ; clj would map of [k v] pairs.
+                             :bi/primary     (if (vector? res) (mapv sfn res) (sfn res))
+                             :bi/stepable    (cmap #(binding [$ (atom %)] (sfn %)) res #_(containerize res)) ; <==== TEMPORARY! (containerize)
+                             (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
               (recur new-res (rest steps)))))))
 
 (defn filter-step
@@ -469,9 +471,7 @@
                        "index" (str/index-of s success)
                        "groups" (vec groups)}))))]
     ;; ToDo: I think this should be the pattern of every defn* ???
-    (if (vector? s_)
-      (mapv match-aux s_)
-      (match-aux s_))))
+    (if (vector? s_) (mapv match-aux s_) (match-aux s_))))
 
 ;;; $pad
 ;;; $replace
