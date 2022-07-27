@@ -15,6 +15,44 @@
                   :debug? debug?
                   :debug-parse? debug-parse?)))
 
+(defn examine [exp]
+  (-> (rew/rewrite* :ptag/exp exp :rewrite? true) nicer))
+
+(deftest today
+  (testing "(run \"[[1,2,3], 4].$[1]\")"
+    (is (= 2   (run "[[1,2,3], 4].$[1]"))))
+
+  (testing "(run \"[[1,2,3], 4].$[0][0]\")"
+    (is (= [1 4] (run "[[1,2,3], 4].$[0][0]"))))
+
+  (testing  "(run \"($v := [[1,2,3], 4]; $v.$[0][0])\")"
+    (is (= [1 4] (run "($v := [[1,2,3], 4]; $v.$[0][0])"))))
+
+  (testing "(run \"{'num' : [[1,2,3], 4]}.num.$[0][0]\")"
+    (is (= [1 4] (run "{'num' : [[1,2,3], 4]}.num.$[0][0]"))))
+
+  (testing "(run \"[[[1,2,3], 4]].$\")"
+    (is (= [[1 2 3] 4] (run "[[[1,2,3], 4]].$"))))
+
+  (testing "(run \"[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]\")"
+    (is (= [2 4] (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]"))))
+
+  (testing "(run \"{'nums' : [[1], 2, 3]}.nums[0]\")"
+    (is (= [1] (run "{'nums' : [[1], 2, 3]}.nums[0]"))))
+
+  (testing "(run \"{'nums' : [[1], 2, 3]}.nums\")"
+    (is (= [1 2 3 4] (run "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums"))))
+
+  (testing "(run \"{'number' : [11, 22, 33, 44]}.number[2]\")"
+    (is (= 33 (run "{'number' : [11, 22, 33, 44]}.number[2]"))))
+
+  (testing "(run \"['a', 'b', 'c'].[1]\")"
+    (is (= [[1][1][1]] (run "['a', 'b', 'c'].[1]"))))
+  
+  (testing "(run \"{'a' : 1, 'b' : 2}.[1]\")"
+    (is (= [1] (run "{'a' :1, 'b' :2}.[1]")))))
+
+
 ;;; CIDER visual cues:
 ;;;  * bright red background on 'is' means is failed.
 ;;;  * washed out background on 'is' means execution failed
@@ -86,14 +124,11 @@
         (is (= [1 4]       (run "{'num' : [[1,2,3], 4]}.num.$[0][0]"))))
 
       (testing "(6) .$ doesn't just map, but flattens."
-        (is (= [1 2 3 4]   (run "[[1,2,3], 4]}.$"))))
+        (is (= [1 2 3 4]   (run "[[1,2,3], 4].$"))))
 
-      (testing "(7) What about this one?"
+      (testing "(7) Flattened?"
         (is (= [[1 2 3] 4] (run "[[[1,2,3], 4]].$")))))
     ;; ------------------------------
-
-    (testing "mapping here means 'run [0] on each element.'"
-      (is (= [1 4] (run "[[1,2,3], 4].$[0]"))))
 
     ;; I get [11] with this one, JSONata gets 11. So what's the reason?
     ;; Because the vector only has one element in it? Nope. See 'contradicts' below.
@@ -187,7 +222,7 @@
       (is (= "b"            (run "($v := ['a', 'b', 'c', 'd']; $v[1])" )))
       (is (= "a"            (run "($v := ['a', 'b', 'c', 'd']; $v[-4])")))
       (is (= "a"            (run "($v := ['a', 'b', 'c', 'd']; $v[0])" )))
-      (is (= [[1][1][1][1]] (run "['a', 'b', 'c', 'd'].[1]"))))
+      (is (= [[1][1][1]]    (run "['a', 'b', 'c'].[1]"))))
 
     ; *THIS*
     (testing "filter 'delimited expressions."

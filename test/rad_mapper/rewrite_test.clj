@@ -5,6 +5,15 @@
    [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]))
 
+(deftest value-map-rewrite
+  (testing "that things like ['a','b','c'].[0] translate correctly."
+  (is (= [{:_type :JaArray, :exprs ["a" "b" "c"]}
+          'bi/value-step
+          [1]]
+         (rew/rewrite-value-map [{:_type :JaArray, :exprs ["a" "b" "c"]}
+                                 'bi/get-step
+                                 {:_type :JaApplyFilter, :body 1}])))))
+
 (defn rew [exp & {:keys [simplify? execute? debug? debug-parse? skip-top?]}]
   "Default rewriting function"
   (let [rewrite? (not (or simplify? execute?))]

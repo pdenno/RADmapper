@@ -230,16 +230,44 @@
       (keyword? exp)
       (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
+(defrewrite :JaValueStep [m]
+  `(bi/value-step ~(-> m :body rewrite) ~(-> m :arg rewrite)))
+
 ;;;----------------------------- Rewriting binary operations (the remainder of this file) -------------
 
 (declare rewrite-bvec-as-sexp precedence op-precedence-tbl)
 
+(defn rewrite-value-step
+  "Wherever sequence (:JaArray |  :JaObjExp), :bi/get-step, :JaApplyFilter appears, 
+   it indicates a quirk in parsing of things like [1,2,3].[0] which in execution
+   should just return a [0] for each of [1,2,3]. Since that isn't a :JaApplyFilter
+   at all, we need to rewrite it (as a :JaValueMap)."
+  [s]
+  (loop [res []
+         svals s]
+    (let [triple (take 3 svals)
+          [p1 p2 p3] triple
+          len (count triple)]
+      (cond (< len 3) (into res triple)
+            (and (map? p1) (#{:JaArray :JaObjExp} (:_type p1))
+                 (= 'bi/get-step p2)
+                 (map? p3) (= :JaApplyFilter (:_type p3)))
+            (recur (into res (vector p1
+                                     'bi/value-step
+                                     {:_type :JaValueStep :body (:body p3)}))
+                   (->> svals (drop 3) vec))
+            :else (recur (conj res p1)
+                         (-> svals rest vec))))))
+
 ;;; Filter path elements (at least(?) -- maybe map and reduce too) consist of a field path element
 ;;; followed by the body enclosed in the delimiters; the two are not separate path elements.
 (defrewrite :JaBinOpSeq [m]
-  (->> m :seq rewrite-bvec-as-sexp)) ; This orders element and rewrites them to s-expressions.
+  (->> m
+       :seq
+       rewrite-value-step
+       rewrite-bvec-as-sexp)) ; This orders element and rewrites them to s-expressions.
 
-(def path-fn? #{:get-step :filter-step :reduce-step :primary})
+(def path-fn? #{:get-step :filter-step :reduce-step :value-step :primary})
 
 (defn wrap-non-path
   "The steps of bi/run-steps that aren't expressly path functions (for example,
@@ -302,6 +330,10 @@
     `(bi/filter-step
       (fn [~sym] (bi/with-context ~sym ~body)))))
 
+(defrewrite :JaValueStep [m]
+  (let [body (binding [inside-step? true] (-> m :body rewrite))]
+    `(bi/value-step [~body])))
+
 (defrewrite :JaApplyReduce [m]
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
@@ -319,6 +351,12 @@
 (s/def ::operators (s/coll-of ::info-op :kind vector?))
 (s/def ::info (s/keys :req-un [::args ::operators]))
 
+(defn value-step?
+  "Returns true if matches value-step."
+  [bvec]
+  (let [[_p1 p2 p3] bvec]
+    (and p3 (= p2 'bi/value-step))))
+
 ;;; Note: If support of filter-step non-compositional semantics is still "a thing" this is the place to fix it.
 (defn gather-steps ; ToDo: Should :reduce-step really be :path?=true ?
   "Step through the bvec and collect segments that include :path?=true operators/operands into JaPath objects.
@@ -326,23 +364,34 @@
   [bvec]
   (loop [bv bvec
          res []]
-    (cond (empty? bv) res
-          (-> bv first op-precedence-tbl :path?)
-          (let [steal (last res)                           ; Last operand belongs with path...
-                actual (subvec res 0 (-> res count dec))   ; ...so this is what res should be before gather path.
-                collected (loop [bv2 bv
-                                 path [steal]]
-                            (cond (empty? bv2) path
-                                  (and (contains? op-precedence-tbl (first bv2))
-                                       (-> bv2 first op-precedence-tbl :path? not)) path
-                                  :else
-                                  (recur (drop 1 bv2)
-                                         (-> path (conj (first bv2))))))]
-            (recur (drop (-> collected count dec) bv)
-                   (conj actual (rewrite {:_type :JaPath :path collected}))))
+    (let [consumed (atom 0)]
+      (cond (empty? bv) res
+            (or (-> bv first op-precedence-tbl :path?)
+                (value-step? bv))
+            (let [steal (last res)                                                       ; Last operand belongs with path...
+                  actual (or (and (not-empty res) (subvec res 0 (-> res count dec))) []) ; ...so this is what res should be before gather path.
+                  collected (loop [bv2 bv
+                                   path (if steal [steal] [])]
+                              (cond (empty? bv2) path   ; end of path
+                                    
+                                    (and (contains? op-precedence-tbl (first bv2)) ; end of path
+                                         (-> bv2 first op-precedence-tbl :path? not)) path
+                                    
+                                    (value-step? bv2) ; add a value-step, e.g. [1 2 3].['hello'] to path.
+                                    (do (swap! consumed #(+ % 3))
+                                        (recur (drop 3 bv2)
+                                               (conj (conj path (first bv2))
+                                                     {:_type :JaValueStep
+                                                      :body (:body (nth bv2 2))})))
+                                    :else
+                                    (do (swap! consumed inc)
+                                        (recur (drop 1 bv2)
+                                               (conj path (first bv2))))))]
+              (recur (drop @consumed bv)
+                     (conj actual (rewrite {:_type :JaPath :path collected}))))
             :else
             (recur (drop 1 bv)
-                   (conj res (first bv))))))
+                   (conj res (first bv)))))))
 
 (defn basic-info
   "Using the bin-op-vec (at any level of processing), create a map containing information about it."
@@ -466,6 +515,7 @@
    'bi/%             {:path? false :assoc :left :val 300}
    'bi//             {:path? false :assoc :left :val 300}
    'bi/get-step      {:path? true  :assoc :left :val 100}
+   'bi/value-step    {:path? true  :assoc :left :val 100}   
    'bi/filter-step   {:path? true  :assoc :left :val 100}
    'bi/reduce-step   {:path? true  :assoc :left :val 100}})
 

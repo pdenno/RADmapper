@@ -57,8 +57,23 @@
     (-> (remove seq-except? (tree-seq seq-except? seq x))
         vec)))
 
+(defn container?   [obj] (-> obj meta :bi/container?))
+(defn containerize [obj] (with-meta obj (merge (meta obj) {:bi/container? true})))
+
+(defn cmap
+  "If the object isn't a container, run the function on it, 
+   otherwise, mapv over the argument and containerize the result."
+  [f arg]
+  (if (container? arg)
+    (containerize (mapv f arg))
+    (f arg)))
+
 (defn jflatten
-  "Accommodate JSONata's quirky equivalence in behavior scalars and arrays containing one object.
+  "Accommodate JSONata's quirky equivalence in behavior of scalars and arrays containing one object.
+   Note that this is only applied for results of mapping (called 'containers'), not ordinary access.
+   - ordinary access            : {'nums'   : [[1], 2, 3]}.nums[0]
+   - container (because using $): [[1, 2, 3] 4].$
+  
    See http://docs.jsonata.org/processing section 'Sequences', which currenlty reads as follows:
        The sequence flattening rules are as follows:
 
@@ -80,18 +95,22 @@
     4) If a sequence contains one or more (sub-)sequences, then the values from the sub-sequence are pulled up to
        the level of the outer sequence. A result sequence will never contain child sequences (they are flattened)."
   [obj]
-  (letfn [(rule-1-objs [o]
-            (if (map? o)
-              (reduce-kv (fn [m k v] (if (and (vector? v) (empty? v)) m (assoc m k v))) {} o)
-              o))]
-    (cond (vector? obj)
-          (let [res (->> obj flatten-except-json (remove nil?) (mapv rule-1-objs)) ; (-> Rule 4, Rule 1)
-                len (count res)]
-            (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
-                  (== 1 len) (-> res first rule-1-objs) ; (-> Rule 2, Rule 1)
-                  :else (rule-1-objs res)))             ; Rule 1
-          (map? obj) (rule-1-objs obj),
-          :else obj)))
+  (if (container? obj)
+    (letfn [(elim-empty [o] ; rule-1
+              (cond (map? o) (reduce-kv (fn [m k v] (if (or (nil? v) (and (coll? v) (empty? v)))
+                                                      m
+                                                      (assoc m k (elim-empty v))))
+                                        {}
+                                        o)
+                    (vector? o) (->> o (remove nil?) (mapv elim-empty))
+                    :else o))]
+      (cond (vector? obj) (let [len (count obj)]
+                            (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
+                                  (== 1 len) (-> obj first elim-empty) ; (-> Rule 2, Rule 1)
+                                  :else (-> (elim-empty obj) flatten-except-json containerize))) ; Rule 1
+            (map? obj) (elim-empty obj),
+            :else obj))
+    obj))
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
@@ -99,8 +118,11 @@
 (defn deref$
   "Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
-  ([] @$)
-  ([val] (set-context! val) val)) ; ToDo: Is this still necessary?
+  ([] (containerize @$))
+  ([val] ; ToDo: Is this one ever used?
+   (set-context! 
+    (if (vector? val) (containerize val) val))))
+     
 
 (defmacro defn*
   "Convenience macro for numerical relationships. They can be passed functions."
@@ -156,20 +178,20 @@
             (and (= :bi/get-step (-> steps first meta :bi/step-type))
                  (= :bi/filter-step (-> steps second meta :bi/step-type))) ; Then don't do next step. Steal its argument.
             (let [sfn (second steps)              ; Run the filter specifying the previous step keyword.
-                  new-res (set-context! (-> (sfn
-                                             (jflatten res)
-                                             {:bi/call-type :bi/get-step
-                                              :bi/attr (-> steps first meta :bi/arg)})
-                                            #_jflatten))]
+                  new-res (set-context! (sfn res {:bi/call-type :bi/get-step
+                                                  :bi/attr (-> steps first meta :bi/arg)}))]
               (recur new-res (-> steps rest rest))),
 
-            :else ; all other steps are single-stepping.
+            :else ; All other are "compositional". BTW, we do mapping inside the step.
             (let [sfn (first steps)
                   new-res (set-context!
                            (case (-> sfn meta :bi/step-type)
                              :bi/filter-step (sfn res nil)
-                             ;; ToDo: in lieu of the jflatten here, I've wrapped eval in jflatten. Questionable.
-                             (mapv #(binding [$ (atom %)] (sfn %)) (singlize res))))]
+                             :bi/get-step    (sfn res nil)
+                             :bi/value-step  (if (vector? res)
+                                               (mapv sfn res)
+                                               (sfn :ignore)) ; Special case for a map; clj would map of [k v] pairs.
+                             (cmap #(binding [$ (atom %)] (sfn %)) res)))]
               (recur new-res (rest steps)))))))
 
 (defn filter-step
@@ -183,18 +205,21 @@
   [pred|ix-fn]
   (with-meta
     (fn filter-step [obj prior-step]
-      (-> (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
-                call-type (:bi/call-type prior-step)
-                ob  (if (= :bi/get-step call-type)
-                      (mapv #(get % (:bi/attr prior-step)) (singlize obj)) ; non-compositional semantics
-                      (singlize obj))]
-            (if (number? prix)   ; Array behavior. Caller will map over it.
-              (aref ob (-> prix Math/floor int)) ; Really! I checked!
-              (as-> ob ?o          ; Filter behavior.
-                (singlize ?o)     ; ToDo: The non-bi/get-step call-type behavior?
-                (filterv pred|ix-fn ?o)))) ; (map #(get % (:bi/attr prior-step)) ?o)
-          jflatten))
-  {:bi/step-type :bi/filter-step}))
+      (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
+            call-type (:bi/call-type prior-step)
+            ob  (if (= :bi/get-step call-type) 
+                  (let [k (:bi/attr prior-step)] ; non-compositional semantics
+                    (if (container? obj)
+                      (cmap #(get % k) obj)
+                      (-> (mapv #(get % k) (singlize obj)) containerize)))
+                  obj)]
+        (if (number? prix)   ; Array behavior. Caller will map over it.
+          (let [ix (-> prix Math/floor int)] ; Really! I checked!
+            (-> (cmap #(aref % ix) ob) jflatten))
+          (as-> ob ?o          ; Filter behavior.
+            (singlize ?o)     ; ToDo: The non-bi/get-step call-type behavior?
+            (filterv pred|ix-fn ?o))))) ; (map #(get % (:bi/attr prior-step)) ?o)
+    {:bi/step-type :bi/filter-step}))
 
 ;;; ToDo: Meta here is not being used. Remove? Good for diagnostics?
 (defn get-step
@@ -203,10 +228,18 @@
    It returns the state object with :sys/$ updated."
   [k]
   (with-meta
-    (fn get-step [& obj] ; No arg if called in a primary.
-      (let [obj (if (empty? obj) @$ (first obj))]
-        (get obj k)))
+    (fn get-step [& args] ; No arg if called in a primary.
+      (let [obj (-> (if (-> args first empty?) @$ (first args)))]
+        (cond (map? obj)      (get obj k)
+              (vector? obj)   (cmap #(get % k) (containerize obj))
+              :else           nil)))
     {:bi/step-type :bi/get-step :bi/arg k}))
+
+(defn value-step
+  [val]
+  (with-meta
+    (fn value-step [_x] val)
+    {:bi/step-type :bi/value-step}))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
@@ -221,6 +254,19 @@
      (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
      {:bi/step-type :bi/primary}))
 
+;;; ToDo: I'm doing a little bit of jflatten here. Test case is "[[[1,2,3], 4]].$"
+;;;       Does it belong here or in the deref$? or...? (I'm avoiding jflatten).
+#_(defmacro stepable
+  "All the arguments of bi/run-steps are functions, they either get-step, get-filter,
+   reduce-step, primary or are one of these, with metadata :bi/step-type = :bi/steapable."
+  [body]
+  `(with-meta
+     (fn [_x#] (let [res# ~body]
+                 (if (and (vector? res#) (== 1 (count res#)))
+                   (first res#)
+                   res#)))
+     {:bi/step-type :bi/stepable}))
+
 (defmacro stepable
   "All the arguments of bi/run-steps are functions, they either get-step, get-filter,
    reduce-step, primary or are one of these, with metadata :bi/step-type = :bi/steapable."
@@ -228,6 +274,7 @@
   `(with-meta
      (fn [_x#] ~body)
      {:bi/step-type :bi/stepable}))
+
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
