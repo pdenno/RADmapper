@@ -64,7 +64,7 @@
     obj))
 
 (defn cmap
-  "If the object isn't a container, run the function on it, 
+  "If the object isn't a container, run the function on it,
    otherwise, mapv over the argument and containerize the result."
   [f arg]
   (if (container? arg)
@@ -76,7 +76,7 @@
    Note that this is only applied for results of mapping (called 'containers'), not ordinary access.
    - ordinary access            : {'nums'   : [[1], 2, 3]}.nums[0]
    - container (because using $): [[1, 2, 3] 4].$
-  
+
    See http://docs.jsonata.org/processing section 'Sequences', which currenlty reads as follows:
        The sequence flattening rules are as follows:
 
@@ -123,7 +123,7 @@
    making it advantageous to have a deref that sets the value and returns it."
   ([] (containerize @$))
   ([val] ; ToDo: Is this one ever used?
-   (set-context! 
+   (set-context!
     (if (vector? val) (containerize val) val))))
 
 (defmacro defn*
@@ -188,9 +188,9 @@
             (let [sfn (first steps)
                   new-res (set-context!
                            (case (-> sfn meta :bi/step-type)
-                             :bi/filter-step (sfn res nil) ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv 
+                             :bi/filter-step (sfn res nil) ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
                              :bi/get-step    (sfn res nil) ; containerizes arg if not map; will do cmap or map get.
-                             :bi/value-step  (-> (if (vector? res) (mapv sfn res) (sfn :ignore)) #_containerize)
+                             :bi/value-step  (sfn res)     ; When res is map it containerizes.
                              :bi/primary     (if (vector? res) (cmap sfn (containerize res)) (sfn res))
                              :bi/stepable    (cmap #(binding [$ (atom %)] (sfn %)) (containerize res))
                              (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
@@ -209,18 +209,18 @@
     (fn filter-step [obj prior-step]
       (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
             call-type (:bi/call-type prior-step)
-            ob  (if (= :bi/get-step call-type) 
-                  (let [k (:bi/attr prior-step)] ; non-compositional semantics
-                    (if (container? obj)
-                      (cmap #(get % k) obj)
-                      (-> (mapv #(get % k) (singlize obj)) containerize)))
-                  obj)]
+            ob (if (= :bi/get-step call-type)
+                 (let [k (:bi/attr prior-step)] ; non-compositional semantics
+                   (if (vector? obj)
+                     (cmap #(get % k) (containerize obj))
+                     (get obj k)))
+                 obj)]
         (if (number? prix)   ; Array behavior. Caller will map over it.
           (let [ix (-> prix Math/floor int)] ; Really! I checked!
             (-> (cmap #(aref % ix) ob) jflatten))
           (as-> ob ?o          ; Filter behavior.
-            (singlize ?o)     ; ToDo: The non-bi/get-step call-type behavior?
-            (filterv pred|ix-fn ?o))))) ; (map #(get % (:bi/attr prior-step)) ?o)
+            (singlize ?o)
+            (-> (filterv pred|ix-fn ?o) containerize)))))
     {:bi/step-type :bi/filter-step}))
 
 ;;; ToDo: Meta here is not being used. Remove? Good for diagnostics?
@@ -237,11 +237,18 @@
               :else           nil)))
     {:bi/step-type :bi/get-step :bi/arg k}))
 
-(defn value-step
-  [val]
-  (with-meta
-    (fn value-step [_x] val)
-    {:bi/step-type :bi/value-step}))
+;;; ToDo: Currently this really only gets called for [] syntax. Is there more I just haven't seen?
+(defmacro value-step
+  "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
+   and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
+  [body]
+  `(with-meta
+     (fn ~'value-step [x#]
+       (let [func# (fn [y#] (binding [$ (atom y#)] ~body))]
+         (if (vector? x#)
+           (->> (mapv func# x#) (mapv vector))
+           (vector (func# x#)))))
+     {:bi/step-type :bi/value-step}))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
@@ -255,19 +262,6 @@
   `(with-meta
      (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
      {:bi/step-type :bi/primary}))
-
-;;; ToDo: I'm doing a little bit of jflatten here. Test case is "[[[1,2,3], 4]].$"
-;;;       Does it belong here or in the deref$? or...? (I'm avoiding jflatten).
-#_(defmacro stepable
-  "All the arguments of bi/run-steps are functions, they either get-step, get-filter,
-   reduce-step, primary or are one of these, with metadata :bi/step-type = :bi/steapable."
-  [body]
-  `(with-meta
-     (fn [_x#] (let [res# ~body]
-                 (if (and (vector? res#) (== 1 (count res#)))
-                   (first res#)
-                   res#)))
-     {:bi/step-type :bi/stepable}))
 
 (defmacro stepable
   "All the arguments of bi/run-steps are functions. This one just runs the argument body,

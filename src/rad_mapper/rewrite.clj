@@ -230,9 +230,6 @@
       (keyword? exp)
       (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
 
-(defrewrite :JaValueStep [m]
-  `(bi/value-step ~(-> m :body rewrite) ~(-> m :arg rewrite)))
-
 ;;;----------------------------- Rewriting binary operations (the remainder of this file) -------------
 
 (declare rewrite-bvec-as-sexp precedence op-precedence-tbl)
@@ -332,7 +329,7 @@
 
 (defrewrite :JaValueStep [m]
   (let [body (binding [inside-step? true] (-> m :body rewrite))]
-    `(bi/value-step [~body])))
+    `(bi/value-step ~body)))
 
 (defrewrite :JaApplyReduce [m]
   (let [sym (dgensym!)

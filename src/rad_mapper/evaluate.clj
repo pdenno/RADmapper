@@ -17,7 +17,7 @@
     (try
       (bi/reset-env)
       (let [res (eval form)]
-        (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
+         (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
            (bi/jflatten (res))
            (bi/jflatten res)))
       (catch Exception e

@@ -2,7 +2,6 @@
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
    [clojure.test        :refer  [deftest is testing]]
-   [rad-mapper.builtins :as bi]
    [rad-mapper.rewrite  :as rew]
    [rad-mapper.devl.devl-util :refer [nicer]]))
 
@@ -94,32 +93,29 @@
     (testing "odd consequences"
       (testing "(1) .$/filter"
         (run-test  "[[1,2,3], 4].$[0][0]" [1 4])) ; You can use more [0] with no eff [1 4]      ))
-  
+
       (testing "(2) .$/filter"
-        (run-test  "($v := [[1,2,3], 4]; $v.$[0][0])" [1 4]      ))
-      
+        (run-test  "($v := [[1,2,3], 4]; $v.$[0][0])" [1 4]))
+
       (testing "(3) no .$"
-        (run-test  "($v := [[1,2,3], 4]; $v[0][0][0])" 1          ))
+        (run-test  "($v := [[1,2,3], 4]; $v[0][0][0])" 1))
 
       (testing "(4) no .$"
-        (run-test  "{'num' : [[1,2,3], 4]}.num[0][0]" 1          ))
+        (run-test  "{'num' : [[1,2,3], 4]}.num[0][0]" 1))
 
       (testing "(5) .$/filter"
-        (run-test  "{'num' : [[1,2,3], 4]}.num.$[0][0]" [1 4]      ))
+        (run-test  "{'num' : [[1,2,3], 4]}.num.$[0][0]" [1 4]))
 
       (testing "(6) .$ doesn't just map, but flattens."
-        (run-test  "[[1,2,3], 4].$" [1 2 3 4]  ))
+        (run-test  "[[1,2,3], 4].$" [1 2 3 4]))
 
       (testing "(7) Flattened?"
         (run-test  "[[[1,2,3], 4]].$" [[1 2 3] 4])))
     ;; ------------------------------
 
-    ;; I get [11] with this one, JSONata gets 11. So what's the reason?
-    ;; Because the vector only has one element in it? Nope. See 'contradicts' below.
-    #_(testing "Experiment with distinguishing 'paths' from 'bin-ops'"
-      (is (=  11 (run "[{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}].(a.b.c + d.e)"))))
+    (testing "Experiment with distinguishing 'paths' from 'bin-ops'"
+      (run-test "[{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}].(a.b.c + d.e)" 11))
 
-    ;; ToDo: The statement below is true of JSONata. Is it true of my implementation?
     (testing "In the above, you can't run without the [] except by doing something like this"
       (run-test  "{'a' : {'b' : {'c' : 1}}, 'd' : {'e' : 10}}.(a.b.c + d.e )" 11))
 
@@ -132,48 +128,39 @@
     ;; The next two are concern the issue I raised in JSONata slack about "non-compositionality".
     ;; The answer I got is that nums[1] should be viewed as a term.
     (testing "Jsonata quirk 2a: compare to 2b. If you stop here, you merge results."
-      (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums" [1 2 3 4]
-            ))
+      (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums" [1 2 3 4]))
 
     (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
-      (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]" [2 4]
-            ))
+      (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]" [2 4]))
 
     ;; By the way, Jsonata allows single quotes in the expression; JSON doesn't allow them in the data.
-    ;; This remails unsolved!
     (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
       (run-test  "{'nums' : [[1], 2, 3]}.nums[0]" [1]))
 
-    ;; This remails unsolved!
     (testing "Jsonata quirk 3: Note that it doesn't flatten to singleton here."
       (run-test  "{'nums' : [[1], 2, 3]}.nums[0]" [1])) ; Same as above; this one mentions qu [1]))
 
-    ;; bi/passing-singleton? fixes (only) this one.
-    (testing "simple aref"
-      (run-test  "{'number' : [11, 22, 33, 44]}.number[2]" 33))
-
-    ;; Mine returns ["b"] because of bi/access-or-map?
-    #_(testing "simple filter"
-      (is (= "b" (run "{'letter' : ['a', 'b', 'c', 'd']}.letter[$ = 'b']"))))
+    (testing "simple filter"
+      (run-test "{'letter' : ['a', 'b', 'c', 'd']}.letter[$ = 'b']" "b"))
 
     (testing "simple filter (2)"
-      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].num[x = 2]" [{"x" 2} {"x" 2}]))
+      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].num[x = 2]"
+                 [{"x" 2} {"x" 2}]))
 
-    ;; This one contradicts my theory that what is returned depends on value of bi/access-or-map?
-    ;; This one maps but return a single object as value
-    #_(testing "simple filter, three objects coming in, yet returns a singleton. Needs thought!"
-      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}][num.x = 2]" {"num" {"x" 2}}
-            ))
+    (testing "simple filter, three objects coming in, yet returns a singleton. Needs thought!"
+      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}][num.x = 2]"
+                   {"num" {"x" 2}}))
 
-    #_(testing "simple filter, needs thought"
-      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]" [[false] [true] [false]]
-            ))
+    (testing "simple filter, needs thought"
+      (run-test  "[{'num' : {'x' : 1}}, {'num' : {'x' : 2}}, {'num' : {'x' : 3}}].[num.x = 2]"
+                 [[false] [true] [false]]))
 
     (testing "use of $match (1); note that JSONata doesn't clean up the empty groups."
       (run-test  "$match('bbfoovar', /foo/)" {"match" "foo", "index" 2 "groups" []}))
 
     (testing "use of $match (1)"
-       (run-test "$match('foobarxababy',/\\d*x(ab)+y/)" {"match" "xababy", "index" 6, "groups" ["ab"]}))
+      (run-test "$match('foobarxababy',/\\d*x(ab)+y/)"
+                {"match" "xababy", "index" 6, "groups" ["ab"]}))
 
     (testing "'immediate use' of a function"
       (run-test  "function($x){$x+1}(3)" 4))
@@ -226,7 +213,6 @@
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
       (run-test  "'abc'[$]" "abc"))
 
-    ; *THIS*
     (testing "Maybe this is no match because the data is neither object nor array???"
       (run-test  "'abc'.$" :no-match))))
 
@@ -241,7 +227,6 @@
     (testing "simple use of context variable (3)"
       (run-test  "( $v := {'a' : {'b' : {'c' : 123}}}; $v.a.b.c.$ )" 123))
 
-    ; *THIS*
     (testing "Last part of path expression creates an array."
       (run-test  "[1,2,3].[$]" [[1] [2] [3]]))
 
@@ -284,20 +269,20 @@
     (testing "advancing context variable on apply-map."
       (is (= [68.9, 21.67, 137.8, 107.99]
              (run "( $:= $readFile('data/testing/jsonata/try.json');
-                                               Account.Order.Product.(Price*Quantity) )"))))
+                     Account.Order.Product.(Price*Quantity) )"))))
 
     ; *THIS*
     (testing "like the try.jsonata page"
       (is (= 336.36
              (run "( $:= $readFile('data/testing/jsonata/try.json');
-                                               $sum(Account.Order.Product.(Price*Quantity)) )"))))))
+                     $sum(Account.Order.Product.(Price*Quantity)) )"))))))
 
 (deftest nyi
   (testing "NYI:"
     (testing "reduce using delimiters;  ToDo: the backquote thing."
       (is (= {"Bowler Hat" [68.9, 137.8], "Trilby hat" 21.67, "Cloak" 107.99}
              (run "(  $:= $readFile('data/testing/jsonata/try.json');
-                                                Account.Order.Product{`Product Name` : $.(Price*Quantity)} )"))))))
+                      Account.Order.Product{`Product Name` : $.(Price*Quantity)} )"))))))
 
 (def addr-data
   "( $ADDR :=
