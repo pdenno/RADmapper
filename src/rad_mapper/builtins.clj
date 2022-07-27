@@ -59,7 +59,7 @@
 
 (defn container?   [obj] (-> obj meta :bi/container?))
 (defn containerize [obj]
-  (if (coll? obj)
+  (if (vector? obj)
     (with-meta obj (merge (meta obj) {:bi/container? true}))
     obj))
 
@@ -172,7 +172,7 @@
     (loop [res (set-context!
                 (if (= :bi/stepable (-> steps first meta :bi/step-type))
                   ((first steps) @$)
-                  (mapv #(binding [$ (atom %)] ((first steps) %)) (singlize @$)))) ; ToDo: factor this to std-step?
+                  (cmap #(binding [$ (atom %)] ((first steps) %)) (-> @$ singlize containerize)))) ; ToDo: factor this to std-step?
            steps (rest steps)]
       (cond (empty? steps) res
 
@@ -188,11 +188,11 @@
             (let [sfn (first steps)
                   new-res (set-context!
                            (case (-> sfn meta :bi/step-type)
-                             :bi/filter-step (sfn res nil)
-                             :bi/get-step    (sfn res nil)
-                             :bi/value-step  (if (vector? res) (mapv sfn res) (sfn :ignore)) ; clj would map of [k v] pairs.
-                             :bi/primary     (if (vector? res) (mapv sfn res) (sfn res))
-                             :bi/stepable    (cmap #(binding [$ (atom %)] (sfn %)) res #_(containerize res)) ; <==== TEMPORARY! (containerize)
+                             :bi/filter-step (sfn res nil) ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv 
+                             :bi/get-step    (sfn res nil) ; containerizes arg if not map; will do cmap or map get.
+                             :bi/value-step  (-> (if (vector? res) (mapv sfn res) (sfn :ignore)) #_containerize)
+                             :bi/primary     (if (vector? res) (cmap sfn (containerize res)) (sfn res))
+                             :bi/stepable    (cmap #(binding [$ (atom %)] (sfn %)) (containerize res))
                              (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
               (recur new-res (rest steps)))))))
 
@@ -270,13 +270,12 @@
      {:bi/step-type :bi/stepable}))
 
 (defmacro stepable
-  "All the arguments of bi/run-steps are functions, they either get-step, get-filter,
-   reduce-step, primary or are one of these, with metadata :bi/step-type = :bi/steapable."
+  "All the arguments of bi/run-steps are functions. This one just runs the argument body,
+   which might construct a literal value, be a literal value, or call a function."
   [body]
   `(with-meta
      (fn [_x#] ~body)
      {:bi/step-type :bi/stepable}))
-
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,

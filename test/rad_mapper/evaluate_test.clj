@@ -37,7 +37,6 @@
   (run-test "['a', 'b', 'c'].[1]" [[1][1][1]])
   (run-test "{'a' :1, 'b' :2}.[1]" [1]))
 
-
 ;;; CIDER visual cues:
 ;;;  * bright red background on 'is' means is failed.
 ;;;  * washed out background on 'is' means execution failed

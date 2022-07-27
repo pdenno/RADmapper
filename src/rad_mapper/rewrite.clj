@@ -209,8 +209,8 @@
 (defrewrite :JaFnDef [m]
   (let [vars (mapv #(-> % :jvar-name symbol) (:vars m))
         body (-> m :body rewrite)]
-    `(-> (fn ~(mapv rewrite (:vars m)) ~body)
-      (with-meta {:bi/params '~vars :bi/type :bi/user-fn}))))
+    `(with-meta (fn ~(mapv rewrite (:vars m)) ~body)
+      {:bi/params '~vars :bi/type :bi/user-fn})))
 
 (defrewrite :JaTripleRole [m] (:role-name m))
 
