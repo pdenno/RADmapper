@@ -136,7 +136,7 @@
       `(let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no primary.
          ~(-> m :var rewrite)))))
 
-{:_type :JaJvarDecl, :var {:_type :JaJvar, :jvar-name "$var"}, :init-val 3}           
+{:_type :JaJvarDecl, :var {:_type :JaJvar, :jvar-name "$var"}, :init-val 3}
 
 (defrewrite :JaJvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
@@ -242,7 +242,7 @@
 (declare rewrite-bvec-as-sexp precedence op-precedence-tbl)
 
 (defn rewrite-value-step
-  "Wherever sequence (:JaArray |  :JaObjExp), :bi/get-step, :JaApplyFilter appears, 
+  "Wherever sequence (:JaArray |  :JaObjExp), :bi/get-step, :JaApplyFilter appears,
    it indicates a quirk in parsing of things like [1,2,3].[0] which in execution
    should just return a [0] for each of [1,2,3]. Since that isn't a :JaApplyFilter
    at all, we need to rewrite it (as a :JaValueMap)."
@@ -277,12 +277,14 @@
   "The steps of bi/run-steps that aren't expressly path functions (for example,
    they aren't in the set path-fn but rather define data) are wrapped in a function
    of no arguments. This function takes a form, analyzes it and does that work."
-  [form]
-  (if (or
-       (and (symbol? form) (-> form name keyword path-fn?))
-       (and (seq? form) (-> form first name keyword path-fn?)))
-    form
-    `(bi/stepable ~form)))
+  [forms]
+  (letfn [(wrap-form? [form sub]
+            (if (or (and (symbol? form) (-> form name keyword path-fn?))
+                    (and (seq? form) (-> form first name keyword path-fn?)))
+              form
+              `(~sub ~form)))]
+    (into (-> (wrap-form? (first forms) 'bi/init-step) vector)
+          (map #(wrap-form? % 'bi/map-step) (rest forms)))))
 
 ;;; JaPath are created in gather-steps.
 (defrewrite :JaPath [m]
@@ -293,7 +295,7 @@
              :path
              (remove #(or (symbol? %) (keyword? %)))
              (map rewrite)
-             (map wrap-non-path)))))
+             wrap-non-path))))
 
 ;;; Where any of the :exps are JaJvarDecl, they need to wrap the things that follow in a let.
 ;;; Essentially, this turns a sequence into a tree.
@@ -316,9 +318,9 @@
                           (recur (rest segs) (conj res new-forms)))))
           res (reduce (fn [r m] (update r :r/body conj m)) (first map-vec) (rest map-vec))] ; nest body
       (letfn [(rew [form] ; Rewrite nested map as a s-exp.
-                (cond (:r/bindings form)  (if (-> form :r/body empty?) 
+                (cond (:r/bindings form)  (if (-> form :r/body empty?)
                                               `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                                                 ~(-> form :r/bindings last first)) ; Then return value of the := assignment. 
+                                                 ~(-> form :r/bindings last first)) ; Then return value of the := assignment.
                                               `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
                                                  ~@(->> form :r/body (map rew))))
                       (:r/body form)      (->> form :r/body (map rew)),
@@ -381,10 +383,10 @@
                   collected (loop [bv2 bv
                                    path (if steal [steal] [])]
                               (cond (empty? bv2) path   ; end of path
-                                    
+
                                     (and (contains? op-precedence-tbl (first bv2)) ; end of path
                                          (-> bv2 first op-precedence-tbl :path? not)) path
-                                    
+
                                     (value-step? bv2) ; add a value-step, e.g. [1 2 3].['hello'] to path.
                                     (do (swap! consumed #(+ % 3))
                                         (recur (drop 3 bv2)

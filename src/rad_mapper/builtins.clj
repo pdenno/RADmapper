@@ -58,21 +58,20 @@
         vec)))
 
 (defn container?   [obj] (-> obj meta :bi/container?))
-(defn containerize [obj]
+(defn containerize [obj] (with-meta obj (merge (meta obj) {:bi/container? true})))
+(defn containerize?
+  "If obj is a vector, set  metadata :bi/container?."
+  [obj]
   (if (vector? obj)
     (with-meta obj (merge (meta obj) {:bi/container? true}))
     obj))
 
-;;; ToDo: Does lightweight flattening???
 (defn cmap
   "If the object isn't a container, run the function on it,
    otherwise, mapv over the argument and containerize the result."
   [f arg]
   (if (container? arg)
-    (containerize
-     (->> (mapv f arg)
-          #_(reduce (fn [res x] (if (vector? x) (into res x) (conj res x)))
-                  [])))
+     (->> (mapv f arg) containerize)
     (f arg)))
 
 (defn jflatten
@@ -102,22 +101,26 @@
     4) If a sequence contains one or more (sub-)sequences, then the values from the sub-sequence are pulled up to
        the level of the outer sequence. A result sequence will never contain child sequences (they are flattened)."
   [obj]
-  (if (container? obj)
-    (letfn [(elim-empty [o] ; rule-1
-              (cond (map? o) (reduce-kv (fn [m k v] (if (or (nil? v) (and (coll? v) (empty? v)))
-                                                      m
-                                                      (assoc m k (elim-empty v))))
-                                        {}
-                                        o)
-                    (vector? o) (->> o (remove nil?) (mapv elim-empty))
-                    :else o))]
-      (cond (vector? obj) (let [len (count obj)]
-                            (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
-                                  (== 1 len) (-> obj first elim-empty) ; (-> Rule 2, Rule 1)
-                                  :else (-> (elim-empty obj) flatten-except-json containerize))) ; Rule 1
-            (map? obj) (elim-empty obj),
-            :else obj))
-    obj))
+  (letfn [(elim-empty [o] ; rule-1
+            (cond (map? o) (reduce-kv
+                            (fn [m k v]
+                              (if (or (nil? v) (and (coll? v) (empty? v))) m (assoc m k (elim-empty v))))
+                            {}
+                            o)
+                  (vector? o) (->> o (remove nil?) (mapv elim-empty))
+                  :else o))]
+    (cond (container? obj)
+          (let [len (count obj)]
+            (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
+                  (== 1 len) (-> obj first elim-empty) ; (-> Rule 2, Rule 1)
+                  :else (-> (elim-empty obj) flatten-except-json containerize))) ; Rule 1, Rule 3 JSON array.
+
+          (vector? obj) (let [obj (->> obj (remove nil?) vec)
+                              len (count obj)]
+                          (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
+                                ;(== 1 len) (first obj)
+                                :else obj))
+          :else obj)))
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
@@ -125,10 +128,9 @@
 (defn deref$
   "Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
-  ([] (containerize @$))
+  ([] (containerize? @$))
   ([val] ; ToDo: Is this one ever used?
-   (set-context!
-    (if (vector? val) (containerize val) val))))
+   (set-context! (containerize? val))))
 
 (defmacro defn*
   "Convenience macro for numerical relationships. They can be passed functions."
@@ -173,11 +175,9 @@
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (loop [res (set-context!
-                (if (= :bi/stepable (-> steps first meta :bi/step-type))
-                  ((first steps) @$)
-                  (cmap #(binding [$ (atom %)] ((first steps) %)) (-> @$ singlize containerize)))) ; ToDo: factor this to std-step?
-           steps (rest steps)]
+    (let [init-step? (= :bi/init-step (-> steps first meta :bi/step-type))]
+      (loop [res   (if init-step? (set-context! ((first steps) @$)) @$)
+             steps (if init-step? (rest steps) steps)]
       (cond (empty? steps) res
 
             ;; bi/get-step followed by bi/filter-step ("non-compositional" ???)
@@ -195,11 +195,10 @@
                              :bi/filter-step (sfn res nil) ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
                              :bi/get-step    (sfn res nil) ; containerizes arg if not map; will do cmap or map get.
                              :bi/value-step  (sfn res)     ; When res is map it containerizes.
-                             :bi/primary     (if (vector? res) (cmap sfn (containerize res)) (sfn res))
-                             :bi/stepable    (->> (cmap #(binding [$ (atom %)] (sfn %)) (containerize res))
-                                                  #_jflatten #_(reduce into []))
+                             :bi/primary     (if (vector? res) (cmap sfn (containerize? res)) (sfn res))
+                             :bi/map-step    (cmap #(binding [$ (atom %)] (sfn %)) (containerize? res))
                              (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
-              (recur new-res (rest steps)))))))
+              (recur new-res (rest steps))))))))
 
 (defn filter-step
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
@@ -225,7 +224,7 @@
             (-> (cmap #(aref % ix) ob) jflatten))
           (as-> ob ?o          ; Filter behavior.
             (singlize ?o)
-            (-> (filterv pred|ix-fn ?o) containerize)))))
+            (-> (filterv pred|ix-fn ?o) containerize?)))))
     {:bi/step-type :bi/filter-step}))
 
 ;;; ToDo: Meta here is not being used. Remove? Good for diagnostics?
@@ -238,7 +237,11 @@
     (fn get-step [& args] ; No arg if called in a primary.
       (let [obj (-> (if (-> args first empty?) @$ (first args)))]
         (cond (map? obj)      (get obj k)
-              (vector? obj)   (cmap #(get % k) (containerize obj))
+              (vector? obj)   (->> obj
+                                   containerize
+                                   (cmap #(get % k))
+                                   ;; lightweight flatten
+                                   (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) []))
               :else           nil)))
     {:bi/step-type :bi/get-step :bi/arg k}))
 
@@ -268,13 +271,20 @@
      (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
      {:bi/step-type :bi/primary}))
 
-(defmacro stepable
+(defmacro init-step
   "All the arguments of bi/run-steps are functions. This one just runs the argument body,
    which might construct a literal value, be a literal value, or call a function."
   [body]
   `(with-meta
      (fn [_x#] ~body)
-     {:bi/step-type :bi/stepable}))
+     {:bi/step-type :bi/init-step}))
+
+(defmacro map-step
+  "All the arguments of bi/run-steps are functions. This one maps $ over the argument body."
+  [body]
+  `(with-meta
+     (fn [_x#] ~body)
+     {:bi/step-type :bi/map-step}))
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
@@ -457,19 +467,20 @@
 (defn $match
   "Return a JSONata-like map for the result of regex mapping.
    Pattern is a Clojure regex."
-  [s_ pattern]
-  (letfn [(match-aux [s]
-            (let [result (re-find pattern s)]
-              (cond (string? result) {"match" result
-                                      "index" (str/index-of s result)
-                                      "groups" []}
-                    (vector? result)
-                    (let [[success & groups] result]
-                      {"match" success
-                       "index" (str/index-of s success)
-                       "groups" (vec groups)}))))]
-    ;; ToDo: I think this should be the pattern of every defn* ???
-    (if (vector? s_) (mapv match-aux s_) (match-aux s_))))
+  ([pattern] ($match @$ pattern))
+  ([s_ pattern]
+   (letfn [(match-aux [s]
+             (let [result (re-find pattern s)]
+               (cond (string? result) {"match" result
+                                       "index" (str/index-of s result)
+                                       "groups" []}
+                     (vector? result)
+                     (let [[success & groups] result]
+                       {"match" success
+                        "index" (str/index-of s success)
+                        "groups" (vec groups)}))))]
+     ;; ToDo: I think this should be the pattern of every defn* ???
+     (if (vector? s_) (mapv match-aux s_) (match-aux s_)))))
 
 ;;; $pad
 ;;; $replace

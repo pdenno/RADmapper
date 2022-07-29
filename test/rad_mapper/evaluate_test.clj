@@ -44,7 +44,7 @@
 (deftest small-things
   (testing "All the, small things (execute):"
 
-    ;; ToDo: It is not so simple. The explantion below is wrong; it is more like the JSONata 
+    ;; ToDo: It is not so simple. The explantion below is wrong; it is more like the JSONata
     ;;       Exerciser doesn't use the binding to [1]. It will return the old value of $.
     #_(testing "JSONata doesn't recognize assignment to $ inside a code block."
       (is (nil? (run "($ := [1]; $)"))))
@@ -136,12 +136,8 @@
     (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
       (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]" [2 4]))
 
-    ;; By the way, Jsonata allows single quotes in the expression; JSON doesn't allow them in the data.
     (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
       (run-test  "{'nums' : [[1], 2, 3]}.nums[0]" [1]))
-
-    (testing "Jsonata quirk 3: Note that it doesn't flatten to singleton here."
-      (run-test  "{'nums' : [[1], 2, 3]}.nums[0]" [1])) ; Same as above; this one mentions qu [1]))
 
     (testing "simple filter"
       (run-test "{'letter' : ['a', 'b', 'c', 'd']}.letter[$ = 'b']" "b"))
@@ -278,7 +274,7 @@
                    $sum(Account.Order.Product.(Price*Quantity)) )"
                 336.36))))
 
-(deftest nyi
+#_(deftest nyi
   (testing "NYI:"
     (testing "reduce using delimiters;  ToDo: the backquote thing."
       (run-test "(  $:= $readFile('data/testing/jsonata/try.json');
@@ -307,9 +303,6 @@
 
     (run-test (str addr-data "$ADDR.zipcode[$match(/^[0-9]+$/)] )")
               ["20898" "10878"])
-  
-    (run-test (str addr-data "$ADDR.phone.mobile )")
-              "123-456-7890")
 
-    (is (= [68.9, 21.67, 137.8, 107.99]
-           (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))
+    (run-test "[{'phone' : {'mobile' : '123-456-7890'}}].phone.mobile"
+                "123-456-7890")))
