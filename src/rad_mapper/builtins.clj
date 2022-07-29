@@ -63,12 +63,16 @@
     (with-meta obj (merge (meta obj) {:bi/container? true}))
     obj))
 
+;;; ToDo: Does lightweight flattening???
 (defn cmap
   "If the object isn't a container, run the function on it,
    otherwise, mapv over the argument and containerize the result."
   [f arg]
   (if (container? arg)
-    (containerize (mapv f arg))
+    (containerize
+     (->> (mapv f arg)
+          #_(reduce (fn [res x] (if (vector? x) (into res x) (conj res x)))
+                  [])))
     (f arg)))
 
 (defn jflatten
@@ -192,7 +196,8 @@
                              :bi/get-step    (sfn res nil) ; containerizes arg if not map; will do cmap or map get.
                              :bi/value-step  (sfn res)     ; When res is map it containerizes.
                              :bi/primary     (if (vector? res) (cmap sfn (containerize res)) (sfn res))
-                             :bi/stepable    (cmap #(binding [$ (atom %)] (sfn %)) (containerize res))
+                             :bi/stepable    (->> (cmap #(binding [$ (atom %)] (sfn %)) (containerize res))
+                                                  #_jflatten #_(reduce into []))
                              (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
               (recur new-res (rest steps)))))))
 
@@ -537,10 +542,11 @@
 ;;; ToDo: This is bogus!
 ;;; $sum
 (defn $sum
-  "Return the sum of the argument (a vector of numbers)."
-  [obj v]
-  (let [v (singlize v)]
-     (mapv #(let [_ignore %] (apply core/+ v)) obj)))
+  "Take one number of a vector of numbers; return the sum."
+  [nums]
+  (let [v (singlize nums)]
+    (s/assert ::numbers v)
+     (apply core/+ v)))
 
 ;;; $sqrt
 (defn $sqrt

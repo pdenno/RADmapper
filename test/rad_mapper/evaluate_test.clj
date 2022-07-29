@@ -3,6 +3,7 @@
   (:require
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.rewrite  :as rew]
+   [rad-mapper.builtins :as bi]
    [rad-mapper.devl.devl-util :refer [nicer]]))
 
 (defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
@@ -20,7 +21,7 @@
 (defmacro run-test
   "Print the test form using testing, run the test."
   [form-string expect]
-  `(testing ~(str "(run \"" form-string "\")")
+  `(testing ~(str "\n(run \"" form-string "\")")
      (is (= ~expect (run ~form-string)))))
 
 (deftest today
@@ -43,7 +44,9 @@
 (deftest small-things
   (testing "All the, small things (execute):"
 
-    (testing "JSONata doesn't recognize assignment to $ inside a code block."
+    ;; ToDo: It is not so simple. The explantion below is wrong; it is more like the JSONata 
+    ;;       Exerciser doesn't use the binding to [1]. It will return the old value of $.
+    #_(testing "JSONata doesn't recognize assignment to $ inside a code block."
       (is (nil? (run "($ := [1]; $)"))))
 
     (testing "simple mapping"
@@ -192,34 +195,36 @@
       (run-test  "($v := ['a', 'b', 'c', 'd']; $v[1])"  "b")
       (run-test  "($v := ['a', 'b', 'c', 'd']; $v[-4])" "a")
       (run-test  "($v := ['a', 'b', 'c', 'd']; $v[0])"  "a")
-      (run-test  "['a', 'b', 'c'].[1]"                  [[1][1][1]]))
+      (run-test  "['a', 'b', 'c'].[1]"
+                 [[1][1][1]]))
 
-    ; *THIS*
     (testing "filter 'delimited expressions."
-      (is (= [{"type" "mobile", "num" "555-123-4567"} {"type" "mobile", "num" "555-333-4444"}]
-             (run "($p := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}}
-                           {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}}
-                           {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
-                      $p.Phone[type = 'mobile'] )"))))
+      (run-test "($p := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}},
+                         {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}},
+                         {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
+                  $p.Phone[type = 'mobile'] )"
+                [{"type" "mobile", "num" "555-123-4567"} {"type" "mobile", "num" "555-333-4444"}]))
 
-    ; *THIS*
     (testing "map 'delimited expressions'."
-      (is (= [100 200]
-             (run "($p := [{'Product' : {'price' : 50, 'quantity' : 2}}
-                           {'Product' : {'price' : 50, 'quantity' : 4}}];
-                    $p.Product.(price * quantity) )"))))))
+      (run-test "($p := [{'Product' : {'price' : 50, 'quantity' : 2}},
+                         {'Product' : {'price' : 50, 'quantity' : 4}}];
+                  $p.Product.(price * quantity) )"
+                [100 200]))))
 (deftest why
   (testing "Why:"
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
       (run-test  "'abc'[$]" "abc"))
 
-    (testing "Maybe this is no match because the data is neither object nor array???"
-      (run-test  "'abc'.$" :no-match))))
+    (testing "JSONata exerciser gets :no-match on this."
+      (run-test  "'abc'.$" "abc"))))
 
 (deftest design
   (testing "Design (evaluate):"
     (testing "simple use of context variable (1)"
       (run-test  "'abc'[0]" "abc"))
+
+    (testing "assignment is an expression"
+      (run-test "$var := 3" 3))
 
     (testing "simple use of context variable (2)"
       (run-test  "[1 , 2, 3].$" [1 2 3]))
@@ -242,12 +247,11 @@
     (testing "implicit mapping and strange argument"
       (run-test  "['a', 'b', 'c'].$sum([50, 50])" [100 100 100]))
 
-    ; *THIS*
     (testing "implicit mapping with use of $."
       (run-test  "( $v := [1, 2, 3]; $sum($v) )" 6))
 
     (testing "binary precedence and non-advancing context variable (1)."
-      (run-test  "($v := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; $v(a + b * c + d) )" 11))
+      (run-test  "($v := {'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}; $v.(a + b * c + d) )" 11))
 
     (testing "binary precedence and non-advancing context variable (2)."
       (run-test  "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)" 11))
@@ -261,28 +265,25 @@
     (testing "code-blocks allow closures"
       (run-test  "($incAmt := 3; $inc := function($n){$n + $incAmt}; $inc(5))" 8))
 
-    ; *THIS*
     (testing "assignments return values; semicolon is a separator."
-      (run-test  "{'a' : 1, 'b' : 2}.($x := 3)" 1))
+      (run-test  "{'a' : 1, 'b' : 2}.($x := 3)" 3))
 
-    ; *THIS*
     (testing "advancing context variable on apply-map."
-      (is (= [68.9, 21.67, 137.8, 107.99]
-             (run "( $:= $readFile('data/testing/jsonata/try.json');
-                     Account.Order.Product.(Price*Quantity) )"))))
+      (run-test "( $:= $readFile('data/testing/jsonata/try.json');
+                   Account.Order.Product.(Price*Quantity) )"
+                [68.9, 21.67, 137.8, 107.99]))
 
-    ; *THIS*
     (testing "like the try.jsonata page"
-      (is (= 336.36
-             (run "( $:= $readFile('data/testing/jsonata/try.json');
-                     $sum(Account.Order.Product.(Price*Quantity)) )"))))))
+      (run-test "( $:= $readFile('data/testing/jsonata/try.json');
+                   $sum(Account.Order.Product.(Price*Quantity)) )"
+                336.36))))
 
 (deftest nyi
   (testing "NYI:"
     (testing "reduce using delimiters;  ToDo: the backquote thing."
-      (is (= {"Bowler Hat" [68.9, 137.8], "Trilby hat" 21.67, "Cloak" 107.99}
-             (run "(  $:= $readFile('data/testing/jsonata/try.json');
-                      Account.Order.Product{`Product Name` : $.(Price*Quantity)} )"))))))
+      (run-test "(  $:= $readFile('data/testing/jsonata/try.json');
+                      Account.Order.Product{`Product Name` : $.(Price*Quantity)} )"
+                {"Bowler Hat" [68.9, 137.8], "Trilby hat" 21.67, "Cloak" 107.99}))))
 
 (def addr-data
   "( $ADDR :=
@@ -301,16 +302,14 @@
 
 (deftest user-guide-tests
   (testing "small code examples from the user's guide"
-    (is (= ["20898" "07010-3544" "10878"]
-           (run (str addr-data "$ADDR.zipcode )"))))
+    (run-test (str addr-data "$ADDR.zipcode )")
+              ["20898" "07010-3544" "10878"])
 
-    ; *THIS*
-    (is (= ["20898" "10878"]
-           (run (str addr-data "$ADDR.zipcode[$match(/^[0-9]+$/)] )"))))
+    (run-test (str addr-data "$ADDR.zipcode[$match(/^[0-9]+$/)] )")
+              ["20898" "10878"])
+  
+    (run-test (str addr-data "$ADDR.phone.mobile )")
+              "123-456-7890")
 
-    (is (= "123-456-7890"
-           (run (str addr-data "$ADDR.phone.mobile )"))))
-
-    ; *THIS*
     (is (= [68.9, 21.67, 137.8, 107.99]
            (run "data/testing/map-examples/iteration/i6.mmp" :file? true)))))

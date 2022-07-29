@@ -93,7 +93,7 @@
 (defmulti rewrite-meth #'rewrite-dispatch)
 
 ;;; ToDo: Investigate how this happens. It started with including the rewrite in gather-steps.
-(defmethod rewrite-meth :default [& args]
+(defmethod rewrite-meth :default [& _args]
   ;(println "****Called :default rewrite-meth")
   {})
 
@@ -117,19 +117,26 @@
 (defrewrite :toplevel [m] (->> m :top rewrite))
 
 (def ^:dynamic *assume-json-data?* false)
+(def ^:dynamic *inside-let?*  "let is implemented in JaPrimary" false)
 
 ;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JaJvarDecl [m]
-  (binding [*assume-json-data?* true] ; This is for bi/jflatten, Rule 3.
-    (cond (and (-> m :var :special?) (= "$" (-> m :var :jvar-name)))
-          ;; JSONata doesn't recognize assigment to $ in a code block; it returns *no match*
-          `(~(dgensym!) (bi/set-context! nil #_(-> m :init-val rewrite))),
-          ;; ToDo: Is setting $$ a legit user activity?
-          (and (-> m :var :special?) (= "$$" (-> m :var :jvar-name)))
-          `(~(dgensym!) (reset! bi/$$ ~(-> m :init-val rewrite))),
-          :else
-          `(~(->> m :var rewrite)
-            ~(-> m :init-val rewrite)))))
+  (letfn [(name-exp-pair [x]
+            (binding [*assume-json-data?* true] ; This is for bi/jflatten, Rule 3.
+              (cond (and (-> x :var :special?) (= "$" (-> x :var :jvar-name)))
+                    `(~(dgensym!) (bi/set-context! ~(-> x :init-val rewrite))),
+                    ;; ToDo: Is setting $$ a legit user activity?
+                    (and (-> x :var :special?) (= "$$" (-> x :var :jvar-name)))
+                    `(~(dgensym!) (reset! bi/$$ ~(-> x :init-val rewrite))),
+                    :else
+                    `(~(->> x :var rewrite)
+                      ~(-> x :init-val rewrite)))))]
+    (if *inside-let?*
+      (name-exp-pair m)
+      `(let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no primary.
+         ~(-> m :var rewrite)))))
+
+{:_type :JaJvarDecl, :var {:_type :JaJvar, :jvar-name "$var"}, :init-val 3}           
 
 (defrewrite :JaJvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
@@ -299,17 +306,21 @@
                         (let [seg (first segs)
                               new-forms (if (= :JaJvarDecl (-> seg first :_type))
                                           (reduce (fn [r form]
-                                                    (if (= :JaJvarDecl (:_type form))
-                                                      (update r :r/bindings conj (rewrite form))
-                                                      (update r :r/body conj (rewrite form))))
+                                                    (binding [*inside-let?* true]
+                                                      (if (= :JaJvarDecl (:_type form))
+                                                        (update r :r/bindings conj (rewrite form))
+                                                        (update r :r/body conj (rewrite form)))))
                                                   {:r/bindings [] :r/body []}
                                                   seg)
                                           {:r/body (mapv rewrite seg)})]
                           (recur (rest segs) (conj res new-forms)))))
           res (reduce (fn [r m] (update r :r/body conj m)) (first map-vec) (rest map-vec))] ; nest body
       (letfn [(rew [form] ; Rewrite nested map as a s-exp.
-                (cond (:r/bindings form) `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                                            ~@(->> form :r/body (map rew))),
+                (cond (:r/bindings form)  (if (-> form :r/body empty?) 
+                                              `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                                                 ~(-> form :r/bindings last first)) ; Then return value of the := assignment. 
+                                              `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                                                 ~@(->> form :r/body (map rew))))
                       (:r/body form)      (->> form :r/body (map rew)),
                       (vector? form)      (mapv rew form),
                       (seq? form)         (map rew form),
@@ -491,8 +502,7 @@
       (-> ?info :args first))))
 
 ;;; A lower :val means tighter binding. ToDo: That's a leftover from MiniZinc!
-;;; For example 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
-;;; Precedence ordering is done *within* rewriting, thus it is done with par symbols, not the bi ones.
+;;; For example, 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 (def op-precedence-tbl ; lower :val means binds tighter.
   {:or               {:path? false :assoc :left :val 1000}
    :and              {:path? false :assoc :left :val 900}
@@ -512,7 +522,6 @@
    'bi/%             {:path? false :assoc :left :val 300}
    'bi//             {:path? false :assoc :left :val 300}
    'bi/get-step      {:path? true  :assoc :left :val 100}
-   'bi/value-step    {:path? true  :assoc :left :val 100}   
    'bi/filter-step   {:path? true  :assoc :left :val 100}
    'bi/reduce-step   {:path? true  :assoc :left :val 100}})
 
