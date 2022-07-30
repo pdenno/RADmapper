@@ -196,7 +196,7 @@
   (if *assume-json-data?*
     `(with-meta
        ~(mapv rewrite (:exprs m))
-       {:bi/type :bi/json-array})
+       {:bi/json-array? true})
     (mapv rewrite (:exprs m))))
 
 (defrewrite :JaQueryDef [m]

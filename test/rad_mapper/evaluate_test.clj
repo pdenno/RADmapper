@@ -136,7 +136,7 @@
     (testing "Jsonata quirk 2b: compare to 2a. Stop later, you assume a different intermediate form."
       (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]" [2 4]))
 
-    (testing "Jsonata quirk 2a/2b is about knowing whether the last value was 'collected'???"
+    (testing "Jsonata quirk 2a/2b: this returns [1] because it is operating on a JSON array."
       (run-test  "{'nums' : [[1], 2, 3]}.nums[0]" [1]))
 
     (testing "simple filter"

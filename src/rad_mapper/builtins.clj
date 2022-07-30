@@ -16,9 +16,6 @@
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util]))
 
-;;; ToDo:
-;;;   1) Investigate Small Clojure Interpreter.
-
 (def $$ "The root context data, like in JSONata." (atom nil))
 (def ^:dynamic $ "Context variable"   (atom nil))
 (declare aref)
@@ -53,7 +50,7 @@
   [x]
   (letfn [(seq-except? [o]
             (and (sequential? o)
-                 (not= :bi/json-array (-> o meta :bi/type))))]
+                 (not (-> o meta :bi/json-array?))))]
     (-> (remove seq-except? (tree-seq seq-except? seq x))
         vec)))
 
@@ -176,7 +173,7 @@
   [& steps]
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (let [init-step? (= :bi/init-step (-> steps first meta :bi/step-type))]
-      (loop [res   (if init-step? (set-context! ((first steps) @$)) @$)
+      (loop [res   (if init-step? (set-context! (-> ((first steps) @$) containerize?)) @$)
              steps (if init-step? (rest steps) steps)]
       (cond (empty? steps) res
 
@@ -221,7 +218,9 @@
                  obj)]
         (if (number? prix)   ; Array behavior. Caller will map over it.
           (let [ix (-> prix Math/floor int)] ; Really! I checked!
-            (-> (cmap #(aref % ix) ob) jflatten))
+            (if (-> ob meta :bi/json-array?)
+              (aref ob ix)
+              (-> (cmap #(aref % ix) ob) jflatten)))
           (as-> ob ?o          ; Filter behavior.
             (singlize ?o)
             (-> (filterv pred|ix-fn ?o) containerize?)))))
@@ -241,7 +240,8 @@
                                    containerize
                                    (cmap #(get % k))
                                    ;; lightweight flatten
-                                   (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) []))
+                                   (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) [])
+                                   containerize)
               :else           nil)))
     {:bi/step-type :bi/get-step :bi/arg k}))
 
@@ -464,6 +464,10 @@
 ;;; $length
 ;;; $lowercase
 ;;; $match
+;;; ToDo: If in conforming JSONata null groups is not removed from the result,
+;;;       it may be necessary to mark this with special metadata {:bi/regex-result true}.
+
+;;; ToDo: Go back and find the old defn* 
 (defn $match
   "Return a JSONata-like map for the result of regex mapping.
    Pattern is a Clojure regex."
@@ -803,9 +807,6 @@
     (throw (ex-info "Argument binding set does not contain the key provided"
                     {:binding-set bs :key k})))
   (get bs k))
-
-;;; Currently there is no macro for bi/enforce. It is simply rewritten to a Clojure fn.
-#_(defmacro enforce [& {:keys [config body]}]  (:nyi))
 
 ;;; ToDo: Theses are always an atom, right?
 (defn $MCnewContext
