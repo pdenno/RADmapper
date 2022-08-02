@@ -467,7 +467,7 @@
 ;;; ToDo: If in conforming JSONata null groups is not removed from the result,
 ;;;       it may be necessary to mark this with special metadata {:bi/regex-result true}.
 
-;;; ToDo: Go back and find the old defn* 
+;;; ToDo: Go back and find the old defn*
 (defn $match
   "Return a JSONata-like map for the result of regex mapping.
    Pattern is a Clojure regex."

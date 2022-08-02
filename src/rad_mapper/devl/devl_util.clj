@@ -7,10 +7,7 @@
 
 ;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])
 
-(defn nicer
-  "Show macroexpand-1 printed sans package names.
-   Argument is a quoted form"
-  [form]
+(defn clean-form [form]
   (let [ns-alia {"rad-mapper.builtins" "bi"
                  "bi"                  "bi"
                  "java.lang.Math"      "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
@@ -23,4 +20,18 @@
                                        (symbol nsa s)
                                        (->> form name (symbol nsa))))
                     :else form))]
-      (-> form macroexpand-1 ni pprint))))
+      (ni form))))
+
+(defn nicer
+  "Show macroexpand-1 printed sans package names.
+   Argument is a quoted form"
+  [form & {:keys [pprint?] :or {pprint? true}}]
+        (cond-> (-> form macroexpand-1 clean-form)
+          pprint? pprint))
+
+(defn nicer-sym
+  "Forms coming back from rew/rewrite* have symbols prefixed by clojure.core
+   and other namespaces. On the quoted form in testing, I'd rather not see this.
+   This takes away those namespace prefixes."
+  [form]
+  (clean-form form))

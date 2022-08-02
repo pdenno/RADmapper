@@ -121,6 +121,7 @@
 
 ;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JaJvarDecl [m]
+  (reset-dgensym!)
   (letfn [(name-exp-pair [x]
             (binding [*assume-json-data?* true] ; This is for bi/jflatten, Rule 3.
               (cond (and (-> x :var :special?) (= "$" (-> x :var :jvar-name)))
@@ -164,7 +165,7 @@
 
 (defrewrite :JaQvar [m]
   (if in-enforce? ; b-set is an argument passed into the enforce function.
-    `(~'bi/get-from-b-set b-set ~(-> m :qvar-name keyword))
+    `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
     (-> m :qvar-name symbol)))
 
 (defrewrite :JaObjExp [m]
