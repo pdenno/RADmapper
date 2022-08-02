@@ -113,22 +113,6 @@
   "Return the argument as a string."
   [s_] (str s_))
 
-(defn apply-map
-  "Navigates one more step from the argument and executes fn."
-  [obj last-operand-step fn]
-  (let [obj (if (s/valid? ::state-obj obj) (:sys/$ obj) obj)]
-    (->> (dot-map obj last-operand-step)
-         (mapv fn)
-         jsonata-flatten)))
-
-;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
-;;; [6+1, 3] ~> $sum()           ==> 10
-;;; 4 ~> function($x){$x+1}()    ==>  5
-;;; The only reason for keeping this around (rather than rewriting it as ->) is that it only takes two args.
-(defmacro thread "Implements JSONata ~>"
-  [x y]
-  `(-> ~x ~y))
-
 (defn dot-map
   "Perform the mapping activity of the 'a' in $.a, for example.
    This function is called with the state object. It returns the
@@ -145,6 +129,22 @@
                                                         (filterv identity)),
                     :else (throw (ex-info "Expected function to map over" {:got prop|fn}))))]
      (assoc sobj :sys/$ res))))
+
+(defn apply-map
+  "Navigates one more step from the argument and executes fn."
+  [obj last-operand-step fn]
+  (let [obj (if (s/valid? ::state-obj obj) (:sys/$ obj) obj)]
+    (->> (dot-map obj last-operand-step)
+         (mapv fn)
+         jsonata-flatten)))
+
+;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
+;;; [6+1, 3] ~> $sum()           ==> 10
+;;; 4 ~> function($x){$x+1}()    ==>  5
+;;; The only reason for keeping this around (rather than rewriting it as ->) is that it only takes two args.
+(defmacro thread "Implements JSONata ~>"
+  [x y]
+  `(-> ~x ~y))
 
 ;;; ToDo: Currently the only thing that can be inside step-> is dot-map.
 ;;;       So is :advance? really necessary? I'm not using it here. 

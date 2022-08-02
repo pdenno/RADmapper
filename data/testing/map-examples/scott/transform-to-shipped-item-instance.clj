@@ -1,0 +1,110 @@
+(ns scott)
+
+(def scott-example
+"{
+   'shippedItemInstance': [
+   $map(payload, function($payload01,$i){
+       {
+           'typeCode': 'seed',
+           'identifier': {
+               'content': $payload01.ShipmentNumber & '-' & $payload01.SeqCode,
+               'typeCode': 'shipment_line_identifier'
+        },
+           'item': {
+               'brandName': $payload01.SeedBrand,
+               'manufacturerItemIdentification': {
+                   'identifier': ($payload01.Crop = 'TREATMENT') ? ($payload01.ItemNumber) : '',
+                   'typeCode': ($payload01.Crop = 'TREATMENT') ?  ('SKU') : ''
+                },
+               'description': $payload01.Description,
+               'gtinid': ( $payload01.Crop != 'TREATMENT' and $length($string($payload01.Crop)) > 12 ) ? ($payload01.ItemNumber) : '',
+               'varietyName': $payload01.ShortDescription,
+               'productName': $payload01.ShortDescription
+        },
+           'quantity': {
+               'unitCode': $payload01.UOM,
+               'content': $number($payload01.Quantity)
+        },
+           'description': {
+               'content': $payload01.ShortDescription & (($length($string($payload01.LotId)) > 0) ? ('-' & $payload01.LotId) : ''),
+               'typeCode': 'mics_display'
+        },
+           'classification': {
+               'codes': {
+                   'code': [
+                       {
+                           'content': ( $payload01.Crop = 'Corn' or $payload01.Crop = 'CORN' ) ? ('C') : 
+                                    ( $payload01.Crop = 'Soybeans' or $payload01.Crop = 'SOYBEANS' ) ? ('S') : 
+                                    ( $payload01.Crop = 'Alfalfa' or $payload01.Crop = 'ALFALFA' ) ? ('ALF') : 
+                                    ( $payload01.Crop = 'Cotton' or $payload01.Crop = 'COTTON' ) ? ('TN') : 
+                                    ( $payload01.Crop = 'Wheat' or $payload01.Crop = 'WHEAT' ) ? ('SW') : 
+                                    ( $containspayload01.Crop = 'SpringWheat' or $payload01.Crop = 'SPRINGWHEAT' ) ? ('SW') : 
+                                    ( $payload01.Crop = 'WinterWheat' or $payload01.Crop = 'WINTERWHEAT' ) ? ('WW') : '',
+                           'listAgencyIdentifier': 'AGIIS',
+                           'typeCode': $payload01.Crop
+                    },
+                       {
+                           'content': $payload01.SeedTrait,
+                           'typeCode': 'Trait'
+                    }
+                ]
+            },
+               'typeCode': 'Crop'
+        },
+           'lot': {
+               'identifier': {
+                   'content': $string($payload01.LotId),
+                   'typeCode': 'Lot'
+            }
+        },
+           'documentReference': {
+               'identifier': {
+                   'content': $string($payload01.ShipmentNumber)
+            },
+               'typeCode': 'shipment_identifier',
+               'documentDateTime': ($contains($string($payload01.OrderDate), '-' )) ? ($string($payload01.OrderDate) & 'T00:00:00.000-05:00') : 
+                        ($length($string($payload01.OrderDate)) = 8 ) ? 
+                        (($string($payload01.OrderDate) ~> /(\\d4)-(\\d2)-(\\d2)/) & 'T00:00:00.000-05:00') : ''
+        },
+           'manufacturingParty': {
+            'name': $payload01.ManufacturerName
+        },
+           'party': [
+               {
+                   'identifier': [
+                       {
+                           'content': $string($payload01.CustomerNumber),
+                           'typeCode': 'retailer_grower_identifier'
+                    }
+                ],
+                   'name': $payload01.CustomerLookupName,
+                   'location': {
+                       'glnid': $string($payload01.CustomerGLN)
+                },
+                   'typeCode': 'Grower'
+            },
+               {
+                   'name': $payload01.Retailer,
+                   'location': {
+                       'glnid': $string($payload01.RetailerGLN)
+                },
+                   'typeCode': 'Retailer'
+            }
+        ],
+           'itemIdentifierSet': [
+               {
+                   'identifier': [
+                       {
+                           'content': $payload01.SeedTreatments,
+                           'typeCode': 'product'
+                    }
+                ],
+                   'schemeAgencyIdentifier': 'manufacturer_seed_treatment_identifier',
+                   'schemeIdentifier': $payload01.SeedTreatments,
+                   'typeCode': 'seed_treatment'
+            }
+        ]
+    }})
+    ]
+}
+")
