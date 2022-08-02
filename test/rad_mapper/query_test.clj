@@ -201,11 +201,11 @@
                            :body (-> {}
                                      (assoc "instance-of" "FixedType")
                                      (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})]
-      
+
       ;; The function has metadata.
       (is (= '{:params [b-set], :enforce? true} (meta qfn)))
-      
-      ;; The function is executable with a binding set, creating content. 
+
+      ;; The function is executable with a binding set, creating content.
       (is (= {"instance-of" "FixedType", "content" "IRI"}
              (qfn {:?class-iri "IRI"}))))
 
@@ -759,4 +759,3 @@
 
 (defn create-table
   [db-ident])
-  

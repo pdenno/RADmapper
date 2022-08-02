@@ -3,7 +3,7 @@
   (:require
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.rewrite  :as rew]
-   [rad-mapper.builtins :as bi]
+   ;[rad-mapper.builtins :as bi]
    [rad-mapper.devl.devl-util :refer [nicer]]))
 
 (defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
@@ -38,7 +38,7 @@
   (run-test "{'a' :1, 'b' :2}.[1]" [1]))
 
 ;;; CIDER visual cues:
-;;;  * bright red background on 'is' means is failed.
+;;;  * bright red background on 'is' means it failed.
 ;;;  * washed out background on 'is' means execution failed
 ;;;  * washed out background elsewhere appears to mark more specifically what failed, typically the 'run'.
 (deftest small-things
@@ -128,7 +128,7 @@
     (testing "Jsonata quirk 1: ToDo: Note that RADmapper doesn't mind."
       (run-test  "1[0]" 1))
 
-    ;; The next two are concern the issue I raised in JSONata slack about "non-compositionality".
+    ;; The next two concern the issue I raised in JSONata slack about "non-compositionality".
     ;; The answer I got is that nums[1] should be viewed as a term.
     (testing "Jsonata quirk 2a: compare to 2b. If you stop here, you merge results."
       (run-test  "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums" [1 2 3 4]))
