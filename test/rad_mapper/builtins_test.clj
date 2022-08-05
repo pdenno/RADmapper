@@ -2,7 +2,28 @@
   "Test built-in functions"
   (:require
    [rad-mapper.builtins :as bi]
+   [rad-mapper.parse    :as par]
+   [rad-mapper.rewrite  :as rew]
+   [rad-mapper.devl.devl-util :refer [nicer]]
    [clojure.test :refer  [deftest is testing]]))
+
+(defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
+  (let [execute? (not (or simplify? rewrite?))]
+    (rew/rewrite* :ptag/exp exp
+                  :simplify? simplify?
+                  :rewrite? rewrite?
+                  :execute? execute?
+                  :debug? debug?
+                  :debug-parse? debug-parse?)))
+
+(defn examine [exp]
+  (-> (rew/rewrite* :ptag/exp exp :rewrite? true) nicer))
+
+(defmacro run-test
+  "Print the test form using testing, run the test."
+  [form-string expect]
+  `(testing ~(str "\n(run \"" form-string "\")")
+     (is (= ~expect (run ~form-string)))))
 
 (deftest jflatten
   (testing "Testing that JSONata flattening rules are obeyed."
@@ -29,3 +50,37 @@
              (bi/jflatten
               (bi/containerize
                [1 [[2]] [3] [[[4 [5] [[6]]]]]])))))))
+
+;;; ==============  Builtin-functions =============================
+;;; --------- string functions -----------------------------------
+(deftest string-fns
+  (testing "string functions"
+    (testing "$base64(en|de)code"
+      (run-test "$base64encode('myuser:mypass')" "bXl1c2VyOm15cGFzcw==")
+
+      (run-test "$base64decode('bXl1c2VyOm15cGFzcw==')" "myuser:mypass"))
+
+    (testing "$contains"
+      (run-test "$contains('abracadabra', 'bra')"   true)
+      (run-test "$contains('abracadabra', /a.*a/)"  true)
+      (run-test "$contains('abracadabra', /ar.*a/)" false)
+      (run-test "$contains('Hello World', /wo/)"    false)
+      (run-test "$contains('Hello World', /wo/i)"   true)
+      (run-test "( $ := {'Phone' : { 'type' : 'mobile', 'number' : '077 7700 1234'}};
+                 Phone[$contains(number, /^077/)] )"
+                { "type" "mobile", "number" "077 7700 1234"}))
+
+    (testing "URL stuff"
+      (run-test "$decodeUrl('https://mozilla.org/?x=%D1%88%D0%B5%D0%BB%D0%BB%D1%8B')"
+                "https://mozilla.org/?x=шеллы")
+
+      (run-test "$encodeUrl('https://mozilla.org/?x=шеллы')"
+                "https://mozilla.org/?x=%D1%88%D0%B5%D0%BB%D0%BB%D1%8B")
+
+      (run-test "$decodeUrlComponent('%3Fx%3Dtest')" "?x=test")
+
+      (run-test "$encodeUrlComponent('?x=test')" "%3Fx%3Dtest"))
+
+    (testing "$eval"
+      (run-test "$eval('[1,2,3]')" [1 2 3])
+      (run-test "$eval('[1,$string(2),3]')" [1 "2" 3]))))

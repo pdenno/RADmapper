@@ -2,7 +2,7 @@
   "Parse the JSONata-like message mapping language."
   (:require
    [clojure.pprint :as pp :refer [cl-format]]
-   [clojure.string :as str]
+   [clojure.string :as str :refer [index-of]]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
    [rad-mapper.util :as util]))
@@ -71,7 +71,7 @@
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
 (def ^:private syntactic ; chars that are valid tokens in themselves.
-  #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \?})
+  #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \? \`})
 
 (def ^:private long-syntactic ; chars that COULD start a multi-character syntactic elements.
   #{\<, \>, \=, \., \:, \/, \', \?, \~, \!}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
@@ -82,14 +82,35 @@
 (defrecord JaTripleRole [role-name])
 (defrecord JaEOLcomment [text])
 
-;;; (regex-from-string "/abc\\/.*/")
+;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
+;;; https://www.codeguage.com/courses/regexp/flags
+;;; Flags - i = (ignore case) Makes the expression search case-insensitively.
+;;;         m = (multiline) Makes the boundary characters ^ and $ match the beginning and ending of every single line.
+;;;         u = (unicode) enable unicode matching
+;;;         g = (global)  match all occurrences
+;;;         s = (dot all) makes the wild character . match newlines as well.
+;;;         y = (sticky) Makes the expression start its searching from the index indicated in its lastIndex property.
+(defn make-regex
+  [base flags]
+  (when (or (:sticky? flags) (:global? flags))
+    (throw (ex-info "Regex currently does not support sticky or global flags."
+                    {:base base :flags flags})))
+  (let [flag-str (cond-> ""
+                   (:ignore-case? flags)   (str "i")
+                   (:multi-line? flags)    (str "m")
+                   (:unicode? flags)       (str "u")
+                   (:dot-all? flags)       (str "s"))]
+    (if (empty? flag-str)
+      (re-pattern base)
+      (re-pattern (cl-format nil "(?~A)~A" flag-str base)))))
+
 (defn regex-from-string
   "Argument starts a JS-like regex.
    Return a map containing the regex :tkn (java.util.regex.Pattern) and the :raw text"
   [st]
   (assert (str/starts-with? st "/"))
   (let [in-len (count st)
-        raw (loop [cnt 1
+        base (loop [cnt 1
                    in (subs st 1)
                    done? false
                    out "/"]
@@ -98,16 +119,25 @@
                     :else (recur (inc cnt)
                                  (if (str/starts-with? in "\\") (subs in 2) (subs in 1))
                                  (str/starts-with? in "/")
-                                 (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))]
-    {:raw raw :tkn (re-pattern (subs raw 1 (-> raw count dec)))}))
+                                 (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))
+        flags (or (-> (re-matches #"(?sm)([i,m,u,g,s,y]{1,6}).*" (subs st (count base))) second) "")
+        flag-map (cond-> {} ; ToDo: This is much to do about nothing. (Likewise in make-regex.)
+                   (index-of flags \i) (assoc :ignore-case? true)
+                   (index-of flags \m) (assoc :multi-line? true)
+                   (index-of flags \u) (assoc :unicode? true)
+                   (index-of flags \g) (assoc :global? true)
+                   (index-of flags \s) (assoc :dot-all? true)
+                   (index-of flags \y) (assoc :sticky? true))]
+    {:raw (str base flags)
+     :tkn (make-regex (subs base 1 (-> base count dec)) flag-map)}))
 
 (defn regex-or-divide
   "Return as :tkn either a Clojure regex or a /. Uses a heuristic,
    specifically does a closing '/' come before a space."
   [st]
   (let [s (subs st 1)
-        slash-pos (str/index-of s \/)
-        space-pos (str/index-of s " ")]
+        slash-pos (index-of s \/)
+        space-pos (index-of s " ")]
     (if (and slash-pos (or (not space-pos) (< slash-pos space-pos)))
       (regex-from-string st)
       {:raw "/" :tkn \/})))
@@ -221,6 +251,8 @@
                  {:ws ws :raw num :tkn (read-string num)}),                   ; number
                (when-let [[_ st] (re-matches #"(?s)(\"[^\"]*\").*" s)]        ; string literal
                  {:ws ws :raw st :tkn (read-string st)})
+               (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)]        ; backquoted field
+                 {:ws ws :raw st :tkn (->JaField st)})
                (let [pos (position-break s)
                      word (subs s 0 (or pos (count s)))]
                  (or ; We don't check for "builtin-fns"; as tokens they are just jvars.
@@ -897,7 +929,7 @@
   (as-> ps ?ps
     (eat-token ?ps :enforce)
     (parse-list ?ps \( \) \, :ptag/exp)
-    (store ?ps :params)    
+    (store ?ps :params)
     (eat-token ?ps \{)
     (parse :ptag/exp ?ps)
     (store ?ps :body)

@@ -1,0 +1,118 @@
+(
+    $CropClassTable := {'corn'        : 'C',
+			'soybeans'    : 'S',
+			'alfalfa'     : 'ALF',
+			'cotton'      : 'TN',
+			'wheat'       : 'SW',
+			'springwheat' : 'SW',
+			'winterwheat' : 'WW'};
+
+    $CropClassLookup := function($key) /* Lookup the crop code. */
+		   { ( $v := $lookup($CropClassTable, $lowercase($key));
+		       $v ? $v : '') };
+
+    $CropClassLookup('CORN')
+)
+
+
+{
+   "shippedItemInstance": [
+   $map(payload, function($p,$i){
+       {
+	   "typeCode": 'seed',
+	   "identifier": {
+	       "content": $p.ShipmentNumber & '-' & $p.SeqCode,
+	       "typeCode": 'shipment_line_identifier'
+	   },
+	   "item": {
+	       "brandName": $p.SeedBrand,
+	       "manufacturerItemIdentification": {
+		   /* Crop need not be a crop! Could be 'TREATMENT' */
+		   "identifier": ($p.Crop = 'TREATMENT') ? ($p.ItemNumber) : '',
+		   "typeCode": ($p.Crop = 'TREATMENT') ?  ('SKU') : ''
+	       },
+	       "description": $p.Description,
+	       "gtinid": ( $p.Crop != 'TREATMENT' and $length($string($p.Crop)) > 12 ) ? ($p.ItemNumber) : '',
+	       "varietyName": $p.ShortDescription,
+	       "productName": $p.ShortDescription
+	   },
+	   "quantity": {
+	       "unitCode": $p.UOM,
+	       "content": $number($p.Quantity)
+	   },
+	   "description": {
+	       "content": $p.ShortDescription & (($length($string($p.LotId)) > 0) ? ('-' & $p.LotId) : ''),
+	       "typeCode": "mics_display"
+	   },
+	   "classification": {
+	       "codes": {
+		   "code": [
+		       {
+			   "content": $CropClassLookup($p.Crop)
+			   "listAgencyIdentifier": 'AGIIS',
+			   "typeCode": $p.Crop
+		       },
+		       {
+			   "content": $p.SeedTrait,
+			   "typeCode": "Trait"
+		       }
+		   ]
+	       },
+	       "typeCode": 'Crop'
+	   },
+	   "lot": {
+	       "identifier": {
+		   "content": $string($p.LotId),
+		   "typeCode": 'Lot'
+	       }
+	   },
+	   "documentReference": {
+	       "identifier": {
+		   "content": $string($p.ShipmentNumber)
+	       },
+	       "typeCode": 'shipment_identifier',
+	       "documentDateTime": ($contains($string($p.OrderDate), '-' )) ? ($string($p.OrderDate) & 'T00:00:00.000-05:00') :
+		   ($length($string($p.OrderDate)) = 8 ) ?
+		   (($string($p.OrderDate) ~> /(\d4)-(\d2)-(\d2)/) & 'T00:00:00.000-05:00') : ''
+	   },
+	   "manufacturingParty": {
+	       "name": $p.ManufacturerName
+	   },
+	   "party": [
+	       {
+		   "identifier": [
+		       {
+			   "content": $string($p.CustomerNumber),
+			   "typeCode": 'retailer_grower_identifier'
+		       }
+		   ],
+		   "name": $p.CustomerLookupName,
+		   "location": {
+		       "glnid": $string($p.CustomerGLN)
+		   },
+		   "typeCode": 'Grower'
+	       },
+	       {
+		   "name": $p.Retailer,
+		   "location": {
+		       "glnid": $string($p.RetailerGLN)
+		   },
+		   "typeCode": 'Retailer'
+	       }
+	   ],
+	   "itemIdentifierSet": [
+	       {
+		   "identifier": [
+		       {
+			   "content": $p.SeedTreatments,
+			   "typeCode": 'product'
+		       }
+		   ],
+		   "schemeAgencyIdentifier": 'manufacturer_seed_treatment_identifier',
+		   "schemeIdentifier": $p.SeedTreatments,
+		   "typeCode": 'seed_treatment'
+	       }
+	   ]
+       }})
+   ]
+}

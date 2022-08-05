@@ -27,10 +27,12 @@
   (testing "Tokenizer:"
 
     (testing "basic tests"
-      (is (= [{:tkn "This is a string.", :line 1, :col 1} {:tkn ::par/eof}]
+      (is (= [{:tkn "This is a string.", :line 1, :col 1}       {:tkn ::par/eof}]
              (test-tokenize "'This is a string.'")))
-      (is (= [{:tkn "hello's world", :line 1, :col 1} {:tkn ::par/eof}]
-             (test-tokenize "'hello\\'s world'"))))
+      (is (= [{:tkn "hello's world", :line 1, :col 1}           {:tkn ::par/eof}]
+             (test-tokenize "'hello\\'s world'")))
+      (is (= [{:tkn (par/->JaField "`foo ?`"), :line 1, :col 1} {:tkn ::par/eof}]
+             (test-tokenize "`foo ?`"))))
 
     (testing "token stream"
       (is (= [{:tkn :true, :line 1, :col 1}

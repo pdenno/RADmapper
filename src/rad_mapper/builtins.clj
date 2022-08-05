@@ -6,10 +6,12 @@
    respectively for navigation to a property and concatenation)."
   (:refer-clojure :exclude [+ - * / < > <= >= =]) ; So be careful!
   (:require
+   [cemerick.url                 :as url]
    [clojure.core                 :as core]
    [clojure.data.json            :as json]
+   [clojure.data.codec.base64    :as b64]
    [clojure.spec.alpha           :as s]
-   [clojure.string               :as str]
+   [clojure.string               :as str :refer [index-of]]
    [clojure.walk                 :refer [keywordize-keys]]
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
@@ -33,6 +35,7 @@
 
 (s/def ::state-obj true) ; ToDo: Can it be useful?
 (s/def ::number number?)
+(s/def ::string string?)
 (s/def ::non-zero (s/and number? #(-> % zero? not)))
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 
@@ -197,6 +200,11 @@
                              (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
               (recur new-res (rest steps))))))))
 
+;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
+;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
+;;; rather than the first author from all of the books. http://docs.jsonata.org/processing
+
+;;; ToDo: You can specify multiple conditions (a disjunction)  in filtering http://docs.jsonata.org/processing
 (defn filter-step
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
     (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
@@ -453,16 +461,74 @@
 
 ;;;------------- String
 ;;; $base64decode
+(defn $base64decode
+  "Converts base 64 encoded bytes to a string, using a UTF-8 Unicode codepage."
+  [c]
+  (-> c .getBytes b64/decode String.))
+
 ;;; $base64encode
+(defn $base64encode
+  "Converts an ASCII string to a base 64 representation.
+   Each each character in the string is treated as a byte of binary data.
+   This requires that all characters in the string are in the 0x00 to 0xFF range,
+   which includes all characters in URI encoded strings.
+   Unicode characters outside of that range are not supported."
+  [s]
+  (-> s .getBytes b64/encode String.))
+
 ;;; $contains
+(defn $contains
+  "Returns true if str is matched by pattern, otherwise it returns false.
+   If str is not specified (i.e. this function is invoked with one argument),
+   then the context value is used as the value of str.
+
+   The pattern parameter can either be a string or a regular expression (regex).
+   If it is a string, the function returns true if the characters within pattern are
+   contained contiguously within str.
+   If it is a regex, the function will return true if the regex matches the contents of str."
+  ([pat] ($contains @$ pat))
+  ([s pat]
+   (s/assert ::string s)
+   (if (util/regex? pat)
+     (if (re-find pat s) true false)
+     (if (index-of s pat) true false))))
+
 ;;; $decodeUrl
+(defn $decodeUrl
+  [url-string]
+  (s/assert ::string url-string)
+  (url/url-decode url-string))
+
 ;;; $decodeUrlComponent
+(defn $decodeUrlComponent
+  [s]
+  (s/assert ::string s)
+  (url/url-decode s))
+
 ;;; $encodeUrl
+(defn $encodeUrl
+  [s]
+  (s/assert ::string s)
+  (-> s url/url str))
+
 ;;; $encodeUrlComponent
+(defn $encodeUrlComponent
+  [s]
+  (s/assert ::string s)
+  (url/url-encode s))
+
 ;;; $eval
+;;; This is implemented in evaluate.clj so as not to ....
+(defn $eval
+  ([s] ($eval s @$))
+  ([s context]))
+
+
 ;;; $join
 ;;; $length
 ;;; $lowercase
+
+
 ;;; $match
 ;;; ToDo: If in conforming JSONata null groups is not removed from the result,
 ;;;       it may be necessary to mark this with special metadata {:bi/regex-result true}.
@@ -476,12 +542,12 @@
    (letfn [(match-aux [s]
              (let [result (re-find pattern s)]
                (cond (string? result) {"match" result
-                                       "index" (str/index-of s result)
+                                       "index" (index-of s result)
                                        "groups" []}
                      (vector? result)
                      (let [[success & groups] result]
                        {"match" success
-                        "index" (str/index-of s success)
+                        "index" (index-of s success)
                         "groups" (vec groups)}))))]
      ;; ToDo: I think this should be the pattern of every defn* ???
      (if (vector? s_) (mapv match-aux s_) (match-aux s_)))))

@@ -174,3 +174,6 @@
   For example (class-name 1) ==> :Long. Class name is not namespace-qualified."
   [obj]
   (->> obj type str (re-matches #"^.+\.(.*)$") second keyword))
+
+;;; Preparing for .cljc
+(defn regex? [o] (= java.util.regex.Pattern (type o)))
