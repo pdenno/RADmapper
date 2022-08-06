@@ -137,3 +137,25 @@
 
     (testing "$trim"
       (run-test "$trim(' Hello \n World ')" "Hello World"))))
+
+(deftest numerical-fns
+  (testing "Numerical functions"
+    (run-test "$abs(-5)" 5)
+    (run-test "$average([3,5])" 4.0)
+    (run-test "$ceil(5)" 5)
+    (run-test "$ceil(5.3)" 6)
+    (run-test "$ceil(5.8)" 6)
+    (run-test "$ceil(-5.3)" -5)
+    (run-test "$floor(5)" 5)
+    (run-test "$floor(5.3)" 5)
+    (run-test "$floor(5.8)" 5)
+    (run-test "$floor(-5.3)" -6)
+    (run-test "$formatBase(100, 2)" "1100100")
+    (run-test "$formatBase(2555, 16)" "9fb")
+    (run-test "$formatNumber(12345.6, '#,###.00')"  "12,345.60")
+    (run-test "$formatNumber(1234.5678, '00.000e0')" "12.346e2")     
+    (run-test "$formatNumber(34.555, '#0.00;(#0.00)')" "34.55")     ; <=========== JSONata gets 34.56
+    (run-test "$formatNumber(-34.555, '#0.00;(#0.00)')" "(34.55)")  ; <=========== JSONata gets 34.56
+    #_(run-test "$formatNumber(0.14, '01%')" "14%")
+    #_(run-test "$formatNumber(0.14, '###pm', {'per-mille': 'pm'})" "140pm")
+    #_(run-test "$formatNumber(1234.5678, '①①.①①①e①', {'zero-digit': '\u245f'})" "①②.③④⑥e②")))

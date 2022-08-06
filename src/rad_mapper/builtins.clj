@@ -11,12 +11,14 @@
    [clojure.data.json            :as json]
    [clojure.data.codec.base64    :as b64]
    [clojure.spec.alpha           :as s]
+   [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str :refer [index-of]]
    [clojure.walk                 :refer [keywordize-keys]]
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
    [rad-mapper.query             :as qu]
-   [rad-mapper.util              :as util]))
+   [rad-mapper.util              :as util])
+  (:import java.text.DecimalFormat))
 
 (def ^:dynamic $  "JSONata context variable" (atom nil))
 (def           $$ "JSONata root context."    (atom nil))
@@ -40,6 +42,7 @@
 (s/def ::non-zero (s/and number? #(-> % zero? not)))
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 (s/def ::strings (s/and vector? (s/coll-of ::string :min-count 1)))
+(s/def ::radix (s/and number? #(<= 2 % 36)))
 
 (defn reset-env
   "Clean things up just prior to running user code."
@@ -632,13 +635,79 @@
 
 ;;;------------- Numeric --------------
 ;;; $abs
-;;; $average
+(defn $abs
+  "Returns the absolute value of the number parameter, i.e. if the number is negative,
+   it returns the positive value. If number is not specified (i.e. this function is invoked
+   with no arguments), then the context value is used as the value of number."
+  ([] ($abs @$))
+  ([num]
+   (s/assert ::number num)
+   (abs num)))
+
+;;; $average - Not documented.
+;;; Experimentation with JSONata Exerciser suggests it must take exactly one arg, a vector of numbers.
+(defn $average
+  "Take the average of the vector of numbers"
+  [nums]
+  (s/assert ::numbers nums)
+  (core// (apply core/+ nums)
+          (-> nums count double)))
+  
 ;;; $ceil
+(defn $ceil
+  "Returns the value of number rounded up to the nearest integer that is greater than or equal to number.
+   If number is not specified (i.e. this function is invoked with no arguments), then the context value
+   is used as the value of number."
+  ([] ($ceil @$))
+  ([num]
+   (s/assert ::number num)
+   (-> num Math/ceil long)))
+
 ;;; $floor
-;;; $formatInteger
-;;; $round
+(defn $floor
+  "Returns the value of number rounded down to the nearest integer that is smaller or equal to number.
+   If number is not specified (i.e. this function is invoked with no arguments), then the context value
+   is used as the value of number."
+  ([] ($floor @$))
+  ([num]
+   (s/assert ::number num)
+   (-> num Math/floor long)))
+
 ;;; $formatBase
+(defn $formatBase
+  "Casts the number to a string and formats it to an integer represented in the
+   number base specified by the radix argument.
+   If radix is not specified, then it defaults to base 10.
+   radix can be between 2 and 36, otherwise an error is thrown."
+  ([num] ($formatBase num 10))
+  ([num radix]
+   (s/assert ::radix num)
+   (cl-format nil (str "~" radix "R") num)))
+
+;;; https://docs.oracle.com/javase/8/docs/api/java/text/DecimalFormat.html
+;;; https://java2blog.com/java-decimalformat/
+;;; https://www.w3.org/TR/xpath-functions-31/#syntax-of-picture-string
 ;;; $formatNumber
+(defn $formatNumber
+  "Casts the number to a string and formats it to a decimal representation as specified by the picture string.
+
+   The behaviour of this function is consistent with the XPath/XQuery function fn:format-number as defined in
+   the XPath F&O 3.1 specification. The picture string parameter defines how the number is formatted and has
+   the same syntax as fn:format-number.
+
+   The optional third argument options is used to override the default locale specific formatting characters
+   such as the decimal separator. If supplied, this argument must be an object containing name/value pairs
+   specified in the decimal format section of the XPath F&O 3.1 specification."
+  [number picture & _options] ; ToDo: Implement options.
+  (let [scientific? (re-find #"0e0" picture)
+        pic (if scientific? (str/replace picture "0e0" "0E0") picture)
+        res (.format (DecimalFormat. pic) number)]
+    (if scientific?
+      (str/replace res "E" "e") ; ToDo: Fraught with risk! At least use \d around it.
+      res)))
+
+;;; $formatInteger
+(defn $formatInteger [] :nyi)
 
 ;;; $number
 (defn $number
@@ -655,17 +724,6 @@
         (boolean? v_) (if v_ 1 0)
         :else (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
 
-;;; $power
-(defn $power
-  "Return the largest the numeric argument (an array or singleton)."
-  [x y]
-  (s/assert ::number x)
-  (s/assert ::number y)
-  (if (and (integer? x) (pos-int? y))
-    (int (Math/pow x y))
-    (Math/pow x y)))
-
-;;; ToDo: Maybe these should be defn* ?
 ;;; $max
 (defn $max
   "Return the largest the numeric argument (an array or singleton)."
@@ -683,7 +741,20 @@
     (apply min v)))
 
 ;;; $parseInteger
+
+
+;;; $power
+(defn $power
+  "Return the largest the numeric argument (an array or singleton)."
+  [x y]
+  (s/assert ::number x)
+  (s/assert ::number y)
+  (if (and (integer? x) (pos-int? y))
+    (long (Math/pow x y))
+    (Math/pow x y)))
+
 ;;; $random
+;;; $round
 
 ;;; ToDo: This is bogus!
 ;;; $sum
