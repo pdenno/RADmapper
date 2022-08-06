@@ -83,4 +83,57 @@
 
     (testing "$eval"
       (run-test "$eval('[1,2,3]')" [1 2 3])
-      (run-test "$eval('[1,$string(2),3]')" [1 "2" 3]))))
+      (run-test "$eval('[1,$string(2),3]')" [1 "2" 3]))
+
+    (testing "$join"
+      (run-test "$join(['a','b','c'])" "abc")
+      (run-test "$join(['a','b','c'], ',')" "a,b,c")
+      #_(run-test "$split('too much, punctuation. hard; to read', /[ ,.;]+/, 3)
+                ~> $join(', ')"
+                  "too, much, punctuation"))
+
+    (testing "$(lower|upper)case"
+      (run-test "$lowercase('Hello World')" "hello world")
+      (run-test "$uppercase('Hello World')" "HELLO WORLD"))
+
+    (testing "$pad"
+      (run-test "$pad('foo',  5)" "foo  ")
+      (run-test "$pad('foo', -5)" "  foo")
+      (run-test "$pad('foo', -5, '#')" "##foo")
+      #_(run-test "$formatBase(35, 2) ~> $pad(-8, '0')" "00100011"))
+
+    (testing "$replace"
+      (run-test "$replace('John Smith and John Jones', 'John', 'Mr')"
+                "Mr Smith and Mr Jones")
+      (run-test "$replace('John Smith and John Jones', 'John', 'Mr', 1)"
+                "Mr Smith and John Jones")
+      (run-test "$replace('abracadabra', /a.*?a/, '*')"
+                "*c*bra")
+      (run-test "$replace('John Smith', /(\\w+)\\s(\\w+)/, '$2, $1')"
+                "Smith, John")
+      (run-test "$replace('265USD', /([0-9]+)USD/, '$$$1')"
+                "$265")
+      (run-test "(
+                   $convert := function($m) { ($number($m.groups[0]) - 32) * 5/9 & 'C' };
+                   $replace('temperature = 68F today', /(\\d+)F/, $convert)
+                 )"
+                "temperature = 20.0C today"))  ;<================ JSONata returns "temperature = 20C today" (not 20.0)
+
+    (testing "$split"
+      (run-test "$split('so many words', ' ')"    [ "so", "many", "words" ])
+      (run-test "$split('so many words', ' ', 2)" [ "so", "many" ])
+      (run-test "$split('too much, punctuation. hard; to read', /[ ,.;]+/)"
+                ["too", "much", "punctuation", "hard", "to", "read"]))
+
+    (testing "$substring"
+      (run-test "$substring('Hello World', 3)" "lo World")
+      (run-test "$substring('Hello World', 3, 5)" "lo Wo")
+      (run-test "$substring('Hello World', -4)" "orld")
+      (run-test "$substring('Hello World', -4, 2)" "or"))
+
+    (testing "$substring(After|Before)"
+      (run-test "$substringAfter('Hello World', ' ')" "World")
+      (run-test "$substringBefore('Hello World', ' ')" "Hello"))
+
+    (testing "$trim"
+      (run-test "$trim(' Hello \n World ')" "Hello World"))))

@@ -518,6 +518,7 @@
    :in               {:path? false :assoc :none :val 700}
    'bi/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
    'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
+   'str              {:path? false :assoc :left :val 400}
    'bi/+             {:path? false :assoc :left :val 400}
    'bi/-             {:path? false :assoc :left :val 400}
    :range            {:path? false :assoc :left :val 400} ; ToDo guessing

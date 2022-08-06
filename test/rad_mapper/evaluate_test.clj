@@ -47,7 +47,10 @@
     ;; ToDo: It is not so simple. The explantion below is wrong; it is more like the JSONata
     ;;       Exerciser doesn't use the binding to [1]. It will return the old value of $.
     #_(testing "JSONata doesn't recognize assignment to $ inside a code block."
-      (is (nil? (run "($ := [1]; $)"))))
+        (is (nil? (run "($ := [1]; $)"))))
+
+    (testing "string concatenation"
+      (run-test "1 & 2 & 'abc'" "12abc"))
 
     (testing "simple mapping"
       (run-test "[{'a' : 1}, {'a' : 2}, {'a' : 3}].a" [1 2 3]))
@@ -67,8 +70,8 @@
     (testing "simple navigation, more efficiently"
       (run-test "{'a' : {'b' : {'c' : 30, 'f' : 3}}}.a.b.(c + f)" 33))
 
-    (testing "simple aref (1)" ; JSONata returns no match on this. I think it should match!
-      (run-test "[{'a' : 1}][0].a)" 1))
+    (testing "simple aref (1)" ; JSONata returns no match on this. I think it should match! <============================= INVESTIGATE!
+      (run-test "[{'a' : 1}][0].a" 1))
 
     (testing "simple aref (2)" ; JSONata is okay with this one.
       (run-test "($c := [{'a' : 1}]; $c[0].a)" 1))

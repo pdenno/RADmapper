@@ -18,31 +18,33 @@
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util]))
 
-(def $$ "The root context data, like in JSONata." (atom nil))
-(def ^:dynamic $ "Context variable"   (atom nil))
+(def ^:dynamic $  "JSONata context variable" (atom nil))
+(def           $$ "JSONata root context."    (atom nil))
+
 (declare aref)
 
-;;; ToDo: Swap atom value or create new atom as I'm doing now?
 (defmacro with-context
   "Dynamically bind $ to the value provided."
   [val & body]
   `(binding [$ (atom ~val)] ~@body))
 
-;;; ToDo: Write some documentation once you figure it out!
-;;; So far, this is called by run-steps, but I think there may be other forms where it makes sense to do.
 (defn set-context! [val] (reset! $ val))
-(s/check-asserts true) ; ToDo: Wrap this somewhere.
 
-(s/def ::state-obj true) ; ToDo: Can it be useful?
 (s/def ::number number?)
+(s/def ::pos-number (s/and number? pos?))
+(s/def ::integer integer?)
 (s/def ::string string?)
+(s/def ::pos-limit (s/or :number #(and (number? %) (pos? %)) :unlimited #{:unlimited}))
+(s/def ::limit (s/or :number number? :unlimited #{:unlimited}))
+(s/def ::str|regex (s/or :string string? :regex util/regex?))
 (s/def ::non-zero (s/and number? #(-> % zero? not)))
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
+(s/def ::strings (s/and vector? (s/coll-of ::string :min-count 1)))
 
 (defn reset-env
   "Clean things up just prior to running user code."
-  []
-  (reset! $ nil))
+  ([] (reset-env nil))
+  ([context] (reset! $ context)))
 
 (defn flatten-except-json
   "Adapted from core/flatten:
@@ -133,7 +135,7 @@
    (set-context! (containerize? val))))
 
 (defmacro defn*
-  "Convenience macro for numerical relationships. They can be passed functions."
+  "Convenience macro for numerical operators. They can be passed functions."
   [fn-name doc-string [& args] & body]
   `(def ~fn-name
      ~doc-string
@@ -170,7 +172,7 @@
   [x y]
   `(-> ~x ~y))
 
-;;; -------------------------------- Path implementation ---------------------------------
+;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
@@ -234,7 +236,6 @@
             (-> (filterv pred|ix-fn ?o) containerize?)))))
     {:bi/step-type :bi/filter-step}))
 
-;;; ToDo: Meta here is not being used. Remove? Good for diagnostics?
 (defn get-step
   "Perform the mapping activity of the 'a' in $.a, for example.
    This function is called with the state object.
@@ -306,136 +307,6 @@
       nil ; Rule 2, above.
       (if (vector? obj) (nth obj ix) obj))))
 
-(defn $map
-  "Signature: $map(array, function)
-
-   Returns an array containing the results of applying the function parameter to each value in the array parameter.
-   The function that is supplied as the second parameter must have the following signature:
-   function(value [, index [, array]])
-   Each value in the input array is passed in as the first parameter in the supplied function.
-   The index (position) of that value in the input array is passed in as the second parameter, if specified.
-   The whole input array is passed in as the third parameter, if specified.
-
-   Example: $map([1..5], $string) => ['1', '2', '3', '4', '5']"
-  [coll func]
-  (let [nvars  (-> func meta :bi/params count)]
-    (cond
-      (== nvars 3)
-      (loop [c coll, i 0, r []]
-        (if (empty? c)
-          r
-          (recur (rest c) (inc i) (conj r (func (first c) i coll)))))
-      (== nvars 2)
-      (loop [c coll, i 0, r []]
-        (if (empty? c)
-          r
-          (recur (rest c) (inc i) (conj r (func (first c) i)))))
-      (== nvars 1)
-      (loop [c coll, r []]
-        (if (empty? c)
-          r
-          (recur (rest c) (conj r (func (first c))))))
-      :else (throw (ex-info "$map expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :bi/params)})))))
-
-;;; (bi/$filter [1 2 3 4] (with-meta (fn [v i a] (when (even? v) v)) {:bi/params {:val-var 'v :index-var 'i :array-var 'a}}))
-(defn $filter
-  "Return a function for the argument form."
-  [coll_ func]
-  (let [nvars (-> func meta :bi/params count)]
-    (cond
-      (== nvars 3)
-                (loop [c coll_, i 0, r []]
-                  (if (empty? c)
-                    r
-                    (let [val (when (func (first c) i coll_) (first c))]
-                      (recur (rest c), (inc i), (if val (conj r val) r)))))
-                (== nvars 2)
-                (loop [c coll_, i 0, r []]
-                  (if (empty? c)
-                    r
-                    (let [val (when (func (first c) i) (first c))]
-                      (recur (rest c), (inc i) (conj (if val (conj r val) r))))))
-                (== nvars 1)
-                (loop [c coll_, r []]
-                  (if (empty? c)
-                    r
-                    (let [val (when (func (first c)) (first c))]
-                      (recur (rest c) (if val (conj r val) r)))))
-                :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
-                                      {:vars (-> func meta :bi/params)})))))
-
-(defn reduce-body-enforce
-  "This is for reducing with an enforce function, where metadata on the
-   function directs various behaviors such as whether results are returned
-   or a database is updated."
-  [coll func init] ; ToDo: Collection could be a DB (e.g. from $MCgetSource()).
-  (let [result (->> (loop [c coll,
-                           r init]
-                      (if (empty? c) r (recur (rest c), (conj r (func (first c))))))
-                    (mapv keywordize-keys))
-        _db (qu/db-for! result)]
-      ;; result is just the collection of results from body mechanically produced.
-      ;; They describe fact types that need to be organized according to the schema.
-      ;; (-> func meta :options) describes the schema, among other things.
-      result))
-
-;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
-;;;       My doc-string below doesn't say.
-;;;       In the above I pass it the collection untouched every time.
-;;;       The JSONata documentation (http://docs.jsonata.org/higher-order-functions) doesn't say either!
-(defn reduce-body-typical
-  "This is for $reduce with JSONata semantics."
-  [coll func]
-  (let [num-params (-> func meta :bi/params count)]
-    (loop [c (rest coll),
-           r (first coll)
-           i 0]
-      (if (empty? c)
-        r
-        (recur (rest c),
-               (case num-params
-                 4 (func r (first c) i coll),
-                 3 (func r (first c) i),
-                 2 (func r (first c))),
-               (inc i))))))
-
-(defn $reduce
-  "Signature: $reduce(array, function [, init])
-
-  Returns an aggregated value derived from applying the function parameter successively to
-  each value in array in combination with the result of the previous application of the function.
-
-  The function must accept at least two arguments, and behaves like an infix operator
-  between each value within the array. The signature of this supplied function must be of the form:
-  myfunc($accumulator, $value [, $index [, $array]])
-
-
-  Example 1:   ( $product := function($i, $j){$i * $j};
-               $reduce([1..5], $product)
-               )
-
-  Example 2: ( $add := function($i, $j){$i + $j};
-               $reduce([1..5], $add, 100))
-             )
-
-  If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
-  If not supplied, the initial value is the first value in the array parameter"
-  ([coll func init]  (if (-> func meta :enforce?)
-                       (reduce-body-enforce coll func init)
-                       (if (core/<= 2 (-> func meta :bi/params count) 4)
-                         ($reduce (into (vector init) coll) func)
-                         (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
-                                         {:vars (-> func meta :bi/params)})))))
-  ([coll func] (if (-> func meta :enforce?)
-                 (reduce-body-enforce coll func [])
-                 (reduce-body-typical coll func))))
-
-(defn strcat
-  "The JSONata & operator."
-  [& objs]
-  (apply str objs))
-
 ;;; rewrite.clj would have been a good place for this, but here we need it at runtime!
 ;;; ToDo: sym-bi-access IS executed for $map in rewrite. So can that for filter too?
 (defn sym-bi-access
@@ -455,11 +326,9 @@
                   :else form))]
     (sba-aux form)))
 
-(def ^:dynamic *test-sym* "Used with sym-bi-access calls in testing" 'foo) ; <========== ToDo: Why can't this be nil?
+;;;--------------------------- JSONata built-in functions ------------------------------------
 
-;;;--------------------------- JSONata mostly-one-liners ------------------------------------
-
-;;;------------- String
+;;;------------- String --------------
 ;;; $base64decode
 (defn $base64decode
   "Converts base 64 encoded bytes to a string, using a UTF-8 Unicode codepage."
@@ -518,16 +387,49 @@
   (url/url-encode s))
 
 ;;; $eval
-;;; This is implemented in evaluate.clj so as not to ....
 (defn $eval
   ([s] ($eval s @$))
-  ([s context]))
-
+  ([s context]
+   (s/assert ::string s)
+   (let [rewrite (ns-resolve 'rad-mapper.rewrite 'rewrite*)
+         form (rewrite :ptag/exp s :rewrite? true)]
+     (binding [*ns* (find-ns 'user)]
+       (try
+         (reset-env context)
+         (let [res (eval form)]
+           (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
+             (jflatten (res))
+             (jflatten res)))
+         (catch Exception e
+           (throw (ex-info "Error evaluating form:" {:error e :form form}))))))))
 
 ;;; $join
-;;; $length
-;;; $lowercase
+(defn $join
+  "Joins an array of component strings into a single concatenated string with each component string
+   separated by the optional separator parameter.
+   It is an error if the input array contains an item which isn't a string.
+   If separator is not specified, then it is assumed to be the empty string, i.e. no separator between
+   the component strings. It is an error if separator is not a string."
+  ([strings]
+   (s/assert ::strings strings)
+   (apply str strings))
+  ([strings separator]
+   (s/assert ::strings strings)
+   (s/assert ::string separator)
+   (->> strings
+        (interpose separator)
+        (apply str))))
 
+;;; $length
+(defn $length [s] (s/assert ::string s) (count s))
+
+;;; $lowercase
+(defn $lowercase
+  "Returns a string with all the characters of str converted to lowercase.
+   If str is not specified (i.e. this function is invoked with no arguments),
+   then the context value is used as the value of str. An error is thrown if str is not a string."
+  ([]  ($lowercase @$))
+  ([s] (s/assert ::string s) (str/lower-case s)))
 
 ;;; $match
 ;;; ToDo: If in conforming JSONata null groups is not removed from the result,
@@ -553,19 +455,182 @@
      (if (vector? s_) (mapv match-aux s_) (match-aux s_)))))
 
 ;;; $pad
+(defn $pad
+  "Returns a copy of the string str with extra padding, if necessary, so that its
+   total number of characters is at least the absolute value of the width parameter.
+   If width is a positive number, then the string is padded to the right;
+   if negative, it is padded to the left.
+   The optional char argument specifies the padding character(s) to use.
+   If not specified, it defaults to the space character."
+  ([s width] ($pad s width " "))
+  ([s width char]
+   (s/assert ::string s)
+   (s/assert ::string char)
+   (assert (== 1 (count char)))
+   (s/assert ::integer width)
+   (let [len (count s)
+         awidth (abs width)]
+     (if (>= len awidth)
+       s
+       (let [extra (->> (repeat (- awidth len) char) (apply str))]
+         (if (pos? width)
+           (str s extra)
+           (str extra s)))))))
+
 ;;; $replace
+(defn $replace
+  "Finds occurrences of pattern within str and replaces them with replacement.
+
+   If str is not specified, then the context value is used as the value of str.
+   It is an error if str is not a string.
+
+   The pattern parameter can either be a string or a regular expression (regex).
+   If it is a string, it specifies the substring(s) within str which should be replaced.
+   If it is a regex, its is used to find .
+
+   The replacement parameter can either be a string or a function. If it is a string,
+   it specifies the sequence of characters that replace the substring(s) that are matched by pattern.
+   If pattern is a regex, then the replacement string can refer to the characters that were matched by
+   the regex as well as any of the captured groups using a $ followed by a number N:
+
+     * If N = 0, then it is replaced by substring matched by the regex as a whole.
+     * If N > 0, then it is replaced by the substring captured by the Nth parenthesised group in the regex.
+     * If N is greater than the number of captured groups, then it is replaced by the empty string.
+     * A literal $ character must be written as $$ in the replacement string
+
+   If the replacement parameter is a function, then it is invoked for each match occurrence of the pattern regex.
+   The replacement function must take a single parameter which will be the object structure of a regex match as
+   described in the $match function; and must return a string.
+
+   The optional limit parameter, is a number that specifies the maximum number of replacements to make before stopping.
+   The remainder of the input beyond this limit will be copied to the output unchanged."
+  ([s pattern replacement] ($replace s pattern replacement :unlimited))
+  ([s pattern replacement limit]
+   (s/assert ::string s)
+   (s/assert ::str|regex pattern)
+   (s/assert ::pos-limit limit)
+   (let [lim  (if (number? limit) (-> limit Math/floor int) limit)]
+     (cond (string? replacement)
+           (let [repl (str/replace replacement "$$" "\\$")]
+             (reduce (fn [res _i] (str/replace-first res pattern repl))
+                     s
+                     (if (= :unlimited lim) (-> s count range) (range lim)))),
+           (fn? replacement)
+           (reduce (fn [res _i]
+                     (try (let [repl (-> ($match res pattern) replacement)]
+                            (str/replace-first res pattern repl))
+                          ;; ToDo: Need a better way! See last test of $replace in builtins_test.clj
+                          (catch Exception _e res)))
+                   s
+                   (if (= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
+           :else (throw (ex-info "Replacement pattern must be a string or function."
+                                 {:replacement replacement}))))))
+
 ;;; $split
+(defn $split
+  "Splits the str parameter into an array of substrings.
+   If str is not specified, then the context value is used as the value of str.
+   It is an error if str is not a string.
+
+   The separator parameter can either be a string or a regular expression (regex).
+   If it is a string, it specifies the characters within str about which it should be split.
+   If it is the empty string, str will be split into an array of single characters.
+   If it is a regex, it splits the string around any sequence of characters that match the regex.
+
+   The optional limit parameter is a number that specifies the maximum number of substrings to include
+   in the resultant array. Any additional substrings are discarded. If limit is not specified, then str
+   is fully split with no limit to the size of the resultant array.
+   It is an error if limit is not a non-negative number."
+  ([separator]   ($split @$ separator))
+  ([s separator] ($split s separator :unlimited))
+  ([s separator limit]
+   (s/assert ::string s)
+   (s/assert ::str|regex separator)
+   (s/assert ::pos-limit limit)
+   (let [lim (if (number? limit) (-> limit Math/floor int) limit)
+         regex (if (string? separator) (re-pattern separator) separator)]
+     (if (= lim :unlimited)
+       (str/split s regex)
+       (-> (str/split s regex) (subvec 0 lim))))))
+
 ;;; $string
 (defn $string
   "Return the argument as a string."
-  [s_] (str s_))
-;;; $substring
-;;; $substringAfter
-;;; $substringBefore
-;;; $trim
-;;; $uppercase
+  [s] (str s))
 
-;;;------------- Numeric
+;;; $substring
+(defn $substring
+  "Returns a string containing the characters in the first parameter str starting at position start (zero-offset).
+   If str is not specified (i.e. this function is invoked with only the numeric argument(s)), then the context
+   value is used as the value of str. An error is thrown if str is not a string.
+   If length is specified, then the substring will contain maximum length characters.
+   If start is negative then it indicates the number of characters from the end of str.
+   See substr for full definition."
+  ([start] ($substring @$ start))
+  ([str start] (if (and (number? str) (number? start))
+                 ($substring @$ str start)
+                 ($substring str start :unlimited)))
+   ([str start length]
+    (s/assert ::string str)
+    (s/assert ::limit start)
+    (s/assert ::pos-limit length)
+    (let [len (count str)
+          res (if (neg? start)
+                (subs str (+ len start))
+                (subs str start))]
+      (if (or (= :unlimited length) (> length len))
+        res
+        (subs res 0 length)))))
+
+;;; $substringAfter
+(defn $substringAfter
+  "Returns the substring after the first occurrence of the character sequence chars in str.
+   If str is not specified (i.e. this function is invoked with only one argument), then the
+   context value is used as the value of str.
+   If str does not contain chars, then it returns str.
+   An error is thrown if str and chars are not strings."
+  ([chars] ($substringAfter @$ chars))
+  ([str chars]
+   (if-let [ix (index-of str chars)]
+     (subs str (inc ix))
+     str)))
+
+;;; $substringBefore
+(defn $substringBefore
+  "Returns the substring before the first occurrence of the character sequence chars in str.
+   If str is not specified (i.e. this function is invoked with only one argument), then the
+   context value is used as the value of str.
+   If str does not contain chars, then it returns str.
+   An error is thrown if str and chars are not strings."
+  ([chars] ($substringBefore @$ chars))
+  ([str chars]
+   (if-let [ix (index-of str chars)]
+     (subs str 0 ix)
+     str)))
+
+;;; $trim
+(defn $trim
+  "Normalizes and trims all whitespace characters in str by applying the following steps:
+      * All tabs, carriage returns, and line feeds are replaced with spaces.
+      * Contiguous sequences of spaces are reduced to a single space.
+      * Trailing and leading spaces are removed.
+   If str is not specified (i.e. this function is invoked with no arguments), then the
+  context value is used as the value of str. An error is thrown if str is not a string."
+  ([] ($trim @$))
+  ([s]
+   (s/assert ::string s)
+   (-> s (str/replace #"\s+" " ") str/trim)))
+
+;;; $uppercase
+(defn $uppercase
+  "Returns a string with all the characters of str converted to uppercase.
+   If str is not specified (i.e. this function is invoked with no arguments),
+   then the context value is used as the value of str.
+   An error is thrown if str is not a string."
+  ([]  ($uppercase @$))
+  ([s] (s/assert ::string s) (str/upper-case s)))
+
+;;;------------- Numeric --------------
 ;;; $abs
 ;;; $average
 ;;; $ceil
@@ -636,12 +701,12 @@
   (s/assert ::number v_)
   (Math/sqrt v_))
 
-;;;--------------- Logic
+;;;--------------- Logic ------------
 ;;; $boolean
 ;;; $exists
 ;;; $not
 
-;;;--------------- Collections
+;;;--------------- Collections -------
 ;;; $append
 ;;; $count
 ;;; $distinct
@@ -650,7 +715,7 @@
 ;;; $sort
 ;;; $zip
 
-;;;---------------- JSON Object
+;;;---------------- JSON Object ------
 ;;; $type
 ;;; $lookup
 ;;; $merge
@@ -661,14 +726,142 @@
 ;;; $keys
 ;;; $spread
 
-;;;------------- DateTime
+;;;------------- DateTime -----------
 ;;; $fromMillis
 ;;; $millis,
 ;;; $now
 ;;; $toMillis
 
 ;;;-------------- Higher (the higher not yet defined)
+;;; $filter
+(defn $filter
+  "Return a function for the argument form."
+  [coll_ func]
+  (let [nvars (-> func meta :bi/params count)]
+    (cond
+      (== nvars 3)
+                (loop [c coll_, i 0, r []]
+                  (if (empty? c)
+                    r
+                    (let [val (when (func (first c) i coll_) (first c))]
+                      (recur (rest c), (inc i), (if val (conj r val) r)))))
+                (== nvars 2)
+                (loop [c coll_, i 0, r []]
+                  (if (empty? c)
+                    r
+                    (let [val (when (func (first c) i) (first c))]
+                      (recur (rest c), (inc i) (conj (if val (conj r val) r))))))
+                (== nvars 1)
+                (loop [c coll_, r []]
+                  (if (empty? c)
+                    r
+                    (let [val (when (func (first c)) (first c))]
+                      (recur (rest c) (if val (conj r val) r)))))
+                :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
+                                      {:vars (-> func meta :bi/params)})))))
+
+;;; $map
+(defn $map
+  "Signature: $map(array, function)
+
+   Returns an array containing the results of applying the function parameter to each value in the array parameter.
+   The function that is supplied as the second parameter must have the following signature:
+   function(value [, index [, array]])
+   Each value in the input array is passed in as the first parameter in the supplied function.
+   The index (position) of that value in the input array is passed in as the second parameter, if specified.
+   The whole input array is passed in as the third parameter, if specified.
+
+   Example: $map([1..5], $string) => ['1', '2', '3', '4', '5']"
+  [coll func]
+  (let [nvars  (-> func meta :bi/params count)]
+    (cond
+      (== nvars 3)
+      (loop [c coll, i 0, r []]
+        (if (empty? c)
+          r
+          (recur (rest c) (inc i) (conj r (func (first c) i coll)))))
+      (== nvars 2)
+      (loop [c coll, i 0, r []]
+        (if (empty? c)
+          r
+          (recur (rest c) (inc i) (conj r (func (first c) i)))))
+      (== nvars 1)
+      (loop [c coll, r []]
+        (if (empty? c)
+          r
+          (recur (rest c) (conj r (func (first c))))))
+      :else (throw (ex-info "$map expects a function of 1 to 3 parameters:"
+                            {:vars (-> func meta :bi/params)})))))
+
+;;; $reduce
+(defn reduce-body-enforce
+  "This is for reducing with an enforce function, where metadata on the
+   function directs various behaviors such as whether results are returned
+   or a database is updated."
+  [coll func init] ; ToDo: Collection could be a DB (e.g. from $MCgetSource()).
+  (let [result (->> (loop [c coll,
+                           r init]
+                      (if (empty? c) r (recur (rest c), (conj r (func (first c))))))
+                    (mapv keywordize-keys))
+        _db (qu/db-for! result)]
+      ;; result is just the collection of results from body mechanically produced.
+      ;; They describe fact types that need to be organized according to the schema.
+      ;; (-> func meta :options) describes the schema, among other things.
+      result))
+
+;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
+;;;       My doc-string below doesn't say.
+;;;       In the above I pass it the collection untouched every time.
+;;;       The JSONata documentation (http://docs.jsonata.org/higher-order-functions) doesn't say either!
+(defn reduce-body-typical
+  "This is for $reduce with JSONata semantics."
+  [coll func]
+  (let [num-params (-> func meta :bi/params count)]
+    (loop [c (rest coll),
+           r (first coll)
+           i 0]
+      (if (empty? c)
+        r
+        (recur (rest c),
+               (case num-params
+                 4 (func r (first c) i coll),
+                 3 (func r (first c) i),
+                 2 (func r (first c))),
+               (inc i))))))
+
+(defn $reduce
+  "Signature: $reduce(array, function [, init])
+
+  Returns an aggregated value derived from applying the function parameter successively to
+  each value in array in combination with the result of the previous application of the function.
+
+  The function must accept at least two arguments, and behaves like an infix operator
+  between each value within the array. The signature of this supplied function must be of the form:
+  myfunc($accumulator, $value [, $index [, $array]])
+
+
+  Example 1:   ( $product := function($i, $j){$i * $j};
+               $reduce([1..5], $product)
+               )
+
+  Example 2: ( $add := function($i, $j){$i + $j};
+               $reduce([1..5], $add, 100))
+             )
+
+  If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
+  If not supplied, the initial value is the first value in the array parameter"
+  ([coll func init]  (if (-> func meta :enforce?)
+                       (reduce-body-enforce coll func init)
+                       (if (core/<= 2 (-> func meta :bi/params count) 4)
+                         ($reduce (into (vector init) coll) func)
+                         (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
+                                         {:vars (-> func meta :bi/params)})))))
+  ([coll func] (if (-> func meta :enforce?)
+                 (reduce-body-enforce coll func [])
+                 (reduce-body-typical coll func))))
+
 ;;; $sift
+
 ;;; $single
 (defn $single
   "See http://docs.jsonata.org/higher-order-functions
@@ -748,7 +941,7 @@
        (reduce-kv (fn [res k v] (assoc res (-> (str/replace k #"[\s+,\.+]" "_") keyword) v))
                   {})))
 
-;;; ($readSpreadsheet
+;;; $readSpreadsheet
 (defn $readSpreadsheet
   "Read the .xlsx and make a clojure map for each row. No fancy names, just :A,:B,:C,...!"
   ([filename sheet-name] ($readSpreadsheet filename sheet-name false))
@@ -778,7 +971,7 @@
   [data_]
   (qu/learn-schema-walking data_))
 
-;;;--------------------------------- query ---------------------------------------
+;;;---------- query ---------------------------------------
 (defn qform-runtime-sub
   "Return a DH query [:find...] form that substitutes values as though syntax quote were being used."
   [body param-val-map]

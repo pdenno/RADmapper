@@ -64,7 +64,7 @@
 (def numeric-operators    '{\% bi/%, \* bi/*, \+ bi/+, \- bi/-, \/ bi//}) ; :range is not one of these.
 (def comparison-operators '{:<= bi/<=, :>= bi/>=, :!= bi/!=, \< bi/<, \= bi/=, \> bi/>, "in" bi/in})
 (def boolean-operators    '{:and and :or or})
-(def string-operators     '{\& bi/&})
+(def string-operators     '{\& str})
 (def other-operators      '{\. bi/get-step :apply-filter bi/filter-step :apply-reduce bi/reduce-step
                             :thread bi/thread })
 ;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
@@ -135,12 +135,8 @@
   "Return as :tkn either a Clojure regex or a /. Uses a heuristic,
    specifically does a closing '/' come before a space."
   [st]
-  (let [s (subs st 1)
-        slash-pos (index-of s \/)
-        space-pos (index-of s " ")]
-    (if (and slash-pos (or (not space-pos) (< slash-pos space-pos)))
-      (regex-from-string st)
-      {:raw "/" :tkn \/})))
+  (try (regex-from-string st)
+       (catch Exception _e {:raw "/" :tkn \/})))
 
 (defn single-quoted-string
   "Return a token map for a single-quoted string. Note that for double-quoted strings,
@@ -246,13 +242,13 @@
                (when-let [[_ cm] (re-matches #"(?s)(\/\/[^\n]*).*" s)]        ; EOL comment
                  {:ws ws :raw cm :tkn (->JaEOLcomment cm)})
                (and (long-syntactic c) (read-long-syntactic s ws))         ; /regex-pattern/ ++, <=, == etc.
-               (and (syntactic c) {:ws ws :raw (str c) :tkn c})            ; literal syntactic char.
                (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]
                  {:ws ws :raw num :tkn (read-string num)}),                   ; number
                (when-let [[_ st] (re-matches #"(?s)(\"[^\"]*\").*" s)]        ; string literal
                  {:ws ws :raw st :tkn (read-string st)})
                (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)]        ; backquoted field
                  {:ws ws :raw st :tkn (->JaField st)})
+               (and (syntactic c) {:ws ws :raw (str c) :tkn c})               ; literal syntactic char.
                (let [pos (position-break s)
                      word (subs s 0 (or pos (count s)))]
                  (or ; We don't check for "builtin-fns"; as tokens they are just jvars.

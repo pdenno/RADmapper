@@ -38,18 +38,17 @@
 (deftest simple
   (testing "Simple (rewrite):"
     (testing "miscellaneous simple rewrites"
-      (binding [bi/*test-sym* 'foo]
-        (run-test "1" 1)
-        (run-test "[1, 2, 3]"  [1 2 3])
-        (run-test "1 + 2" '(bi/+ 1 2))
-        (run-test "[1..5]" '(range 1 (inc 5)))
-        (run-test "$A[1]" '(bi/run-steps (bi/init-step $A) (bi/filter-step (fn [_x1] (bi/with-context _x1 1)))))
-        (run-test "$sum($v.field)" '(bi/$sum (bi/run-steps (bi/init-step $v) (bi/get-step "field"))))
-        (run-test "$sum(a.b)"      '(bi/$sum (bi/run-steps (bi/get-step "a") (bi/get-step "b"))))
-        (run-test "(A * B)"        '(bi/primary (bi/* (bi/get-scoped "A") (bi/get-scoped "B"))))
-        (run-test "4 ~> $f()"      '(bi/thread 4 ($f)))
-        (run-test "$" '(bi/deref$))
-        (run-test "$foo" '$foo)))
+      (run-test "1" 1)
+      (run-test "[1, 2, 3]"  [1 2 3])
+      (run-test "1 + 2" '(bi/+ 1 2))
+      (run-test "[1..5]" '(range 1 (inc 5)))
+      (run-test "$A[1]" '(bi/run-steps (bi/init-step $A) (bi/filter-step (fn [_x1] (bi/with-context _x1 1)))))
+      (run-test "$sum($v.field)" '(bi/$sum (bi/run-steps (bi/init-step $v) (bi/get-step "field"))))
+      (run-test "$sum(a.b)"      '(bi/$sum (bi/run-steps (bi/get-step "a") (bi/get-step "b"))))
+      (run-test "(A * B)"        '(bi/primary (bi/* (bi/get-scoped "A") (bi/get-scoped "B"))))
+      (run-test "4 ~> $f()"      '(bi/thread 4 ($f)))
+      (run-test "$" '(bi/deref$))
+      (run-test "$foo" '$foo))
 
     (testing "tokenizer"
       (run-test "true?'a':'b'" '(if true "a" "b")))
