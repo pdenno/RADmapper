@@ -18,7 +18,11 @@
    [datahike.api                 :as d]
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util])
-  (:import java.text.DecimalFormat))
+  (:import java.text.DecimalFormat
+           java.text.DecimalFormatSymbols
+           java.math.RoundingMode))
+
+;;; ToDo: Consider Small Clojure Interpreter (SCI) for Clojure version.
 
 (def ^:dynamic $  "JSONata context variable" (atom nil))
 (def           $$ "JSONata root context."    (atom nil))
@@ -42,7 +46,7 @@
 (s/def ::non-zero (s/and number? #(-> % zero? not)))
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 (s/def ::strings (s/and vector? (s/coll-of ::string :min-count 1)))
-(s/def ::radix (s/and number? #(<= 2 % 36)))
+(s/def ::radix (s/and number? #(core/<= 2 % 36)))
 
 (defn reset-env
   "Clean things up just prior to running user code."
@@ -652,7 +656,7 @@
   (s/assert ::numbers nums)
   (core// (apply core/+ nums)
           (-> nums count double)))
-  
+
 ;;; $ceil
 (defn $ceil
   "Returns the value of number rounded up to the nearest integer that is greater than or equal to number.
@@ -684,9 +688,27 @@
    (s/assert ::radix num)
    (cl-format nil (str "~" radix "R") num)))
 
-;;; https://docs.oracle.com/javase/8/docs/api/java/text/DecimalFormat.html
 ;;; https://java2blog.com/java-decimalformat/
 ;;; https://www.w3.org/TR/xpath-functions-31/#syntax-of-picture-string
+;;; https://docs.oracle.com/javase/7/docs/api/java/text/DecimalFormat.html
+
+;;; | 0          | Number              | Yes | Digit                                                       |
+;;; | #          | Number              | Yes | Digit, zero shows as absent                                 |
+;;; | .          | Number              | Yes | Decimal separator or monetary decimal sepaator              |
+;;; | \-         | Number              | Yes | Minus sign                                                  |
+;;; | ,          | Number              | Yes | Grouping separator                                          |
+;;; | E          | Number              | Yes | Separates mantissa and exponent in scientific notation. (1) |
+;;; | ;          | Subpattern boundary | Yes | Separates positive and negative subpatterns                 |
+;;; | %          | Prefix or suffix    | Yes | Multiply by 100 and show as percentage                      |
+;;; | \u2030     | Prefix or suffix    | Yes | Multiply by 1000 and show as per mille value                |
+;;; | ¤ (\u00A4) | Prefix or suffix    | No  | Currency sign, replaced by currency symbol. (2)             |
+;;; | '          | Prefix or suffix    | No  | Used to quote special characters in a prefix or suffix (3)  |
+
+;;;  (1) Need not be quoted in prefix or suffix.
+;;;  (2) If doubled, replaced by international currency symbol. If present in a pattern,
+;;;      the monetary decimal separator is used instead of the decimal separator.
+;;;  (3) For example, "'#'#" formats 123 to "#123". To create a single quote itself, use two in a row: "# o''clock".
+
 ;;; $formatNumber
 (defn $formatNumber
   "Casts the number to a string and formats it to a decimal representation as specified by the picture string.
@@ -698,16 +720,64 @@
    The optional third argument options is used to override the default locale specific formatting characters
    such as the decimal separator. If supplied, this argument must be an object containing name/value pairs
    specified in the decimal format section of the XPath F&O 3.1 specification."
-  [number picture & _options] ; ToDo: Implement options.
-  (let [scientific? (re-find #"0e0" picture)
-        pic (if scientific? (str/replace picture "0e0" "0E0") picture)
-        res (.format (DecimalFormat. pic) number)]
-    (if scientific?
-      (str/replace res "E" "e") ; ToDo: Fraught with risk! At least use \d around it.
-      res)))
+  [number picture & options] ; ToDo: I probably could have used common-lisp format for this!
+  (let [pic (str/replace picture "e" "E")
+        opts (-> options keywordize-keys first)
+        symbols (DecimalFormatSymbols.)]
+    (.setExponentSeparator symbols "e")
+    (doseq [[k v] opts]
+      (case k ; ToDo: More of these.
+        :zero-digit (.setZeroDigit symbols (nth v 0))
+        :minus-sign (.setMinusSign symbols (nth v 0))
+        nil))
+    (let [df (DecimalFormat. pic symbols)]
+      ;; ToDo: RoundingMode/HALF_EVEN seems to be what JSONAata is using, but it doesn't work on tests.
+      ;; https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/math/RoundingMode.html#HALF_UP
+      #_(when-not (index-of pic \%) ; This would allow the (few) tests to pass, but makes no sense.
+         (.setRoundingMode df RoundingMode/UP))
+      (doseq [[k _v] opts]
+        (case k ; ToDo: More of these.
+          :per-mille (.setMultiplier df 1000)
+          nil))
+    (.format df number))))
+
+;;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
 
 ;;; $formatInteger
-(defn $formatInteger [] :nyi)
+(defn $formatInteger
+  "Casts the number to a string and formats it to an integer representation as specified by the picture string.
+   The behaviour of this function is consistent with the two-argument version of the XPath/XQuery function
+   fn:format-integer as defined in the XPath F&O 3.1 specification. The picture string parameter defines how
+   the number is formatted and has the same syntax as fn:format-integer."
+  [num pic]
+  (s/assert num ::number)
+  (let [simple (case pic
+                 "A"  (-> (take (abs num) (util/string-permute)) last)
+                 "a"  (-> (take (abs num) (util/string-permute)) last str/lower-case)
+                 "I"  (cl-format nil "~@r" (abs num))
+                 "i"  (-> (cl-format nil "~@r" (abs num)) str/lower-case)
+                 "W"  (-> (cl-format nil "~r"  num) str/upper-case)
+                 "w"  (cl-format nil "~r"  num)
+                 "Ww" (as-> (cl-format nil "~r" num) ?s ; Really? You can't do this yourself?
+                        (str/split ?s #" ")
+                        (map str/capitalize ?s)
+                        (interpose " " ?s)
+                        (apply str ?s))
+                 nil)]
+    (cond (and simple (#{"A" "a" "i" "I"} pic) (neg? num)), (str "-" simple)
+          simple  simple
+          :else ($formatNumber num pic))))
+
+;;; I'm just winging it here!
+;;; $parseInteger
+(defn $parseInteger
+  "Parses the contents of the string parameter to an integer (as a JSON number) using the format
+   specified by the picture string. The picture string parameter has the same format as $formatInteger.
+   Although the XPath specification does not have an equivalent function for parsing integers,
+   this capability has been added to JSONata."
+  [string pic] ; ToDo: Use pic.
+  (case pic
+    "w" (util/parse-num-string string)))
 
 ;;; $number
 (defn $number
@@ -1023,7 +1093,7 @@
                             (cond (core/= n 0) 0,
                                   (not (nth row1 n)) (recur (dec n)),
                                   :else (inc n)))
-                     keys (map keyword (take len (util/string-permute "ABCDEFGHIJKLMNOPQRSTUVWXYZ")))
+                     keys (map keyword (take len (util/string-permute)))
                      raw (ss/select-columns (zipmap keys keys) sheet)]
                  (if invert?
                    (transpose-sheet raw)

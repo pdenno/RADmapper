@@ -1,9 +1,7 @@
 (ns rad-mapper.devl.devl-util
   "Tools for repl-based development"
   (:require
-   [clojure.pprint      :refer [pprint]]
-   #_[clojure.set         :as set]
-   #_[clojure.spec.alpha  :as s]))
+   [clojure.pprint :refer [pprint]]))
 
 ;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])
 

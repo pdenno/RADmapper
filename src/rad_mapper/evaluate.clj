@@ -5,6 +5,8 @@
    [rad-mapper.builtins :as bi]
    [taoensso.timbre     :as log]))
 
+;;; ToDo: Consider Small Clojure Interpreter (SCI) for Clojure version.
+
 ;;; ToDo: It would be nice to say *what symbol* is unresolved. In tracking this down,
 ;;; of course, I will have to watch for cycles.
 (defn user-eval

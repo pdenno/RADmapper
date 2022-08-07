@@ -3,6 +3,8 @@
    [cemerick.url                 :as url]
    [clojure.data.xml             :as x]
    [clojure.java.io              :as io]
+   [clojure.pprint               :refer [cl-format]]
+   [clojure.string               :as str]
    [clojure.walk                 :as walk]
    [taoensso.timbre              :as log]))
 
@@ -142,7 +144,8 @@
                             (:xml/attrs obj)))))
 
 (defn string-permute
-  "Return a lazy sequence of the name of columns"
+  "Return a lazy sequence of A, B, C,...Z, AA, AB,..."
+  ([]  (string-permute "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
   ([chars] (string-permute [""] chars))
   ([prev chars]
    (let [strs (mapcat (fn [c] (map (fn [s] (str c s)) prev)) chars)]
@@ -177,3 +180,23 @@
 
 ;;; Preparing for .cljc
 (defn regex? [o] (= java.util.regex.Pattern (type o)))
+
+(defn parse-num-string
+  "Return then number respesented by the argument English language string."
+  [string]
+  (let [nvec (into (range 1 20) (map #(* 10 %) (range 2 10)))
+        nums (zipmap (map #(cl-format nil "~r" %) nvec) nvec)
+        units {"thousand" 1000, "million" 1000000, "billion" 1000000000,
+               "trillion" 1000000000000, "quadrillion" 1000000000000000}
+        s-parts (-> (str/replace string #",|-| and" " ") (str/split #"\s+"))]
+    (letfn [(add-coll [nums] (if (== 1 (count nums)) (first nums) (apply + nums)))
+            (trans-nums [u] (if (empty? u) 0 (-> (map #(get nums %) u) add-coll)))
+            (translate [x]
+              (let [[hunvec others] (split-with (complement #(= % "hundred")) x)
+                    multiplier (if ((-> units keys set) (last x)) (get units (last x)) 1)]
+                (* (+ (if (empty? others) (trans-nums (butlast hunvec)) (* 100 (trans-nums hunvec)))
+                      (trans-nums (if (get units (last others)) (-> others rest butlast) (rest others))))
+                   multiplier)))]
+      (->> (split-by (-> units keys set) s-parts)
+           (map translate)
+           add-coll))))
