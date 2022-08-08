@@ -181,22 +181,30 @@
 ;;; Preparing for .cljc
 (defn regex? [o] (= java.util.regex.Pattern (type o)))
 
+(def ^:private num-map "A map indexed by strings with values being the number the string represents."
+  (let [nvec (into (range 1 20) (map #(* 10 %) (range 2 10)))]
+    (zipmap (map #(cl-format nil "~r" %) nvec) nvec)))
+
+(def ^:private num-word (-> num-map keys set))
+
+;;; ToDo: Add :creative? an do 'word concatenation' for e.g. 'twenty twenty two', triple eight, double.
+;;; Synonyms of zero = aught, cipher, goose egg, naught (also nought), nil, nothing, o, oh, zilch, zip.
 (defn parse-num-string
-  "Return then number respesented by the argument English language string."
+  "Return the number represented by the argument English language string."
   [string]
-  (let [nvec (into (range 1 20) (map #(* 10 %) (range 2 10)))
-        nums (zipmap (map #(cl-format nil "~r" %) nvec) nvec)
-        units {"thousand" 1000, "million" 1000000, "billion" 1000000000,
+  (let [units {"thousand" 1000, "million" 1000000, "billion" 1000000000,
                "trillion" 1000000000000, "quadrillion" 1000000000000000}
-        s-parts (-> (str/replace string #",|-| and" " ") (str/split #"\s+"))]
-    (letfn [(add-coll [nums] (if (== 1 (count nums)) (first nums) (apply + nums)))
-            (trans-nums [u] (if (empty? u) 0 (-> (map #(get nums %) u) add-coll)))
-            (translate [x]
-              (let [[hunvec others] (split-with (complement #(= % "hundred")) x)
-                    multiplier (if ((-> units keys set) (last x)) (get units (last x)) 1)]
-                (* (+ (if (empty? others) (trans-nums (butlast hunvec)) (* 100 (trans-nums hunvec)))
-                      (trans-nums (if (get units (last others)) (-> others rest butlast) (rest others))))
-                   multiplier)))]
+        s-parts (-> string str/lower-case (str/replace  #",|-| and" " ") (str/split #"\s+"))]
+    (letfn [(add [nums] (if (== 1 (count nums)) (first nums) (apply + nums)))
+            (trans-nums [u] (if (empty? u) 0 (-> (map #(get num-map %) u) add)))
+            (translate [x] ; 'hundred' makes things a little harder....I think!
+              (if (every? #(get num-word %) x)
+                (trans-nums x)
+                (let [[hunvec others] (split-with (complement #(= % "hundred")) x)
+                      multiplier (if ((-> units keys set) (last x)) (get units (last x)) 1)]
+                  (* (+ (if (empty? others) (trans-nums (butlast hunvec)) (* 100 (trans-nums hunvec)))
+                        (trans-nums (if (get units (last others)) (-> others rest butlast) (rest others))))
+                     multiplier))))]
       (->> (split-by (-> units keys set) s-parts)
            (map translate)
-           add-coll))))
+           add))))

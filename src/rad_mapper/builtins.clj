@@ -20,6 +20,8 @@
    [rad-mapper.util              :as util])
   (:import java.text.DecimalFormat
            java.text.DecimalFormatSymbols
+           java.math.BigDecimal
+           java.math.MathContext
            java.math.RoundingMode))
 
 ;;; ToDo: Consider Small Clojure Interpreter (SCI) for Clojure version.
@@ -720,7 +722,7 @@
    The optional third argument options is used to override the default locale specific formatting characters
    such as the decimal separator. If supplied, this argument must be an object containing name/value pairs
    specified in the decimal format section of the XPath F&O 3.1 specification."
-  [number picture & options] ; ToDo: I probably could have used common-lisp format for this!
+  [number picture & options]
   (let [pic (str/replace picture "e" "E")
         opts (-> options keywordize-keys first)
         symbols (DecimalFormatSymbols.)]
@@ -731,10 +733,6 @@
         :minus-sign (.setMinusSign symbols (nth v 0))
         nil))
     (let [df (DecimalFormat. pic symbols)]
-      ;; ToDo: RoundingMode/HALF_EVEN seems to be what JSONAata is using, but it doesn't work on tests.
-      ;; https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/math/RoundingMode.html#HALF_UP
-      #_(when-not (index-of pic \%) ; This would allow the (few) tests to pass, but makes no sense.
-         (.setRoundingMode df RoundingMode/UP))
       (doseq [[k _v] opts]
         (case k ; ToDo: More of these.
           :per-mille (.setMultiplier df 1000)
@@ -768,17 +766,6 @@
           simple  simple
           :else ($formatNumber num pic))))
 
-;;; I'm just winging it here!
-;;; $parseInteger
-(defn $parseInteger
-  "Parses the contents of the string parameter to an integer (as a JSON number) using the format
-   specified by the picture string. The picture string parameter has the same format as $formatInteger.
-   Although the XPath specification does not have an equivalent function for parsing integers,
-   this capability has been added to JSONata."
-  [string pic] ; ToDo: Use pic.
-  (case pic
-    "w" (util/parse-num-string string)))
-
 ;;; $number
 (defn $number
   " * Numbers are unchanged.
@@ -811,7 +798,14 @@
     (apply min v)))
 
 ;;; $parseInteger
-
+(defn $parseInteger
+  "Parses the contents of the string parameter to an integer (as a JSON number) using the format
+   specified by the picture string. The picture string parameter has the same format as $formatInteger.
+   Although the XPath specification does not have an equivalent function for parsing integers,
+   this capability has been added to JSONata."
+  [string pic] ; ToDo: Other pictures
+  (case pic
+    "w" (util/parse-num-string string)))
 
 ;;; $power
 (defn $power
@@ -824,7 +818,33 @@
     (Math/pow x y)))
 
 ;;; $random
+(defn $random []
+  "Returns a pseudo random number greater than or equal to zero and less than one (0 ≤ n < 1)"
+  (rand))
+
 ;;; $round
+(defn $round
+  "Returns the value of the number parameter rounded to the number of decimal places specified by the optional precision parameter.
+   The precision parameter (which must be an integer) species the number of decimal places to be present in the rounded number.
+   If precision is not specified then it defaults to the value 0 and the number is rounded to the nearest integer.
+   If precision is negative, then its value specifies which column to round to on the left side of the decimal place.
+   This function uses the ROUND_HALF to even (Java ROUND_EVEN ?) strategy to decide which way to round numbers that
+   fall exactly between two candidates at the specified precision.
+   This strategy is commonly used in financial calculations and is the default rounding mode in IEEE 754."
+  ([num] ($round num 0))
+  ([num precision]
+   (s/assert ::number num)
+   (s/assert ::number precision)
+   ;; The Java notion of precision is the number of digits in scientific notation.
+   (let [[left _right] (-> num double str (str/split #"\."))
+         rnum (BigDecimal.
+               num
+               (MathContext.
+                (if (zero? precision)
+                  (count left)
+                  (+ (count left) precision))
+                RoundingMode/HALF_EVEN))]
+     (if (pos? precision) (double rnum) (long rnum)))))
 
 ;;; ToDo: This is bogus!
 ;;; $sum
