@@ -49,6 +49,9 @@
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 (s/def ::strings (s/and vector? (s/coll-of ::string :min-count 1)))
 (s/def ::radix (s/and number? #(core/<= 2 % 36)))
+(s/def ::vector vector?)
+(s/def ::vectors (s/and vector (s/coll-of ::vector :min-count 1)))
+(s/def ::fn fn?)
 
 (defn reset-env
   "Clean things up just prior to running user code."
@@ -846,7 +849,7 @@
                 RoundingMode/HALF_EVEN))]
      (if (pos? precision) (double rnum) (long rnum)))))
 
-;;; ToDo: This is bogus!
+;;; ToDo: This is bogus! Later: Why?
 ;;; $sum
 (defn $sum
   "Take one number of a vector of numbers; return the sum."
@@ -862,26 +865,133 @@
   (s/assert ::number v_)
   (Math/sqrt v_))
 
-;;;--------------- Logic ------------
+;;;--------------- Boolean ------------
 ;;; $boolean
-;;; $exists
-;;; $not
+(defn $boolean
+   " Casts the argument to a Boolean using the following rules:
 
-;;;--------------- Collections -------
+    | Argument type                               | Result    |
+    |---------------------------------------------+-----------|
+    | Boolean                                     | unchanged |
+    | string: empty                               | false     |
+    | string: non-empty                           | true      |
+    | number: 0                                   | false     |
+    | number: non-zero                            | true      |
+    | null                                        | false     |
+    | array: empty                                | false     |
+    | array: contains a member that casts to true | true      |
+    | array: all members cast to false            | false     |
+    | object: empty                               | false     |
+    | object: non-empty                           | true      |
+    | function                                    | false     |"
+  [arg]
+  (cond (map? arg)     (if (empty? arg) false true)
+        (vector? arg)  (if (some $boolean arg) true false)
+        (string? arg)  (if (empty? arg) false true)
+        (number? arg)  (if (zero? arg) false true)
+        (fn? arg)      false
+        (nil? arg)     false
+        (boolean? arg) arg
+        (keyword? arg) true ; query role.
+        :else (throw (ex-info "I missed a type!?!" {:arg arg})))) ; ToDo: Remove this, someday.
+
+;;; ToDo: I'll need more information than just the comment line here to understand what this
+;;;       is suppose to do. It might require that I have better established how try/catch is handled.
+;;; $exists
+(defn $exists
+  "Returns Boolean true if the arg expression evaluates to a value, or false if the expression
+   does not match anything (e.g. a path to a non-existent field reference)."
+  [arg]
+  (-> arg $eval $boolean))
+
+;;; $not
+(defn $not
+  "Returns Boolean NOT on the argument. arg is first cast to a boolean."
+  [arg]
+  (-> arg $boolean not))
+
+;;;--------------- Arrays -------
 ;;; $append
+(defn $append
+  "Returns an array containing the values in array1 followed by the values in array2.
+   If either parameter is not an array, then it is treated as a singleton array containing that value."
+  [v1 v2]
+  (into (singlize v1) (singlize v2)))
+
 ;;; $count
+(defn $count
+  "Returns the number of items in the array parameter. If the array parameter is not an array,
+   but rather a value of another JSON type, then the parameter is treated as a singleton array
+   containing that value, and this function returns 1.
+   If array is not specified, then the context value is used as the value of array."
+  [arr]
+  (if (vector? arr) (count arr) 1))
+
 ;;; $distinct
+(defn $distinct
+  "Returns an array containing all the values from the array parameter, but with any duplicates removed.
+   Values are tested for deep equality as if by using the equality operator."
+  [arr]
+  (s/assert ::vector arr)
+  (distinct arr))
+
 ;;; $reverse
+(defn $reverse
+  "Returns an array containing all the values from the array parameter, but in reverse order."
+  [arr]
+  (s/assert ::vector arr)
+  (reverse arr))
+
 ;;; $shuffle
+(defn $shuffle
+  "Returns an array containing all the values from the array parameter, but shuffled into random order."
+  [arr]
+  (s/assert ::vector arr)
+  (loop [res []
+         rem arr]
+    (if (empty? rem) res
+        (let [ix (-> rem count rand-int)]
+          (recur (conj res (nth rem ix))
+                 (let [[f b] (split-at ix rem)]
+                   (into f (rest b))))))))
+
 ;;; $sort
+(defn $sort
+   "Returns an array containing all the values in the array parameter, but sorted into order.
+    If no function parameter is supplied, then the array parameter must contain only numbers or only strings,
+    and they will be sorted in order of increasing number, or increasing unicode codepoint respectively.
+    If a comparator function is supplied, then is must be a function that takes two parameters:
+    function(left, right)
+    This function gets invoked by the sorting algorithm to compare two values left and right.
+    If the value of left should be placed after the value of right in the desired sort order,
+    then the function must return Boolean true to indicate a swap. Otherwise it must return false."
+  ([arr] ($sort arr compare))
+  ([arr fun]
+   (s/assert ::vector arr)
+   (s/assert ::fn fun)
+   (vec (sort fun arr))))
+
 ;;; $zip
+(defn $zip
+  [& arrays]
+  (s/assert ::vectors arrays)
+  (let [size (->> arrays (map count) (apply min))]
+    (loop [res []
+           ix 0]
+      (if (>= ix size) res
+          (recur (conj res
+                       (reduce
+                        (fn [r a] (conj r (nth a ix)))
+                        []
+                        arrays))
+                 (inc ix))))))
 
 ;;;---------------- JSON Object ------
 ;;; $type
 ;;; $lookup
 ;;; $merge
 ;;; $assert
-;;; $sift
+;;; $sift (listed under higher-order too)
 ;;; $error
 ;;; $each
 ;;; $keys
