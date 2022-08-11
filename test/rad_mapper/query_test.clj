@@ -124,27 +124,27 @@
 
     ;; This tests rewriting a query using a mapping context with the default name 'source-data-1'.
     (is (= '(bi/primary
-             (let [$mc (bi/thread (bi/$MCnewContext)
-                                  (bi/$MCaddSource
+             (let [$mc (bi/thread (bi/$newContext)
+                                  (bi/$addSource
                                    (with-meta [(-> {}
                                                    (assoc "person/fname" "Bob")
                                                    (assoc "person/lname" "Clark"))]
                                      #:bi{:json-array? true})))
                    $q  (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
-               ($q (bi/$MCgetSource "source-data-1"))))
-           (rewrite-nicer "( $mc := $MCnewContext() ~> $MCaddSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
+               ($q (bi/$getSource "source-data-1"))))
+           (rewrite-nicer "( $mc := $newContext() ~> $addSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
                               $q := query(){[?person :person/fname ?fname]
                                             [?person :person/lname ?lname]};
-                                $q($MCgetSource('source-data-1')) )")))
+                                $q($getSource('source-data-1')) )")))
 
     ;; This tests execution of a query using a mapping context with the default name 'source-data-1'.
     (is (=  [{:?person 3, :?fname "Bob", :?lname "Clark"}]
             (rew/rewrite*
              :ptag/exp
-             "( $mc := $MCnewContext() ~> $MCaddSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
+             "( $mc := $newContext() ~> $addSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
                 $q := query(){[?person :person/fname ?fname]
                               [?person :person/lname ?lname]};
-                $q($MCgetSource($mc, 'source-data-1')) )"
+                $q($getSource($mc, 'source-data-1')) )"
              :execute? true)))
 
     ;; Here is an example from the spec.
@@ -173,10 +173,10 @@
              :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
              :dol/feature :dol/time-interval}
            (->> (rew/rewrite* :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
-                              "( $mc := $MCnewContext() ~> $MCaddSource($readFile('data/testing/dolce-2.edn'));
+                              "( $mc := $newContext() ~> $addSource($readFile('data/testing/dolce-2.edn'));
                                  $q := query(){[?class :rdf/type     'owl/Class']
                                                [?class :resource/iri  ?class-iri]};
-                                 $q($MCgetSource($mc, 'source-data-1')) )"
+                                 $q($getSource($mc, 'source-data-1')) )"
                               :execute? true)
                 (map :?class-iri)
                 (map keyword)
@@ -304,7 +304,7 @@
 
 (def owl-full-immediate "The whole thing looks like this:"
 "
-  (   $mc := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'),'owl-source');
+  (   $mc := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'),'owl-source');
 
       $qClass := query()
                    { [?class :rdf/type            'owl/Class']
@@ -313,7 +313,7 @@
                      [?class :resource/name       ?class-name]
                    };  // Defines a higher-order function
 
-      $bsets := $qClass($MCgetSource($mc, 'owl-source'));
+      $bsets := $qClass($getSource($mc, 'owl-source'));
       $reduce($bsets,
               enforce()
                  {  {'instance-of'  : 'insert-row',
@@ -328,7 +328,7 @@
 
 (def owl-full-parametric
 "
-  (   $mc := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'), 'owl-source');
+  (   $mc := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'), 'owl-source');
 
       $qtype  := query($type)
                    { [?class :rdf/type            $type]
@@ -340,7 +340,7 @@
       $qClass := $qtype('owl/Class');
       $qProp  := $qtype('owl/ObjectProperty');
 
-      $bsets := $qClass($MCgetSource($mc, 'owl-source')); // Run query; return a collection of binding sets.
+      $bsets := $qClass($getSource($mc, 'owl-source')); // Run query; return a collection of binding sets.
                                                           // Could use ~> here; instead, I'm passing $bsets.
       $reduce($bsets,
               enforce()
@@ -385,12 +385,12 @@
 
     ;; This is an example of rewriting the whole example.
     (is (= '(bi/primary
-             (let [$mc (bi/thread (bi/$MCnewContext) (bi/$MCaddSource (bi/$readFile "data/testing/owl-example.edn") "owl-source"))
+             (let [$mc (bi/thread (bi/$newContext) (bi/$addSource (bi/$readFile "data/testing/owl-example.edn") "owl-source"))
                    $qClass (bi/query '[] '[[?class :rdf/type "owl/Class"]
                                            [?class :resource/iri ?class-iri]
                                            [?class :resource/namespace ?class-ns]
                                            [?class :resource/name ?class-name]])
-                  $bsets ($qClass (bi/$MCgetSource $mc "owl-source"))]
+                  $bsets ($qClass (bi/$getSource $mc "owl-source"))]
                (bi/$reduce $bsets
                            (bi/enforce
                             {:params [],
@@ -408,7 +408,7 @@
 
 (def owl-query-immediate
 "
-  (   $mc := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'), 'owl-source');
+  (   $mc := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'), 'owl-source');
 
       $qClass := query()
                    { [?class :rdf/type            'owl/Class']
@@ -417,12 +417,12 @@
                      [?class :resource/name       ?class-name]
                    };  // Defines a higher-order function
 
-      $qClass($MCgetSource($mc, 'owl-source'))  // Run query; return a collection of binding sets.
+      $qClass($getSource($mc, 'owl-source'))  // Run query; return a collection of binding sets.
   )")
 
 (def owl-query-parametric
 "
-  (   $mc := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'), 'owl-source');
+  (   $mc := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'), 'owl-source');
 
       $qtype  := query($type)
                    { [?class :rdf/type            'owl/Class']
@@ -433,7 +433,7 @@
 
       $qClass := $qtype('owl/Class'); // Make a query function by specifying parameter values.
 
-      $qClass($MCgetSource($mc, 'owl-source'))  // Run query; return a collection of binding sets.
+      $qClass($getSource($mc, 'owl-source'))  // Run query; return a collection of binding sets.
   )")
 
 (deftest owl-example-executes
@@ -441,16 +441,16 @@
 
     ;; bi/query is a higher-order function that returns either a query function, or a higher-order function
     ;; that takes a parameter to customize a 'parametric' query function.
-    (let [data (-> (bi/$MCnewContext) (bi/$MCaddSource [{:name "Bob"}]))]
-      (is (= [{:?e 2}] ((bi/query  []        '[[?e :name "Bob"]]) (bi/$MCgetSource data "source-data-1"))))
-      (is (= [{:?e 2}] (((bi/query '[$name]  '[[?e :name $name]]) "Bob") (bi/$MCgetSource data "source-data-1"))))
-      (is (= []       (((bi/query '[$name]  '[[?e :name $name]]) "xxx") (bi/$MCgetSource data "source-data-1")))))
+    (let [data (-> (bi/$newContext) (bi/$addSource [{:name "Bob"}]))]
+      (is (= [{:?e 2}] ((bi/query  []        '[[?e :name "Bob"]]) (bi/$getSource data "source-data-1"))))
+      (is (= [{:?e 2}] (((bi/query '[$name]  '[[?e :name $name]]) "Bob") (bi/$getSource data "source-data-1"))))
+      (is (= []       (((bi/query '[$name]  '[[?e :name $name]]) "xxx") (bi/$getSource data "source-data-1")))))
 
     ;; This tests making a new data source and use of a special.
     ;; I just check the type because the actual DB can't be tested for equality.
     (is (= datahike.db.DB
            (do (rew/rewrite* :ptag/exp
-                             "($ := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'), 'owl-data');)"
+                             "($ := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'), 'owl-data');)"
                              :execute? true)
                (-> @bi/$ :sources (get "owl-data") type))))
 

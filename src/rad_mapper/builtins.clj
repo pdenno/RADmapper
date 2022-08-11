@@ -22,7 +22,12 @@
            java.text.DecimalFormatSymbols
            java.math.BigDecimal
            java.math.MathContext
-           java.math.RoundingMode))
+           java.math.RoundingMode
+           java.time.Instant
+           java.time.format.DateTimeFormatter
+           java.time.LocalDateTime
+           java.time.ZonedDateTime)) ; /Where possible, it is recommended to use a simpler class without a time-zone./
+
 
 ;;; ToDo: Consider Small Clojure Interpreter (SCI) for Clojure version.
 
@@ -36,7 +41,13 @@
   [val & body]
   `(binding [$ (atom ~val)] ~@body))
 
-(defn set-context! [val] (reset! $ val))
+(defn set-context!
+  "Set the JSONata context variable to the argument. If the root context has not
+   yet been set, set that too."
+  [val]
+  (reset! $ val)
+  (when (core/= @$$ :bi/unset) (reset! $$ val))
+  val)
 
 (s/def ::number number?)
 (s/def ::pos-number (s/and number? pos?))
@@ -46,17 +57,20 @@
 (s/def ::limit (s/or :number number? :unlimited #{:unlimited}))
 (s/def ::str|regex (s/or :string string? :regex util/regex?))
 (s/def ::non-zero (s/and number? #(-> % zero? not)))
+(s/def ::vector vector?)
 (s/def ::numbers (s/and vector? (s/coll-of ::number :min-count 1)))
 (s/def ::strings (s/and vector? (s/coll-of ::string :min-count 1)))
+(s/def ::vectors (s/and vector? (s/coll-of ::vector :min-count 1)))
+(s/def ::objects (s/and vector? (s/coll-of map? :min-count 1)))
 (s/def ::radix (s/and number? #(core/<= 2 % 36)))
-(s/def ::vector vector?)
-(s/def ::vectors (s/and vector (s/coll-of ::vector :min-count 1)))
 (s/def ::fn fn?)
 
 (defn reset-env
   "Clean things up just prior to running user code."
   ([] (reset-env nil))
-  ([context] (reset! $ context)))
+  ([context]
+   (set-context! context)
+   (reset! $$ :bi/unset)))
 
 (defn flatten-except-json
   "Adapted from core/flatten:
@@ -156,6 +170,27 @@
          ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
          ~@body))))
 
+(defmacro defn$
+  "Define two function arities using the body:
+     (1) the ordinary one, that has the usual arguments for the built-in, and,
+     (2) a function where the missing argument will be assumed to be the context variable, $.
+   The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
+   doc-string is required."
+  [fn-name doc-string [& params] & body]
+  (let [param-map (zipmap params (map #(symbol nil (name %)) params))
+	abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
+	abbrv-args (mapv #(if (str/ends-with? (str %) "_") '@$ %) (vals param-map))
+	fn-name (symbol nil (name fn-name))]
+    (letfn [(rewrite [x]
+	      (cond (seq? x)    (map  rewrite x)
+		    (vector? x) (mapv rewrite x)
+		    (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
+		    :else (get param-map x x)))]
+    `(defn ~fn-name ~doc-string
+       (~abbrv-params (~fn-name ~@abbrv-args))
+       ([~@(vals param-map)]
+	(let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
+
 ;;;========================= JSONata built-ins  =========================================
 (defn* +  "plus"   [x y]   (core/+ x y))
 (defn* -  "minus"  [x y]   (core/- x y))
@@ -179,24 +214,38 @@
 ;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
 ;;; [6+1, 3] ~> $sum()           ==> 10
 ;;; 4 ~> function($x){$x+1}()    ==>  5
-;;; The only reason for keeping this around (rather than rewriting it as ->) is that it only takes two args.
-(defmacro thread "Implements JSONata ~>"
+;;; ToDo: Should I have made regular expressions functions?
+#_(defmacro thread "Implements JSONata ~>"
   [x y]
   `(-> ~x ~y))
+
+#_(defn thread
+  "Implements JSONata ~>"
+  [x y]
+  (cond (fn? y)                             (y x),
+        (and (util/regex? y) (string? x))   ($match x y),
+        :else (throw (ex-info "Incompatible arguments to ~> threading." {:x x :y y}))))
+
+(defn thread
+  "Implements JSONata ~>"
+  [x y]
+  (s/assert ::fn y)
+  (set-context! x)
+  (y x))
 
 ;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (let [init-step? (= :bi/init-step (-> steps first meta :bi/step-type))]
+    (let [init-step? (core/= :bi/init-step (-> steps first meta :bi/step-type))]
       (loop [res   (if init-step? (set-context! (-> ((first steps) @$) containerize?)) @$)
              steps (if init-step? (rest steps) steps)]
       (cond (empty? steps) res
 
             ;; bi/get-step followed by bi/filter-step ("non-compositional" ???)
-            (and (= :bi/get-step (-> steps first meta :bi/step-type))
-                 (= :bi/filter-step (-> steps second meta :bi/step-type))) ; Then don't do next step. Steal its argument.
+            (and (core/= :bi/get-step (-> steps first meta :bi/step-type))
+                 (core/= :bi/filter-step (-> steps second meta :bi/step-type))) ; Then don't do next step. Steal its argument.
             (let [sfn (second steps)              ; Run the filter specifying the previous step keyword.
                   new-res (set-context! (sfn res {:bi/call-type :bi/get-step
                                                   :bi/attr (-> steps first meta :bi/arg)}))]
@@ -232,7 +281,7 @@
     (fn filter-step [obj prior-step]
       (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
             call-type (:bi/call-type prior-step)
-            ob (if (= :bi/get-step call-type)
+            ob (if (core/= :bi/get-step call-type)
                  (let [k (:bi/attr prior-step)] ; non-compositional semantics
                    (if (vector? obj)
                      (cmap #(get % k) (containerize obj))
@@ -358,7 +407,7 @@
   (-> s .getBytes b64/encode String.))
 
 ;;; $contains
-(defn $contains
+(defn$ $contains
   "Returns true if str is matched by pattern, otherwise it returns false.
    If str is not specified (i.e. this function is invoked with one argument),
    then the context value is used as the value of str.
@@ -367,12 +416,11 @@
    If it is a string, the function returns true if the characters within pattern are
    contained contiguously within str.
    If it is a regex, the function will return true if the regex matches the contents of str."
-  ([pat] ($contains @$ pat))
-  ([s pat]
-   (s/assert ::string s)
+  [s_ pat]
+  (s/assert ::string s_)
    (if (util/regex? pat)
-     (if (re-find pat s) true false)
-     (if (index-of s pat) true false))))
+     (if (re-find pat s_) true false)
+     (if (index-of s_ pat) true false)))
 
 ;;; $decodeUrl
 (defn $decodeUrl
@@ -409,7 +457,7 @@
        (try
          (reset-env context)
          (let [res (eval form)]
-           (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
+           (if (and (fn? res) (core/= :bi/primary (-> res meta :bi/step-type)))
              (jflatten (res))
              (jflatten res)))
          (catch Exception e
@@ -446,25 +494,43 @@
 ;;; $match
 ;;; ToDo: If in conforming JSONata null groups is not removed from the result,
 ;;;       it may be necessary to mark this with special metadata {:bi/regex-result true}.
-
-;;; ToDo: Go back and find the old defn*
 (defn $match
-  "Return a JSONata-like map for the result of regex mapping.
-   Pattern is a Clojure regex."
-  ([pattern] ($match @$ pattern))
-  ([s_ pattern]
-   (letfn [(match-aux [s]
-             (let [result (re-find pattern s)]
-               (cond (string? result) {"match" result
-                                       "index" (index-of s result)
-                                       "groups" []}
-                     (vector? result)
-                     (let [[success & groups] result]
-                       {"match" success
-                        "index" (index-of s success)
-                        "groups" (vec groups)}))))]
-     ;; ToDo: I think this should be the pattern of every defn* ???
-     (if (vector? s_) (mapv match-aux s_) (match-aux s_)))))
+  "Applies the str string to the pattern regular expression and returns an array of objects, 
+   with each object containing information about each occurrence of a match withing str.
+   The object contains the following fields:
+      * match - the substring that was matched by the regex.
+      * index - the offset (starting at zero) within str of this match.
+      * groups - if the regex contains capturing groups (parentheses), this contains an 
+                array of strings representing each captured group.
+   If str is not specified, then the context value is used as the value of str.
+   It is an error if str is not a string."
+  ([pattern] ($match @$ pattern :unlimited))
+  ([p1 p2] (if (util/regex? p1) ($match @$ p1 p2) ($match p1 p2 :unlimited)))
+  ([str pattern limit]
+   (s/assert ::string str)
+   (s/assert ::regex pattern)
+   (s/assert ::pos-limit limit)
+   (let [matcher (re-matcher pattern str)]
+     (loop [res []
+            adv 0
+            lim limit]
+       (let [[match & groups] (re-find matcher)]
+         (cond (and (number? limit) (zero? lim)) res
+               (empty? match) res
+               :else
+               (let [ix (core/+ adv (or (index-of (subs str adv) match) 0))]
+                 (recur
+                  (conj res {"match" match, "index" ix, "groups" (vec groups)})
+                  (core/+ adv (count match))
+                  (if (number? lim) (dec lim) lim)))))))))
+  
+(defn$ match-regex
+  "Return the match object (map with bi/regex-result? true) for 
+   This is similar to $match only in as far as they both do matching on a regular expressions;
+   the map returned is different, and it does not use clojure.string/re-find."
+  [s_])
+
+
 
 ;;; $pad
 (defn $pad
@@ -484,7 +550,7 @@
          awidth (abs width)]
      (if (>= len awidth)
        s
-       (let [extra (->> (repeat (- awidth len) char) (apply str))]
+       (let [extra (->> (repeat (core/- awidth len) char) (apply str))]
          (if (pos? width)
            (str s extra)
            (str extra s)))))))
@@ -526,7 +592,7 @@
            (let [repl (str/replace replacement "$$" "\\$")]
              (reduce (fn [res _i] (str/replace-first res pattern repl))
                      s
-                     (if (= :unlimited lim) (-> s count range) (range lim)))),
+                     (if (core/= :unlimited lim) (-> s count range) (range lim)))),
            (fn? replacement)
            (reduce (fn [res _i]
                      (try (let [repl (-> ($match res pattern) replacement)]
@@ -534,7 +600,7 @@
                           ;; ToDo: Need a better way! See last test of $replace in builtins_test.clj
                           (catch Exception _e res)))
                    s
-                   (if (= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
+                   (if (core/= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
            :else (throw (ex-info "Replacement pattern must be a string or function."
                                  {:replacement replacement}))))))
 
@@ -561,7 +627,7 @@
    (s/assert ::pos-limit limit)
    (let [lim (if (number? limit) (-> limit Math/floor int) limit)
          regex (if (string? separator) (re-pattern separator) separator)]
-     (if (= lim :unlimited)
+     (if (core/= lim :unlimited)
        (str/split s regex)
        (-> (str/split s regex) (subvec 0 lim))))))
 
@@ -588,9 +654,9 @@
     (s/assert ::pos-limit length)
     (let [len (count str)
           res (if (neg? start)
-                (subs str (+ len start))
+                (subs str (core/+ len start))
                 (subs str start))]
-      (if (or (= :unlimited length) (> length len))
+      (if (or (core/= :unlimited length) (> length len))
         res
         (subs res 0 length)))))
 
@@ -845,7 +911,7 @@
                (MathContext.
                 (if (zero? precision)
                   (count left)
-                  (+ (count left) precision))
+                  (core/+ (count left) precision))
                 RoundingMode/HALF_EVEN))]
      (if (pos? precision) (double rnum) (long rnum)))))
 
@@ -902,7 +968,7 @@
   "Returns Boolean true if the arg expression evaluates to a value, or false if the expression
    does not match anything (e.g. a path to a non-existent field reference)."
   [arg]
-  (-> arg $eval $boolean))
+  ($boolean arg))
 
 ;;; $not
 (defn $not
@@ -924,23 +990,25 @@
    but rather a value of another JSON type, then the parameter is treated as a singleton array
    containing that value, and this function returns 1.
    If array is not specified, then the context value is used as the value of array."
-  [arr]
-  (if (vector? arr) (count arr) 1))
+  ([] ($count @$))
+  ([arr]
+   (if (vector? arr) (count arr) 1)))
 
 ;;; $distinct
 (defn $distinct
   "Returns an array containing all the values from the array parameter, but with any duplicates removed.
    Values are tested for deep equality as if by using the equality operator."
-  [arr]
-  (s/assert ::vector arr)
-  (distinct arr))
+  ([] ($distinct @$))
+  ([arr]
+   (s/assert ::vector arr)
+   (distinct arr)))
 
 ;;; $reverse
-(defn $reverse
+(defn$ $reverse
   "Returns an array containing all the values from the array parameter, but in reverse order."
-  [arr]
-  (s/assert ::vector arr)
-  (reverse arr))
+  [arr_]
+  (s/assert ::vector arr_)
+  (-> arr_ reverse vec))
 
 ;;; $shuffle
 (defn $shuffle
@@ -948,10 +1016,12 @@
   [arr]
   (s/assert ::vector arr)
   (loop [res []
+         size (count arr)
          rem arr]
     (if (empty? rem) res
-        (let [ix (-> rem count rand-int)]
+        (let [ix (rand-int size)]
           (recur (conj res (nth rem ix))
+                 (dec size)
                  (let [[f b] (split-at ix rem)]
                    (into f (rest b))))))))
 
@@ -973,6 +1043,10 @@
 
 ;;; $zip
 (defn $zip
+  "Returns a convolved (zipped) array containing grouped arrays of values from the array1 ... arrayN
+   arguments from index 0, 1, 2, etc.
+   This function accepts a variable number of arguments. The length of the returned array is equal to
+   the length of the shortest array in the arguments."
   [& arrays]
   (s/assert ::vectors arrays)
   (let [size (->> arrays (map count) (apply min))]
@@ -987,21 +1061,205 @@
                  (inc ix))))))
 
 ;;;---------------- JSON Object ------
-;;; $type
-;;; $lookup
-;;; $merge
 ;;; $assert
-;;; $sift (listed under higher-order too)
-;;; $error
+(defn $assert
+  "If condition is true, the function returns undefined.
+   If the condition is false, an exception is thrown with the message as the message of the exception."
+  [exp msg]
+  (when exp msg))
+
 ;;; $each
+(defn $each
+  "Returns an array containing the values return by the function when applied to each key/value pair in the object.
+   The function parameter will get invoked with two arguments:
+   function(value, name)
+   where the value parameter is the value of each name/value pair in the object and name is its name.
+   The name parameter is optional."
+  [obj func]
+  (s/assert ::map obj)
+  (s/assert ::fn func)
+  (if (== 2 (-> func meta :bi/params count))
+    (reduce-kv (fn [r  k v] (conj r (func v k))) [] obj)
+    (reduce-kv (fn [r _k v] (conj r (func v  ))) [] obj)))
+
+;;; $error
+(defn $error
+  "Deliberately throws an error with an optional message"
+  [msg]
+  (s/assert ::string msg)
+  (throw (ex-info msg {})))
+
 ;;; $keys
+(defn $keys
+  "Returns an array containing the keys in the object.
+   If the argument is an array of objects, then the array returned contains a
+   de-duplicated list of all the keys in all of the objects."
+  [obj] ; ToDo (use s/assert?)
+  (cond (map? obj) (-> obj keys vec)
+        (vector? obj) (->> obj (map keys) distinct)
+        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj}))))
+
+;;; $lookup
+(defn $lookup
+  "Returns the value associated with key in object.
+   If the first argument is an array of objects, then all of the objects in the array are searched,
+   and the values associated with all occurrences of key are returned."
+  [obj k]
+  (cond (map? obj) (get obj k)
+        (vector? obj) (mapv #(get % k) obj)
+        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj}))))
+
+;;; $merge
+(defn $merge
+  "Merges an array of objects into a single object containing all the key/value pairs from each
+   of the objects in the input array. If any of the input objects contain the same key, then the
+   returned object will contain the value of the last one in the array.
+   It is an error if the input array contains an item that is not an object."
+  [objs]
+  (s/assert ::objects objs)
+  (merge objs))
+
+;;; $sift (listed under higher-order too)
+(defn $sift
+  "Returns an object that contains only the key/value pairs from the object parameter that satisfy
+   the predicate function passed in as the second parameter.
+   If object is not specified, then the context value is used as the value of object.
+   It is an error if object is not an object.
+   The function that is supplied as the second parameter must have the following signature:
+   function(value [, key [, object]])
+   Each value in the input object is passed in as the first parameter in the supplied function.
+   The key (property name) of that value in the input object is passed in as the second parameter, if specified.
+   The whole input object is passed in as the third parameter, if specified."
+  ([func] ($sift @$ func))
+  ([obj func]
+   (s/assert ::object obj)
+   (s/assert ::fn func)
+   (let [nargs (-> func meta :bi/params count)]
+     (cond (== nargs 1) (reduce-kv (fn [m k v] (if (func v      ) (assoc m k v) m)) {} obj) 
+           (== nargs 2) (reduce-kv (fn [m k v] (if (func v k    ) (assoc m k v) m)) {} obj) 
+           (== nargs 3) (reduce-kv (fn [m k v] (if (func v k obj) (assoc m k v) m)) {} obj) 
+           :else (throw (ex-info "The function provided to $sift must specify 1 to 3 arguments."
+                                 {:arg-count nargs}))))))
+
 ;;; $spread
+(defn $spread
+  "Splits an object containing key/value pairs into an array of objects,
+   each of which has a single key/value pair from the input object.
+   If the parameter is an array of objects, then the resultant array contains an object
+   for every key/value pair in every object in the supplied array."
+  [obj]
+  (when-not (or (map? obj)
+                (and (vector? obj) (every? map? obj)))
+    (throw (ex-info "The argument to $spread must be an object or array of objects."
+                              {:arg obj})))
+  (if (map? obj)
+                                (reduce-kv (fn [r k v] (conj r {k v})) [] obj)
+      (reduce (fn [r o] (into r (reduce-kv (fn [r k v] (conj r {k v})) []  o)))
+              []
+              obj)))
+
+;;; $type
+(defn $type
+  "Evaluates the type of value and returns one of the following strings:
+   'null', 'number', 'string', 'boolean', 'array', 'object', 'function'.
+   Returns (non-string) undefined when value is undefined."
+  [arg]
+  (cond (nil? arg) "null"
+        (number? arg) "number"
+        (string? arg) "string"
+        (boolean? arg) "boolean"
+        (vector? arg) "array"
+        (map? arg) "object"
+        (fn? arg) "function"))
 
 ;;;------------- DateTime -----------
-;;; $fromMillis
-;;; $millis,
-;;; $now
+;;; https://www.w3.org/TR/xpath-functions-31/#rules-for-datetime-formatting, 9.8.4.1 The picture string
+;;; Perhaps also https://www.baeldung.com/java-xpath
+;;; (date-fmt-xpath2java "[M01]/[D01]/[Y0001] [h#1]:[m01][P]")
+(defn date-fmt-xpath2java
+  "Return a string iterpreting an xpath picture to the equivalent string for
+   for java.time.format.DateTimeFormatter.
+
+   The picture consists of a sequence of variable markers and literal substrings.
+   A substring enclosed in square brackets is interpreted as a variable marker;
+   substrings not enclosed in square brackets are taken as literal substrings.
+   The literal substrings are optional and if present are rendered unchanged, including any whitespace.
+   If an opening or closing square bracket is required within a literal substring, it must be doubled.
+   The variable markers are replaced in the result by strings representing aspects of the date
+   and/or time to be formatted."
+  [pic tzone]
+  (reduce (fn [r]
+            (re-matches #"([^\[]*)(\[[YMDdFWwHhPmsfZzCE0-9#]+\]).*" "[M01]/[D01]/[Y0001] [h#1]:[m01][P]"))
+          :nyi
+          nil))  
+
+(defn format-time
+  "Format a timestamp according to a picture specified by XPath."
+  [tstamp pic tzone]
+  (if pic
+    (let [fmt-string (date-fmt-xpath2java pic tzone)
+          dtf (java.time.format.DateTimeFormatter/ofPattern fmt-string)]
+      (.format tstamp dtf))
+    (str tstamp)))
+
+;;;   (Classname/staticMethod args*) ==> (. Classname staticMethod args*)
+;;;   (. Instant .ofEpochMilli 1660078918296)
+;;;   Long m = 1660078918296
+;;;   Instant instant = Instant.ofEpochMilli(m);
+;;;   LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault())
+;;;
+;;; $fromMillis - DOING: Convert millis to a LocalDateTime <----------------
+(defn $fromMillis
+  "Convert the number representing milliseconds since the Unix Epoch (1 January, 1970 UTC) to a formatted
+   string representation of the timestamp as specified by the picture string.
+   If the optional picture parameter is omitted, then the timestamp is formatted in the ISO 8601 format.
+   If the optional picture string is supplied, then the timestamp is formatted occording to the representation
+   specified in that string. The behaviour of this function is consistent with the two-argument version of
+   the XPath/XQuery function fn:format-dateTime as defined in the XPath F&O 3.1 specification.
+   The picture string parameter defines how the timestamp is formatted and has the same syntax as fn:format-dateTime.
+
+   If the optional timezone string is supplied, then the formatted timestamp will be in that timezone.
+   The timezone string should be in the format '±HHMM', where ± is either the plus or minus sign and
+   HHMM is the offset in hours and minutes from UTC. Positive offset for timezones east of UTC,
+   negative offset for timezones west of UTC."
+  ([millis] ($fromMillis millis nil nil))
+  ([millis pic] ($fromMillis millis pic nil))
+  ([millis pic tzone]
+   (let [tstamp (Instant/ofEpochMilli (long millis))]
+     (format-time tstamp pic tzone))))
+
+;;; ToDo: What does this mean?:
+;;;   "All invocations of $millis() within an evaluation of an expression will all return the same timestamp value."
+;;;    It says the same thing on $now().
+;;; $millis, - DONE
+(defn $millis
+  "Returns the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
+   All invocations of $millis() within an evaluation of an expression will all return the same value."
+  []
+  (.toEpochMilli (.toInstant (ZonedDateTime/now)))) ; Local doesn't work here.
+
+;;; $now - DONE
+(defn $now
+  "Generates a UTC timestamp in ISO 8601 compatible format and returns it as a string.
+   All invocations of $now() within an evaluation of an expression will all return the same timestamp value.
+   If the optional picture and timezone parameters are supplied, then the current timestamp is formatted
+   as described by the $fromMillis() function."
+  ([] (java.time.LocalDateTime/now)) ; Prints as e.g. "2022-08-09T14:01:25.849575"
+  ([pic] ($now pic nil))
+  ([pic tzone]
+   (format-time (LocalDateTime/now) pic tzone)))
+
 ;;; $toMillis
+(defn $toMillis
+  "Signature: $toMillis(timestamp [, picture])
+   Convert a timestamp string to the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
+   If the optional picture string is not specified, then the format of the timestamp is assumed to be ISO 8601.
+   An error is thrown if the string is not in the correct format.
+   If the picture string is specified, then the format is assumed to be described by this picture string using
+   the same syntax as the XPath/XQuery function fn:format-dateTime, defined in the XPath F&O 3.1 specification."
+  ([str] ($toMillis str nil))
+  ([str pic]
+   (if (not pic) :nyi :nyi)))
 
 ;;;-------------- Higher (the higher not yet defined)
 ;;; $filter
@@ -1069,7 +1327,7 @@
   "This is for reducing with an enforce function, where metadata on the
    function directs various behaviors such as whether results are returned
    or a database is updated."
-  [coll func init] ; ToDo: Collection could be a DB (e.g. from $MCgetSource()).
+  [coll func init] ; ToDo: Collection could be a DB (e.g. from $getSource()).
   (let [result (->> (loop [c coll,
                            r init]
                       (if (empty? c) r (recur (rest c), (conj r (func (first c))))))
@@ -1299,7 +1557,7 @@
 
    Example usage (of the second sort):
 
-  ( $data := $MCnewContext() ~> $MCaddSource($readFile('data/testing/owl-example.edn'));
+  ( $data := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'));
     $q := query($type){[?class :rdf/type            $type]
                        [?class :resource/iri        ?class-iri]
                        [?class :resource/namespace  ?class-ns]
@@ -1339,39 +1597,39 @@
   (get bs k))
 
 ;;; ToDo: Theses are always an atom, right?
-(defn $MCnewContext
+(defn $newContext
   "Create a new modeling context object."
   []
   (atom {:schemas {} :sources {} :targets {}}))
 
-(defn $MCaddSource
+(defn $addSource
   "Add source data to the argument modeling context.
    If no name is provided for the source, a new one is created.
    Default names follow in the series 'source-data-1', 'source-data-2'...
    If the source already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddSource mc data (str "source-data-" (-> mc deref :sources count inc))))
+  ([mc data] ($addSource mc data (str "source-data-" (-> mc deref :sources count inc))))
   ([mc data src-name]
    (if (-> mc deref :sources (contains? src-name))
      (swap! mc #(update-in % [:sources src-name] (update-db (-> mc deref :sources (get src-name)) data)))
      (swap! mc #(assoc-in  % [:sources src-name] (qu/db-for! data))))))
 
 ;;; ToDo: Currently this just does what $MDaddSource does.
-(defn $MCaddTarget
+(defn $addTarget
   "Add target data to the argument modeling context.
    This is used, for example, for in-place updating.
    If no name is provided for the target, a new one is created.
    Default names used when not provided follow in the series 'target-data-1', 'target-data-2'...
    If the target already exists, the data is added, possibly updating the schema."
-  ([mc data] ($MCaddTarget mc data (->> mc :targets keys (util/default-name "data-targets-"))))
+  ([mc data] ($addTarget mc data (->> mc :targets keys (util/default-name "data-targets-"))))
   ([mc data src-name]
    (if (-> mc :targets (contains? src-name))
      (update-in mc [:targets src-name] #(update-db % data))
      (assoc-in  mc [:targets src-name] (qu/db-for! data)))))
 
-(defn $MCgetSource [mc name] (-> mc :sources (get name)))
-(defn $MCgetTarget [mc name] (-> mc :targets (get name)))
+(defn $getSource [mc name] (-> mc :sources (get name)))
+(defn $getTarget [mc name] (-> mc :targets (get name)))
 
-(defn $MCaddSchema
+(defn $addSchema
   "Add knowledge of schema to an existing DB.
    This can be a computational expensive operation when the DB is large."
   [mc schema-data db-name]

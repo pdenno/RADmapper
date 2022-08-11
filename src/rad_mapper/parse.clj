@@ -53,8 +53,8 @@
 
 ;;; Non-JSONata functions
 (def file-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet})
-(def mc-fns   '{"$MCaddSchema" bi/$MCaddSchema, "$MCaddSource" bi/$MCaddSource, "$MCaddTarget" bi/$MCaddTarget,
-                "$MCgetSource" bi/$MCgetSource, "$MCgetTarget" bi/$MCgetTarget, "$MCnewContext" $MCnewContext})
+(def mc-fns   '{"$addSchema" bi/$addSchema, "$addSource" bi/$addSource, "$addTarget" bi/$addTarget,
+                "$getSource" bi/$getSource, "$getTarget" bi/$getTarget, "$newContext" $newContext})
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns mc-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" "$"]) set))
@@ -81,47 +81,26 @@
 (defrecord JaField [field-name]) ; Used for fields (e.g. the a in $.a, and function params
 (defrecord JaTripleRole [role-name])
 (defrecord JaEOLcomment [text])
-
-;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
-;;; https://www.codeguage.com/courses/regexp/flags
-;;; Flags - i = (ignore case) Makes the expression search case-insensitively.
-;;;         m = (multiline) Makes the boundary characters ^ and $ match the beginning and ending of every single line.
-;;;         u = (unicode) enable unicode matching
-;;;         g = (global)  match all occurrences
-;;;         s = (dot all) makes the wild character . match newlines as well.
-;;;         y = (sticky) Makes the expression start its searching from the index indicated in its lastIndex property.
-(defn make-regex
-  [base flags]
-  (when (or (:sticky? flags) (:global? flags))
-    (throw (ex-info "Regex currently does not support sticky or global flags."
-                    {:base base :flags flags})))
-  (let [flag-str (cond-> ""
-                   (:ignore-case? flags)   (str "i")
-                   (:multi-line? flags)    (str "m")
-                   (:unicode? flags)       (str "u")
-                   (:dot-all? flags)       (str "s"))]
-    (if (empty? flag-str)
-      (re-pattern base)
-      (re-pattern (cl-format nil "(?~A)~A" flag-str base)))))
+(defrecord JaRegExp [base flags])
 
 (defn regex-from-string
-  "Argument starts a JS-like regex.
-   Return a map containing the regex :tkn (java.util.regex.Pattern) and the :raw text"
+  "Returns a map for :raw and :tkn, where :tkn is a JaRegExp if it is possible to parse
+   the string as starting a regular expression. Otherwise returns nil."
   [st]
   (assert (str/starts-with? st "/"))
   (let [in-len (count st)
         base (loop [cnt 1
-                   in (subs st 1)
-                   done? false
-                   out "/"]
-              (cond done? out
-                    (> cnt in-len) (throw (ex-info "Expected regex terminating /" {:string st}))
-                    :else (recur (inc cnt)
-                                 (if (str/starts-with? in "\\") (subs in 2) (subs in 1))
-                                 (str/starts-with? in "/")
-                                 (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))
-        flags (or (-> (re-matches #"(?sm)([i,m,u,g,s,y]{1,6}).*" (subs st (count base))) second) "")
-        flag-map (cond-> {} ; ToDo: This is much to do about nothing. (Likewise in make-regex.)
+                    in (subs st 1)
+                    done? false
+                    out "/"]
+               (cond done? out
+                     (> cnt in-len) nil
+                     :else (recur (inc cnt)
+                                  (if (str/starts-with? in "\\") (subs in 2) (subs in 1))
+                                  (str/starts-with? in "/")
+                                  (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))
+        flags (or (-> (re-matches #"(?sm)([imugsy]{1,6}).*" (subs st (count base))) second) "")
+        flag-map (cond-> {}
                    (index-of flags \i) (assoc :ignore-case? true)
                    (index-of flags \m) (assoc :multi-line? true)
                    (index-of flags \u) (assoc :unicode? true)
@@ -129,14 +108,14 @@
                    (index-of flags \s) (assoc :dot-all? true)
                    (index-of flags \y) (assoc :sticky? true))]
     {:raw (str base flags)
-     :tkn (make-regex (subs base 1 (-> base count dec)) flag-map)}))
+     :tkn (->JaRegExp base flag-map)}))
 
 (defn regex-or-divide
   "Return as :tkn either a Clojure regex or a /. Uses a heuristic,
    specifically does a closing '/' come before a space."
   [st]
-  (try (regex-from-string st)
-       (catch Exception _e {:raw "/" :tkn \/})))
+  (or (regex-from-string st)
+      {:raw "/" :tkn \/}))
 
 (defn single-quoted-string
   "Return a token map for a single-quoted string. Note that for double-quoted strings,
@@ -581,11 +560,12 @@
 (defn qvar? [x] (instance? JaQvar x))
 (defn triple-role? [x] (instance? JaTripleRole x))
 (defn field? [x] (instance? JaField x))
+(defn regexp? [x] (instance? JaRegExp x)) 
 (defn literal? [tkn]
   (or (string? tkn)
       (number? tkn)
       (#{:true :false} tkn)
-      (= java.util.regex.Pattern (type tkn))))
+      (regexp? tkn)))
 
 (s/def ::ps  (s/keys :req-un [::tokens ::head]))
 (s/def ::tokens (s/and vector? (s/coll-of ::token)))

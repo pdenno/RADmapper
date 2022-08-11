@@ -2,7 +2,6 @@
   "Test built-in functions"
   (:require
    [rad-mapper.builtins :as bi]
-   [rad-mapper.parse    :as par]
    [rad-mapper.rewrite  :as rew]
    [rad-mapper.devl.devl-util :refer [nicer]]
    [clojure.test :refer  [deftest is testing]]))
@@ -95,6 +94,16 @@
     (testing "$(lower|upper)case"
       (run-test "$lowercase('Hello World')" "hello world")
       (run-test "$uppercase('Hello World')" "HELLO WORLD"))
+
+    (testing "$match"
+      (run-test "$match('ababbabbcc',/a(b+)/)"
+                [{"match" "ab" , "index" 0, "groups" ["b"]}
+                 {"match" "abb", "index" 2, "groups" ["bb"]}
+                 {"match" "abb", "index" 5, "groups" ["bb" ]}])
+      (run-test "$match('ababbxxxxabbcc',/a(b+)/)"
+                [{"match" "ab" , "index" 0, "groups" ["b"]}
+                 {"match" "abb", "index" 2, "groups" ["bb"]}
+                 {"match" "abb", "index" 9, "groups" ["bb" ]}]))
 
     (testing "$pad"
       (run-test "$pad('foo',  5)" "foo  ")
@@ -211,8 +220,8 @@
       (run-test "$boolean([1])" true))
 
     (testing "$exists, which I'm not sure I understand."
-      (run-test "$exists('{\"a\" : 1}.a')" true)
-      (run-test "$exists('{\"a\" : 1}.b')" false))))
+      (run-test "$exists({\"a\" : 1}.a)" true)
+      (run-test "$exists({\"a\" : 1}.b)" false))))
 
 (deftest array-fns
   (testing "array functions"
@@ -227,3 +236,31 @@
     (run-test "$sort(['x' 'a' 'c' 'b'])" ["a" "b" "c" "x"])
     (run-test "$zip([1,2,3], [4,5,6])"  [[1,4] ,[2,5], [3,6]])
     (run-test "$zip([1,2,3],[4,5],[7,8,9])" [[1,4,7], [2,5,8]])))
+
+(deftest object-fns
+  (testing "object functions"
+    #_(run-test "$each(Address, function($v, $k) {$k & ' ' & $v})"
+              ["Street: Hursley Park", "City: Winchester", "Postcode: SO21 2JN"])
+
+    (run-test "$keys({'a' : 1, 'b' :2})" ["a" "b"])
+
+    (run-test "($ := $readFile('data/testing/jsonata/try.json');
+                Account.Order.Product.$sift(function($v, $k) {$k ~> /^Product/}) )"
+              [{"Product Name" "Bowler Hat", "ProductID" 858383}
+               {"Product Name" "Trilby hat", "ProductID" 858236}
+               {"Product Name" "Bowler Hat", "ProductID" 858383}
+               {"Product Name" "Cloak"     , "ProductID" 345664}])
+
+    (run-test "$spread({'a' : 1, 'b' : 2})" [{'a' 1} {'b' 2}])
+    (run-test "$spread([{'a' : 1, 'b' : 2},{'a' : 1, 'b' : 2}])"
+              [{'a' 1} {'b' 2} {'a' 1} {'b' 2}])))
+
+(deftest date-fns
+  (testing "datetime functions"
+    (testing "$fromMillis"
+      (run-test "$fromMillis(1510067557121)" "2017-11-07T15:12:37.121Z")
+      (run-test "$fromMillis(1510067557121, '[M01]/[D01]/[Y0001] [h#1]:[m01][P]')"
+                "11/07/2017 3:12pm")
+      (run-test "$fromMillis(1510067557121, '[H01]:[m01]:[s01] [z]', '-0500')"
+                "10:12:37 GMT-05:00"))))
+ 

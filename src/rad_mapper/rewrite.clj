@@ -110,7 +110,7 @@
         (= obj true)                true
         (= obj false)               false
         (nil? obj)                  obj                    ; for optional things like (-> m :where rewrite)
-        (= java.util.regex.Pattern (type obj)) obj
+        #_#_(= java.util.regex.Pattern (type obj)) obj
         :else
         (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
 
@@ -168,6 +168,39 @@
     `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
     (-> m :qvar-name symbol)))
 
+;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
+;;; https://www.codeguage.com/courses/regexp/flags
+;;; Flags - i = (ignore case) Makes the expression search case-insensitively.
+;;;         m = (multiline) Makes the boundary characters ^ and $ match the beginning and ending of every single line.
+;;;         u = (unicode) enable unicode matching
+;;;         g = (global)  match all occurrences
+;;;         s = (dot all) makes the wild character . match newlines as well.
+;;;         y = (sticky) Makes the expression start its searching from the index indicated in its lastIndex property.
+;;; 
+;;; https://www.w3schools.com/js/js_regexp.asp
+(defn make-regex
+  "Return a equivalent JS-like regular expression for the argument string and flags.
+   These search the string for the pattern; they ignore characters outside of the
+   pattern. For example, /e/.test('The best things in life are free!') ==> returns true.
+   Thus it is like #'.*(pattern).*'."
+  [base flags & {:keys [for-matcher?]}]
+  (when (or (:sticky? flags) (:global? flags))
+    (throw (ex-info "Regex currently does not support sticky or global flags."
+                    {:base base :flags flags})))
+  (let [body (subs base 1 (-> base count dec)) ; /pattern/ -> pattern
+        flag-str (cond-> ""
+                   (:ignore-case? flags)   (str "i")
+                   (:multi-line? flags)    (str "m")
+                   (:unicode? flags)       (str "u")
+                   (:dot-all? flags)       (str "s"))]
+    (if for-matcher?
+      (if (empty? flag-str)
+        (re-pattern (cl-format nil "~A" body))
+        (re-pattern (cl-format nil "(?~A)~A" flag-str body)))
+      (if (empty? flag-str)
+        (re-pattern (cl-format nil ".*(~A).*" body))
+        (re-pattern (cl-format nil "(?~A).*(~A).*" flag-str body))))))
+
 (defrewrite :JaObjExp [m]
   `(-> {}
     ~@(map rewrite (:exp m))))
@@ -175,12 +208,23 @@
 (defrewrite :JaKVPair [m]
   `(assoc ~(:key m) ~(rewrite (:val m))))
 
+(def ^:dynamic in-$match?
+  "While rewriting $match, or $split regular expressions rewritten as the
+   clojure regex, not a function, as used in 'str' ~> /pattern/."
+  false)
+
 (defrewrite :JaFnCall [m]
-  (let [fname (-> m :fn-name)
-        args (rewrite (:args m))]
-    (if (par/builtin-fns fname)
-      `(~(symbol "bi" fname) ~@args)
-      `(~(symbol fname) ~@args))))
+  (let [fname (-> m :fn-name)]
+    (if (par/builtin-fns fname) ; ToDo: Invert the following!
+      (binding [in-$match? (#{"$match" "$split" "$contains" "$replace"} fname)]
+        `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
+      `(~(symbol fname) ~@(-> m :args rewrite)))))
+
+(defrewrite :JaRegExp [m]
+    (if in-$match?
+      (make-regex (:base m) (:flags m) :for-matcher? true)
+      (let [s (dgensym!)]
+        `(fn [~s] (bi/match-regex ~s ~(make-regex (:base m) (:flags m)))))))
 
 (defrewrite :JaUniOpExp [m]
   `(~(-> m :uni-op str symbol)

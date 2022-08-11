@@ -14,7 +14,7 @@
    If the sexp has unresolvable symbols, catch them and return :unresolved-symbol."
   [form & {:keys [verbose? check-asserts?] :or {check-asserts? true}}]
   (when verbose? (println "eval form: " form))
-  (s/check-asserts check-asserts?)
+  (s/check-asserts false #_check-asserts?) ; <===================
   (binding [*ns* (find-ns 'user)]
     (try
       (bi/reset-env)
@@ -23,4 +23,4 @@
            (bi/jflatten (res))
            (bi/jflatten res)))
       (catch Exception e
-        (log/error "\nError evaluating form:" e "\nform:" form)))))
+        (log/error "\nError evaluating form:" (-> e .getMessage str) "\nform:" form)))))
