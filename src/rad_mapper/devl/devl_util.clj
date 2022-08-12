@@ -24,7 +24,7 @@
   "Show macroexpand-1 printed sans package names.
    Argument is a quoted form"
   [form & {:keys [pprint?] :or {pprint? true}}]
-        (cond-> (-> form macroexpand-1 clean-form)
+        (cond-> (-> form #_macroexpand-1 clean-form)
           pprint? pprint))
 
 (defn nicer-sym

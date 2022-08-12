@@ -165,7 +165,8 @@
                 {"match" "xababy", "index" 6, "groups" ["ab"]}))
 
     (testing "'immediate use' of a function"
-      (run-test  "function($x){$x+1}(3)" 4))
+      (run-test  "function($x){$x+1}(3)" 4) ; This one is true 'immediate use'.
+      (run-test  "4 ~> function($x){$x+1}()" 5))
 
     (testing "another sort of immediate use, using the threading macro"
       (run-test  "4 ~> function($x){$x+1}()" 5))
@@ -200,7 +201,7 @@
     (testing "filter 'delimited expressions."
       (run-test "($p := [{'Phone' : {'type' : 'mobile', 'num' : '555-123-4567'}},
                          {'Phone' : {'type' : 'work',   'num' : 'XXX-123-4567'}},
-                         {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}];
+                         {'Phone' : {'type' : 'mobile', 'num' : '555-333-4444'}}]; /* I'm commenting! */
                   $p.Phone[type = 'mobile'] )"
                 [{"type" "mobile", "num" "555-123-4567"} {"type" "mobile", "num" "555-333-4444"}]))
 

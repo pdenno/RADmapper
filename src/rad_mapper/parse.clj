@@ -80,12 +80,14 @@
 (defrecord JaQvar [qvar-name])
 (defrecord JaField [field-name]) ; Used for fields (e.g. the a in $.a, and function params
 (defrecord JaTripleRole [role-name])
-(defrecord JaEOLcomment [text])
+(defrecord JaComment [text])
 (defrecord JaRegExp [base flags])
+(def new-line "Platform's newline as a string" (with-out-str (newline)))
 
 (defn regex-from-string
   "Returns a map for :raw and :tkn, where :tkn is a JaRegExp if it is possible to parse
-   the string as starting a regular expression. Otherwise returns nil."
+   the string as starting a regular expression. Otherwise returns nil.
+   Uses heuristics."
   [st]
   (assert (str/starts-with? st "/"))
   (let [in-len (count st)
@@ -95,24 +97,26 @@
                     out "/"]
                (cond done? out
                      (> cnt in-len) nil
+                     (empty? in) nil
                      :else (recur (inc cnt)
                                   (if (str/starts-with? in "\\") (subs in 2) (subs in 1))
                                   (str/starts-with? in "/")
-                                  (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))
-        flags (or (-> (re-matches #"(?sm)([imugsy]{1,6}).*" (subs st (count base))) second) "")
-        flag-map (cond-> {}
-                   (index-of flags \i) (assoc :ignore-case? true)
-                   (index-of flags \m) (assoc :multi-line? true)
-                   (index-of flags \u) (assoc :unicode? true)
-                   (index-of flags \g) (assoc :global? true)
-                   (index-of flags \s) (assoc :dot-all? true)
-                   (index-of flags \y) (assoc :sticky? true))]
-    {:raw (str base flags)
-     :tkn (->JaRegExp base flag-map)}))
+                                  (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))]
+    (when (and base (not (index-of base new-line)))
+      (let [flags (or (-> (re-matches #"(?sm)([i,m,u,g,s,y]{1,6}).*" (subs st (count base))) second) "")
+            flag-map (cond-> {}
+                       (index-of flags \i) (assoc :ignore-case? true)
+                       (index-of flags \m) (assoc :multi-line? true)
+                       (index-of flags \u) (assoc :unicode? true)
+                       (index-of flags \g) (assoc :global? true)
+                       (index-of flags \s) (assoc :dot-all? true)
+                       (index-of flags \y) (assoc :sticky? true))]
+        {:raw (str base flags)
+         :tkn (->JaRegExp base flag-map)}))))
 
 (defn regex-or-divide
-  "Return as :tkn either a Clojure regex or a /. Uses a heuristic,
-   specifically does a closing '/' come before a space."
+  "Return as :tkn either an JaRegExp or a /.
+   Uses heuristics to guess whether it is a regex."
   [st]
   (or (regex-from-string st)
       {:raw "/" :tkn \/}))
@@ -161,9 +165,9 @@
   (let [len (count st)
         c0  (nth st 0)
         c1  (and (> len 1) (nth st 1))]
-    (when-let [result (cond (and (= c0 \/) (= c1 \/)) {:raw "//" :tkn :eol-comment}
-                            (= c0 \/) (regex-or-divide st)
-                            (= c0 \') (single-quoted-string st)
+    (when-let [result (cond (and (= c0 \/) (= c1 \/)) {:raw "//" :tkn :eol-comment},
+                            (= c0 \/) (regex-or-divide st),
+                            (= c0 \') (single-quoted-string st),
                             (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (read-qvar st),
                             (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (read-triple-role st),
                             (and (= c0 \:) (= c1 \=)) {:raw ":=" :tkn :binding},
@@ -218,8 +222,8 @@
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
           (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})                   ; EOF
-               (when-let [[_ cm] (re-matches #"(?s)(\/\/[^\n]*).*" s)]        ; EOL comment
-                 {:ws ws :raw cm :tkn (->JaEOLcomment cm)})
+               (when-let [[_ cm] (re-matches  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*" s)]           ; comment
+                 {:ws ws :raw cm :tkn (->JaComment cm)})
                (and (long-syntactic c) (read-long-syntactic s ws))         ; /regex-pattern/ ++, <=, == etc.
                (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]
                  {:ws ws :raw num :tkn (read-string num)}),                   ; number
@@ -263,7 +267,7 @@
         (if (= ::end-of-block (:tkn lex))
           ?ps
           (recur
-           (if (instance? JaEOLcomment (:tkn lex))
+           (if (instance? JaComment (:tkn lex))
              (update ?ps :comments conj tkn)
              (update ?ps :tokens   conj tkn))
            (+ (-> lex :raw count) col)))))))
@@ -499,14 +503,6 @@
   [filename]
   (parse-string :ptag/primary (-> filename slurp esc-esc)))
 
-(defn parse-ok?
-  "Return true if the string parses okay."
-  [tag text]
-  (as-> (parse-string tag text) ?pstate
-    (and (= ::eof (:head ?pstate))
-         (or (not (contains? (s/registry) tag))
-             (s/valid? tag (:result ?pstate))))))
-
 (defn parse-list
   "Does parse parametrically for <open-char> ( <item> ( <char-sep> <item>)? )? <close-char>"
   ([pstate char-open char-close char-sep]
@@ -560,7 +556,7 @@
 (defn qvar? [x] (instance? JaQvar x))
 (defn triple-role? [x] (instance? JaTripleRole x))
 (defn field? [x] (instance? JaField x))
-(defn regexp? [x] (instance? JaRegExp x)) 
+(defn regexp? [x] (instance? JaRegExp x))
 (defn literal? [tkn]
   (or (string? tkn)
       (number? tkn)

@@ -178,18 +178,18 @@
    doc-string is required."
   [fn-name doc-string [& params] & body]
   (let [param-map (zipmap params (map #(symbol nil (name %)) params))
-	abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
-	abbrv-args (mapv #(if (str/ends-with? (str %) "_") '@$ %) (vals param-map))
-	fn-name (symbol nil (name fn-name))]
+        abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
+        abbrv-args (mapv #(if (str/ends-with? (str %) "_") '@$ %) (vals param-map))
+        fn-name (symbol nil (name fn-name))]
     (letfn [(rewrite [x]
-	      (cond (seq? x)    (map  rewrite x)
-		    (vector? x) (mapv rewrite x)
-		    (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
-		    :else (get param-map x x)))]
+              (cond (seq? x)    (map  rewrite x)
+                    (vector? x) (mapv rewrite x)
+                    (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
+                    :else (get param-map x x)))]
     `(defn ~fn-name ~doc-string
        (~abbrv-params (~fn-name ~@abbrv-args))
        ([~@(vals param-map)]
-	(let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
+        (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
 
 ;;;========================= JSONata built-ins  =========================================
 (defn* +  "plus"   [x y]   (core/+ x y))
@@ -211,27 +211,20 @@
   [x y]
   (core/= (jflatten x) (jflatten y)))
 
-;;; JSONata ~> is like Clojure ->, you supply it with a form having one less argument than needed.
-;;; [6+1, 3] ~> $sum()           ==> 10
-;;; 4 ~> function($x){$x+1}()    ==>  5
-;;; ToDo: Should I have made regular expressions functions?
-#_(defmacro thread "Implements JSONata ~>"
+(defmacro thread
+  "The function chaining operator is used in the situations where multiple nested functions need to
+   be applied to a value, while making it easy to read. The value on the LHS is evaluated,
+   then passed into the function on the RHS as its first argument. If the function has any other arguments,
+   then these are passed to the function in parenthesis as usual. It is an error if the RHS is not a
+   function, or an expression that evaluates to a function."
   [x y]
-  `(-> ~x ~y))
-
-#_(defn thread
-  "Implements JSONata ~>"
-  [x y]
-  (cond (fn? y)                             (y x),
-        (and (util/regex? y) (string? x))   ($match x y),
-        :else (throw (ex-info "Incompatible arguments to ~> threading." {:x x :y y}))))
-
-(defn thread
-  "Implements JSONata ~>"
-  [x y]
-  (s/assert ::fn y)
-  (set-context! x)
-  (y x))
+  `(let [xarg# ~x]
+     (do (set-context! xarg#)
+         (let [yarg# ~y]
+           (if (fn? yarg#)
+             (yarg# xarg#)
+             (throw (ex-info "The RHS argument to the threading operator is not a function"
+                             {:rhs-operator yarg#})))))))
 
 ;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
@@ -492,15 +485,13 @@
   ([s] (s/assert ::string s) (str/lower-case s)))
 
 ;;; $match
-;;; ToDo: If in conforming JSONata null groups is not removed from the result,
-;;;       it may be necessary to mark this with special metadata {:bi/regex-result true}.
 (defn $match
-  "Applies the str string to the pattern regular expression and returns an array of objects, 
+  "Applies the str string to the pattern regular expression and returns an array of objects,
    with each object containing information about each occurrence of a match withing str.
    The object contains the following fields:
       * match - the substring that was matched by the regex.
       * index - the offset (starting at zero) within str of this match.
-      * groups - if the regex contains capturing groups (parentheses), this contains an 
+      * groups - if the regex contains capturing groups (parentheses), this contains an
                 array of strings representing each captured group.
    If str is not specified, then the context value is used as the value of str.
    It is an error if str is not a string."
@@ -510,27 +501,56 @@
    (s/assert ::string str)
    (s/assert ::regex pattern)
    (s/assert ::pos-limit limit)
-   (let [matcher (re-matcher pattern str)]
-     (loop [res []
-            adv 0
-            lim limit]
-       (let [[match & groups] (re-find matcher)]
-         (cond (and (number? limit) (zero? lim)) res
-               (empty? match) res
-               :else
-               (let [ix (core/+ adv (or (index-of (subs str adv) match) 0))]
-                 (recur
-                  (conj res {"match" match, "index" ix, "groups" (vec groups)})
-                  (core/+ adv (count match))
-                  (if (number? lim) (dec lim) lim)))))))))
-  
-(defn$ match-regex
-  "Return the match object (map with bi/regex-result? true) for 
+   (let [matcher (re-matcher pattern str)
+         result (loop [res []
+                       adv 0
+                       lim limit]
+                  (let [m (re-find matcher)
+                        match (if (string? m) m (first m))
+                        groups (if (string? m) [] (-> m rest vec))]
+                    (cond (and (number? limit) (zero? lim)) res
+                          (empty? match) res
+                          :else
+                          (let [ix (core/+ adv (or (index-of (subs str adv) match) 0))]
+                            (recur
+                             (conj res (with-meta {"match" match, "index" ix, "groups" (vec groups)}
+                                         {:bi/regex-result? true}))
+                             (core/+ adv (count match))
+                             (if (number? lim) (dec lim) lim))))))]
+     ;; ToDo: Or should I jflatten (which currently doesn't change things)?
+     (if (and (vector? result) (== 1 (count result)))
+       (first result)
+       result))))
+
+;;; JSONata looks like it uses a matcher:
+;;;       "Product thing" ~> /^Product/
+;;;       Returns
+;;;             {"match": "Product",
+;;;              "start": 0,
+;;;               "end": 7,
+;;;               "groups": [],
+;;;               "next": "<native function>#0"} <===============
+;;;
+;;; So I'm going to do something similar.
+(defn match-regex
+  "Return the match object (map with bi/regex-result? true) for
    This is similar to $match only in as far as they both do matching on a regular expressions;
    the map returned is different, and it does not use clojure.string/re-find."
-  [s_])
-
-
+  ([pattern] (match-regex @$ pattern))
+  ([s pattern]
+   (let [matcher (re-matcher pattern s)
+         m (re-find matcher)
+         match (if (string? m) m (first m))
+         groups (if (string? m) [] (-> m rest vec))]
+     (when match
+       (let [ix (index-of s match)]
+         (with-meta
+           {"match" match
+            "start" ix
+            "end"   (core/+ ix (count match))
+            "groups" groups
+            "next" matcher}
+           {:bi/regex-result? true}))))))
 
 ;;; $pad
 (defn $pad
@@ -1135,9 +1155,9 @@
    (s/assert ::object obj)
    (s/assert ::fn func)
    (let [nargs (-> func meta :bi/params count)]
-     (cond (== nargs 1) (reduce-kv (fn [m k v] (if (func v      ) (assoc m k v) m)) {} obj) 
-           (== nargs 2) (reduce-kv (fn [m k v] (if (func v k    ) (assoc m k v) m)) {} obj) 
-           (== nargs 3) (reduce-kv (fn [m k v] (if (func v k obj) (assoc m k v) m)) {} obj) 
+     (cond (== nargs 1) (reduce-kv (fn [m k v] (if (func v      ) (assoc m k v) m)) {} obj)
+           (== nargs 2) (reduce-kv (fn [m k v] (if (func v k    ) (assoc m k v) m)) {} obj)
+           (== nargs 3) (reduce-kv (fn [m k v] (if (func v k obj) (assoc m k v) m)) {} obj)
            :else (throw (ex-info "The function provided to $sift must specify 1 to 3 arguments."
                                  {:arg-count nargs}))))))
 
@@ -1191,7 +1211,7 @@
   (reduce (fn [r]
             (re-matches #"([^\[]*)(\[[YMDdFWwHhPmsfZzCE0-9#]+\]).*" "[M01]/[D01]/[Y0001] [h#1]:[m01][P]"))
           :nyi
-          nil))  
+          nil))
 
 (defn format-time
   "Format a timestamp according to a picture specified by XPath."

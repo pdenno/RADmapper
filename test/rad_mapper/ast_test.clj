@@ -9,7 +9,10 @@
    [rad-mapper.rewrite     :as rew]
    [rad-mapper.devl.devl-util :refer [#_nicer nicer-sym]]))
 
-"
+(deftest anytest
+  (is (= true true)))
+
+#_"
 (
     $CropClassTable := {'corn'        : 'C',
                         'soybeans'    : 'S',

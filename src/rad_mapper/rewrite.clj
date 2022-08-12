@@ -85,6 +85,7 @@
   (cond (record? m) (-> {:_type (-> m .getClass .getSimpleName keyword)}
                         (into (zipmap (keys m) (map map-simplify (vals m))))
                         remove-nils),
+        (map? m) m,
         (coll? m) (mapv map-simplify m),
         :else m))
 
@@ -176,14 +177,14 @@
 ;;;         g = (global)  match all occurrences
 ;;;         s = (dot all) makes the wild character . match newlines as well.
 ;;;         y = (sticky) Makes the expression start its searching from the index indicated in its lastIndex property.
-;;; 
+;;;
 ;;; https://www.w3schools.com/js/js_regexp.asp
 (defn make-regex
   "Return a equivalent JS-like regular expression for the argument string and flags.
    These search the string for the pattern; they ignore characters outside of the
    pattern. For example, /e/.test('The best things in life are free!') ==> returns true.
    Thus it is like #'.*(pattern).*'."
-  [base flags & {:keys [for-matcher?]}]
+  [base flags & {:keys [regex-param?]}]
   (when (or (:sticky? flags) (:global? flags))
     (throw (ex-info "Regex currently does not support sticky or global flags."
                     {:base base :flags flags})))
@@ -193,13 +194,13 @@
                    (:multi-line? flags)    (str "m")
                    (:unicode? flags)       (str "u")
                    (:dot-all? flags)       (str "s"))]
-    (if for-matcher?
+;    (if regex-param? ; A built-in function that takes a regex...
       (if (empty? flag-str)
         (re-pattern (cl-format nil "~A" body))
         (re-pattern (cl-format nil "(?~A)~A" flag-str body)))
-      (if (empty? flag-str)
+      #_(if (empty? flag-str) ; ...else a 'bare' regexe like 'The best things...' ~> /e/.
         (re-pattern (cl-format nil ".*(~A).*" body))
-        (re-pattern (cl-format nil "(?~A).*(~A).*" flag-str body))))))
+        (re-pattern (cl-format nil "(?~A).*(~A).*" flag-str body)))))
 
 (defrewrite :JaObjExp [m]
   `(-> {}
@@ -208,31 +209,27 @@
 (defrewrite :JaKVPair [m]
   `(assoc ~(:key m) ~(rewrite (:val m))))
 
-(def ^:dynamic in-$match?
-  "While rewriting $match, or $split regular expressions rewritten as the
-   clojure regex, not a function, as used in 'str' ~> /pattern/."
+(def ^:dynamic in-regex-fn?
+  "While rewriting built-in functions that take regular expressions rewrite
+   the regex as a clojure regex, not a function, as used in 'str' ~> /pattern/."
   false)
 
 (defrewrite :JaFnCall [m]
   (let [fname (-> m :fn-name)]
-    (if (par/builtin-fns fname) ; ToDo: Invert the following!
-      (binding [in-$match? (#{"$match" "$split" "$contains" "$replace"} fname)]
+    (if (par/builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
+      (binding [in-regex-fn? (#{"$match" "$split" "$contains" "$replace"} fname)]
         `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
       `(~(symbol fname) ~@(-> m :args rewrite)))))
 
 (defrewrite :JaRegExp [m]
-    (if in-$match?
-      (make-regex (:base m) (:flags m) :for-matcher? true)
+    (if in-regex-fn?
+      (make-regex (:base m) (:flags m) :regex-param? true)
       (let [s (dgensym!)]
         `(fn [~s] (bi/match-regex ~s ~(make-regex (:base m) (:flags m)))))))
 
 (defrewrite :JaUniOpExp [m]
   `(~(-> m :uni-op str symbol)
     ~(-> m :exp rewrite)))
-
-;;; ToDo: Taken care of by defn rewrite above, right?
-(defrewrite :or  [_m] #_(par/binary-op? m) (throw (ex-info ":or ???" {})))
-(defrewrite :and [_m] #_(par/binary-op? m) (throw (ex-info ":and ???" {})))
 
 (defrewrite :JaRangeExp [m]
   `(range ~(rewrite (:start m)) (inc ~(rewrite (:stop m)))))
@@ -269,6 +266,10 @@
 (defrewrite :JaImmediateUse [m]
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
+;;; See rewrite-thread-immediate for how this came to be.
+(defrewrite :JaThreadRHS [m]
+  `(~@(-> m :def rewrite) ~@(->> m :args (map rewrite))))
+
 (defrewrite :JaConditionalExp [m]
   `(if ~(-> m :predicate rewrite)
     ~(-> m :exp1 rewrite)
@@ -287,7 +288,7 @@
 (declare rewrite-bvec-as-sexp precedence op-precedence-tbl)
 
 (defn rewrite-value-step
-  "Wherever sequence (:JaArray |  :JaObjExp), :bi/get-step, :JaApplyFilter appears,
+  "Wherever the sequence (:JaArray |  :JaObjExp), :bi/get-step, :JaApplyFilter appears,
    it indicates a quirk in parsing of things like [1,2,3].[0] which in execution
    should just return a [0] for each of [1,2,3]. Since that isn't a :JaApplyFilter
    at all, we need to rewrite it (as a :JaValueMap)."
@@ -308,12 +309,35 @@
             :else (recur (conj res p1)
                          (-> svals rest vec))))))
 
+(defn rewrite-thread-immediate
+  "Wherever the sequence <whatever> bi/thread JaImmediateUse appears,
+   it indicates a quirk in parsing things like 4 ~> function($x){$x+1}()
+   where rewriting as a JaImmediateUse is incorrect; the RHS operator
+   needs to be preserved as a function def, not executed. This does
+   that by changing by replacing the JaImmediate use with a JaThreadRHS."
+  [s]
+  (loop [res []
+         svals s]
+    (let [triple (take 3 svals)
+          [p1 p2 p3] triple
+          len (count triple)]
+      (cond (< len 3) (into res triple)
+            (and (= 'bi/thread p2)
+                 (map? p3) (= :JaImmediateUse (:_type p3)))
+            (recur (into res (vector p1
+                                     'bi/thread
+                                     (assoc p3 :_type :JaThreadRHS)))
+                   (->> svals (drop 3) vec))
+            :else (recur (conj res p1)
+                         (-> svals rest vec))))))
+
 ;;; Filter path elements (at least(?) -- maybe map and reduce too) consist of a field path element
 ;;; followed by the body enclosed in the delimiters; the two are not separate path elements.
 (defrewrite :JaBinOpSeq [m]
   (->> m
        :seq
        rewrite-value-step
+       rewrite-thread-immediate
        rewrite-bvec-as-sexp)) ; This orders element and rewrites them to s-expressions.
 
 (def path-fn? #{:get-step :filter-step :reduce-step :value-step :primary})
