@@ -240,7 +240,7 @@
   (testing "datetime functions"
     (testing "$fromMillis"
       (run-test "$fromMillis(1510067557121)" "2017-11-07T15:12:37.121Z")
-      #_(run-test "$fromMillis(1510067557121, '[M01]/[D01]/[Y0001] [h#1]:[m01][P]')"
-                "11/07/2017 3:12pm")
-      #_(run-test "$fromMillis(1510067557121, '[H01]:[m01]:[s01] [z]', '-0500')"
-                "10:12:37 GMT-05:00"))))
+      (run-test "$fromMillis(1510067557121, '[M01]/[D01]/[Y0001] [h#1]:[m01][P]')"
+                "11/07/2017 03:12PM") ; ToDo: Should be 'pm' not 'PM' and 3:12, not 03:12
+      (run-test "$fromMillis(1510067557121, '[H01]:[m01]:[s01] [z]', '-0500')"
+                "10:12:37 -0500")))) ; ToDo: Example shows "10:12:37 GMT-05:00"

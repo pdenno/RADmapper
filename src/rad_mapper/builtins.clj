@@ -23,11 +23,12 @@
            java.math.BigDecimal
            java.math.MathContext
            java.math.RoundingMode
-           java.time.Instant
            java.time.format.DateTimeFormatter
+           java.time.Instant
            java.time.LocalDateTime
-           java.time.ZonedDateTime)) ; /Where possible, it is recommended to use a simpler class without a time-zone./
-
+           java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
+           java.time.ZoneId
+           java.time.ZoneOffset))
 
 ;;; ToDo: Consider Small Clojure Interpreter (SCI) for Clojure version.
 
@@ -1194,9 +1195,83 @@
         (fn? arg) "function"))
 
 ;;;------------- DateTime -----------
+;;; What JSONata calls a timestamp is a string
+;;;  $toMillis("2017-11-07T15:07:54.972Z") => 1510067274972
+;;; I use 'tstamp' for these and 'java-tstamp' for a ZonedDateTime.
+
+;;; https://platform.deloitte.com.au/articles/2013/formatting-dates-and-times-using-xslt-2.0-and-xpath
+;;;
+;;; | Format Token | Sequence                          |
+;;; |--------------+-----------------------------------|
+;;; | 1            | 1 2 3 ... 100 ...                 |  /I'm just doing this one, typically the default, for now!/
+;;; | A            | A B C .... Z AA AB AC ...         |
+;;; | a            | a b c ... z aa ab ac ...          |
+;;; | i            | i ii iii iv v vi vii .. x .. m .. |
+;;; | I            | I II III IV V VI VII .....        |
+;;; | w            | one two three four ...            |
+;;; | W            | ONE TWO THREE FOUR ...            |
+;;; | Ww           | One Two Three Four ...            |
+;;; | o            | first second third ...            |
+
+;;; XPATH
+;;; | Specifier | Meaning                     | Default presentation |
+;;; |-----------+-----------------------------+----------------------|
+;;; | Y         | year (absolute value)       |                    1 |
+;;; | M         | month in year               |                    1 |
+;;; | D         | day in month                |                    1 |
+;;; | d         | day in year                 |                    1 |
+;;; | F         | day of week                 |                    n |
+;;; | W         | week in year                |                    1 |
+;;; | w         | week in month               |                    1 |
+;;; | H         | hour in day (24 hours)      |                    1 |
+;;; | h         | hour in half-day (12 hours) |                    1 |
+;;; | P         | am/pm marker                |                    n |
+;;; | m         | minute in hour              |                   01 | (meaning pad with zero)
+;;; | s         | second in minute            |                   01 |
+;;; | f         | fractional seconds          |                    1 |
+;;; | Z         | timezone                    |                01:01 |
+;;; | z         | timezone (1)                |                01:01 |
+;;; | C         | calendar (2)                |                    n |
+;;; | E         | era: (3)                    |                    n |
+;;;
+;;; (1) same as Z, but modified where appropriate to include a prefix as a time offset using GMT,
+;;;     for example GMT+1 or GMT-05:00.
+;;;     For this component there is a fixed prefix of GMT, or a localized variation thereof
+;;;     for the chosen language, and the remainder of the value is formatted as for specifier Z.
+;;;
+;;; (2) the name or abbreviation of a calendar name
+;;;
+;;; (3) the name of a baseline for the numbering of years, for example the reign of a monarch
+
+;;; https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html
+
+[{:item "[M01]", :front "", :back "/"}
+ {:item "[D01]", :front "/", :back "/"}
+ {:item "[Y0001]", :front "/", :back " "}
+ {:item "[h#1]", :front " ", :back ":"}
+ {:item "[m01]", :front ":", :back ""}
+ {:item "[P]", :front "", :back ""}]
+(defn translate-part
+  [fmt-map]
+  (let [[_ var fmt] (re-matches #"\[(\w)([^\]]*)\]" (:item fmt-map))
+        fmt-map (-> fmt-map (assoc :var var) (assoc :fmt fmt))]
+    (assoc fmt-map
+           :java
+           (case var
+             "P" "a"
+             ("z" "Z") "Z" ; ToDo: Investigte
+             "Y"       (->> (repeat (-> fmt-map :fmt count) "y") (apply str))
+             "M"       (->> (repeat (-> fmt-map :fmt count) "M") (apply str))
+             "D"       (->> (repeat (-> fmt-map :fmt count) "d") (apply str))
+             ("H" "h") (->> (repeat (-> fmt-map :fmt count) "h") (apply str))
+             "m"       (->> (repeat (-> fmt-map :fmt count) "m") (apply str))
+             "s"       (->> (repeat (-> fmt-map :fmt count) "s") (apply str))
+             ""))))
+
 ;;; https://www.w3.org/TR/xpath-functions-31/#rules-for-datetime-formatting, 9.8.4.1 The picture string
 ;;; Perhaps also https://www.baeldung.com/java-xpath
 ;;; (date-fmt-xpath2java "[M01]/[D01]/[Y0001] [h#1]:[m01][P]")
+;;; USE THIS SOLUTION STYLE IN $MATCH <=============================================================================!!!!!!
 (defn date-fmt-xpath2java
   "Return a string iterpreting an xpath picture to the equivalent string for
    for java.time.format.DateTimeFormatter.
@@ -1208,28 +1283,40 @@
    If an opening or closing square bracket is required within a literal substring, it must be doubled.
    The variable markers are replaced in the result by strings representing aspects of the date
    and/or time to be formatted."
-  [pic tzone]
-  (reduce (fn [r]
-            (re-matches #"([^\[]*)(\[[YMDdFWwHhPmsfZzCE0-9#]+\]).*" "[M01]/[D01]/[Y0001] [h#1]:[m01][P]"))
-          :nyi
-          nil))
+  [pic]
+  (let [loop-cnt (atom 0)
+        parts
+        (->>
+         (loop [str pic
+                res []]
+           (cond (> @loop-cnt 10) :stuck!
+                 (empty? str) res
+                :else (let [[success? front item back]
+                            (re-matches #"([^\[]*)(\[[YMDdFWwHhPmsfZzCE0-9#]+\])(.*)" str)]
+                        (if success?
+                          (let [[_ bback]
+                                (re-matches #"([^\[]*)(\[[YMDdFWwHhPmsfZzCE0-9#]+\])?(.*).*" back)]
+                            (recur back
+                                   (conj res
+                                         {:item item
+                                          :front front
+                                          :back bback})))
+                          (recur "" {:back str})))))
+         (mapv translate-part))]
+    (apply str (into (-> parts first :front vector)
+                     (mapv #(str (:java %) (:back %)) parts)))))
 
 (defn format-time
-  "Format a timestamp according to a picture specified by XPath."
-  [tstamp pic tzone]
+  "Format a timestamp according to a picture specified by XPath (converted to
+   a java DateTimeFormatter/ofPattern  ."
+  [java-tstamp pic]
   (if pic
-    (let [fmt-string (date-fmt-xpath2java pic tzone)
-          dtf (java.time.format.DateTimeFormatter/ofPattern fmt-string)]
-      (.format tstamp dtf))
-    (str tstamp)))
+    (let [fmt-string (date-fmt-xpath2java pic)
+          dtf (DateTimeFormatter/ofPattern fmt-string)]
+      (str (.format dtf java-tstamp))) ; <========     Unsupported field: OffsetSeconds
+    (str java-tstamp)))
 
-;;;   (Classname/staticMethod args*) ==> (. Classname staticMethod args*)
-;;;   (. Instant .ofEpochMilli 1660078918296)
-;;;   Long m = 1660078918296
-;;;   Instant instant = Instant.ofEpochMilli(m);
-;;;   LocalDateTime localDateTime = LocalDateTime.ofInstant(instant, ZoneId.systemDefault())
-;;;
-;;; $fromMillis - DOING: Convert millis to a LocalDateTime <----------------
+;;; $fromMillis
 (defn $fromMillis
   "Convert the number representing milliseconds since the Unix Epoch (1 January, 1970 UTC) to a formatted
    string representation of the timestamp as specified by the picture string.
@@ -1246,29 +1333,31 @@
   ([millis] ($fromMillis millis nil nil))
   ([millis pic] ($fromMillis millis pic nil))
   ([millis pic tzone]
-   (let [tstamp (Instant/ofEpochMilli (long millis))]
-     (format-time tstamp pic tzone))))
+   (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)
+         java-tstamp (ZonedDateTime/ofInstant (Instant/ofEpochMilli (long millis)) zone-offset)]
+     (format-time java-tstamp pic))))
 
 ;;; ToDo: What does this mean?:
 ;;;   "All invocations of $millis() within an evaluation of an expression will all return the same timestamp value."
 ;;;    It says the same thing on $now().
-;;; $millis, - DONE
+;;; $millis
 (defn $millis
   "Returns the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
    All invocations of $millis() within an evaluation of an expression will all return the same value."
   []
   (.toEpochMilli (.toInstant (ZonedDateTime/now)))) ; Local doesn't work here.
 
-;;; $now - DONE
+;;; $now
 (defn $now
   "Generates a UTC timestamp in ISO 8601 compatible format and returns it as a string.
    All invocations of $now() within an evaluation of an expression will all return the same timestamp value.
    If the optional picture and timezone parameters are supplied, then the current timestamp is formatted
    as described by the $fromMillis() function."
-  ([] (java.time.LocalDateTime/now)) ; Prints as e.g. "2022-08-09T14:01:25.849575"
+  ([] (str (LocalDateTime/now))) ; Prints as e.g. "2022-08-09T14:01:25.849575"
   ([pic] ($now pic nil))
   ([pic tzone]
-   (format-time (LocalDateTime/now) pic tzone)))
+   (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)]
+     (format-time (ZonedDateTime/now zone-offset) pic))))
 
 ;;; $toMillis
 (defn $toMillis
@@ -1279,8 +1368,9 @@
    If the picture string is specified, then the format is assumed to be described by this picture string using
    the same syntax as the XPath/XQuery function fn:format-dateTime, defined in the XPath F&O 3.1 specification."
   ([str] ($toMillis str nil))
-  ([str pic]
-   (if (not pic) :nyi :nyi)))
+  ([str _pic] ; ToDo: implement pic
+   (s/assert ::string str)
+   (LocalDateTime/parse str))) ; ZonedDateTime will not work.
 
 ;;;-------------- Higher (the higher not yet defined)
 ;;; $filter
