@@ -232,7 +232,7 @@
     ~(-> m :exp rewrite)))
 
 (defrewrite :JaRangeExp [m]
-  `(range ~(rewrite (:start m)) (inc ~(rewrite (:stop m)))))
+  `(-> (range ~(rewrite (:start m)) (inc ~(rewrite (:stop m)))) vec))
 
 (defrewrite :JaArray [m]
   (if *assume-json-data?*
@@ -267,8 +267,16 @@
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
 ;;; See rewrite-thread-immediate for how this came to be.
-(defrewrite :JaThreadRHS [m]
+(defrewrite :JaThreadRHSfn [m]
   `(~@(-> m :def rewrite) ~@(->> m :args (map rewrite))))
+
+;;; See rewrite-thread-immediate for how this came to be.
+;;; This one transform a function call into a function.
+(defrewrite :JaThreadRHSfn-call [m]
+  (reset-dgensym!) ; For debugging, start at _x1
+  (let [xtra-arg (dgensym!)
+        [fname & args] (-> m (assoc :_type :JaFnCall) rewrite)]
+    `(fn [~xtra-arg] (~fname ~xtra-arg ~@args))))
 
 (defrewrite :JaConditionalExp [m]
   `(if ~(-> m :predicate rewrite)
@@ -323,10 +331,12 @@
           len (count triple)]
       (cond (< len 3) (into res triple)
             (and (= 'bi/thread p2)
-                 (map? p3) (= :JaImmediateUse (:_type p3)))
+                 (map? p3) (#{:JaImmediateUse :JaFnCall} (:_type p3)))
             (recur (into res (vector p1
                                      'bi/thread
-                                     (assoc p3 :_type :JaThreadRHS)))
+                                     (case (:_type p3)
+                                       :JaImmediateUse (assoc p3 :_type :JaThreadRHSfn)
+                                       :JaFnCall       (assoc p3 :_type :JaThreadRHSfn-call))))
                    (->> svals (drop 3) vec))
             :else (recur (conj res p1)
                          (-> svals rest vec))))))

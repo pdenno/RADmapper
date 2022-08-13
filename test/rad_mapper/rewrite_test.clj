@@ -2,9 +2,17 @@
   "Test the rewrite of parse trees. rew/rewrite* is a toplevel function"
   (:require
    [clojure.test       :refer  [deftest is testing]]
-   [rad-mapper.builtins :as bi]
-   [rad-mapper.devl.devl-util :refer [#_nicer nicer-sym]]
+   [rad-mapper.devl.devl-util :as devl :refer [examine examine-]]
    [rad-mapper.rewrite  :as rew]))
+
+(defmacro run-test
+  "Use this to expand devl/run-test with :rewrite? true."
+  [exp gold & {:keys [keep-meta?]}]
+  `(devl/run-test ~exp ~gold :rewrite? true :keep-meta? ~keep-meta?))
+
+(defn run
+  "Use this to expand devl/run-test with :rewrite? true."
+  [exp] (devl/run exp :rewrite? true))
 
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[0] translate correctly."
@@ -15,25 +23,6 @@
                                     'bi/get-step
                                     {:_type :JaApplyFilter, :body 1}])))))
 
-(defn rew
-  "Default rewriting function"
-  [exp & {:keys [simplify? execute? debug? debug-parse? skip-top?]}]
-  (let [rewrite? (not (or simplify? execute?))]
-    (-> (rew/rewrite* :ptag/exp exp
-                      :simplify? simplify?
-                      :rewrite? rewrite?
-                      :execute? execute?
-                      :debug? debug?
-                      :skip-top? skip-top?
-                      :debug-parse? debug-parse?)
-        nicer-sym)))
-
-(defmacro run-test
-  "Print the test form using testing, run the test."
-  [form-string expect]
-  `(testing ~(str "\n(rew \"" form-string "\")")
-     (is (= ~expect (rew ~form-string)))))
-
 ;;; (not= #"abc" #"abc") so don't bother testing things containing regular expressions.
 (deftest simple
   (testing "Simple (rewrite):"
@@ -41,12 +30,12 @@
       (run-test "1" 1)
       (run-test "[1, 2, 3]"  [1 2 3])
       (run-test "1 + 2" '(bi/+ 1 2))
-      (run-test "[1..5]" '(range 1 (inc 5)))
+      (run-test "[1..5]" '(-> (range 1 (inc 5)) vec))
       (run-test "$A[1]" '(bi/run-steps (bi/init-step $A) (bi/filter-step (fn [_x1] (bi/with-context _x1 1)))))
       (run-test "$sum($v.field)" '(bi/$sum (bi/run-steps (bi/init-step $v) (bi/get-step "field"))))
       (run-test "$sum(a.b)"      '(bi/$sum (bi/run-steps (bi/get-step "a") (bi/get-step "b"))))
       (run-test "(A * B)"        '(bi/primary (bi/* (bi/get-scoped "A") (bi/get-scoped "B"))))
-      (run-test "4 ~> $f()"      '(bi/thread 4 ($f)))
+      (run-test "4 ~> $f()"      '(bi/thread 4 (fn [_x1] ($f _x1))))
       (run-test "$" '(bi/deref$))
       (run-test "$foo" '$foo))
 
@@ -143,10 +132,11 @@
                                (bi/$map [1 2 3] $inc))))
 
       (run-test "$reduce([1..5], function($x,$y){$x + $y}, 100)"
-                '(bi/$reduce (range 1 (inc 5))
+                '(bi/$reduce (-> (range 1 (inc 5)) vec)
                              (with-meta
                                (fn [$x $y] (bi/+ $x $y))
-                               #:bi{:type :bi/user-fn, :params (quote [$x $y])}) 100))
+                               #:bi{:type :bi/user-fn, :params (quote [$x $y])}) 100)
+                :keep-meta? true)
 
       (run-test "$fn1($fn2($v).a.b)"
                 '($fn1 (bi/run-steps (bi/init-step ($fn2 $v)) (bi/get-step "a") (bi/get-step "b"))))

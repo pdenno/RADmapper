@@ -8,17 +8,12 @@
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [rad-mapper.devl.devl-util :refer [#_nicer nicer-sym]]))
+   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer run run-rew examine]]))
 
-(defmacro rewrite-nicer [form & {:keys [tag] :or {tag :ptag/exp}}]
-  `(-> (rew/rewrite* ~tag ~form :rewrite? true) nicer-sym))
-
-(defmacro run-test
-  "Print the test form using testing, run the test."
-  [form-string expect]
-  `(testing ~(str "\n(rew \"" form-string "\")")
-     (is (= ~expect (rew ~form-string)))))
-
+(defmacro run-test-rew
+  "Use this to expand devl/run-test with :rewrite? true."
+  [exp gold]
+  `(run-test ~exp ~gold :rewrite? true))
 
 ;;; ToDo: I think I intended to test whether some data (from enforce?) results in this?
 (def test-schema
@@ -86,101 +81,105 @@
 ;;;================================ testing query ==================================
 (deftest query-basics
   (testing "Testing query parsing, rewriting and execution."
-    (is (= '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])
-           (rewrite-nicer "query(){[?class :rdf/type     'owl/Class']
-                                   [?class :resource/iri  ?class-iri]}")))
+    (testing "simple"
+      (run-test-rew
+       "query(){[?class :rdf/type     'owl/Class']
+              [?class :resource/iri  ?class-iri]}"
+       '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])))
 
-    ;; The attr of a triple (middle item) can be queried and results do not include db/schema content.
-    (is (= [{:?ent 3, :?attr :person/lname, :?val "Dee"} {:?ent 3, :?attr :person/fname, :?val "Peter"}]
-           (rew/rewrite* :ptag/exp
-                         "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
-                            $q := query(){[?ent ?attr ?val]};
-                            $q($data))"
-                         :execute? true)))
+    (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
+      (run-test
+       "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
+           $q := query(){[?ent ?attr ?val]};
+           $q($data))"
+       '[{:?ent 3, :?attr :person/lname, :?val "Dee"}
+         {:?ent 3, :?attr :person/fname, :?val "Peter"}]))
 
-    ;; This tests rewriting of an in-line query.
-    (is (= '((bi/query '[] '[[?ent ?attr ?val]]) [(-> {} (assoc "person/fname" "Peter") (assoc "person/lname" "Dee"))])
-           (rewrite-nicer "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")))
+  (testing "rewriting of an in-line query"
+    (run-test-rew
+     "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])"
+     '((bi/query '[] '[[?ent ?attr ?val]])
+       [(-> {}
+            (assoc "person/fname" "Peter")
+            (assoc "person/lname" "Dee"))])))
 
-    ;; This tests rewriting of an in-line query with a parameter.
-    (is (= '(bi/primary
-             (let [$qBob ((bi/query '[$name] '[[?e :name $name]]) "Bob")]
-               ($qBob [(-> {} (assoc "name" "Bob"))])))
-           (rewrite-nicer "($qBob := query($name){[?e :name $name]}('Bob');
-                            $qBob([{'name' : 'Bob'}]))")))
+  (testing "rewriting of an in-line query with a parameter."
+    (run-test-rew
+     "($qBob := query($name){[?e :name $name]}('Bob');
+         $qBob([{'name' : 'Bob'}]))"
+     '(bi/primary
+       (let [$qBob ((bi/query '[$name] '[[?e :name $name]]) "Bob")]
+         ($qBob [(-> {} (assoc "name" "Bob"))])))))
 
-    ;; This tests execution of an in-line query.
-    (is (= [{:?ent 3, :?attr :person/lname, :?val "Dee"} {:?ent 3, :?attr :person/fname, :?val "Peter"}]
-           (rew/rewrite* :ptag/exp
-                         "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])"
-                         :execute? true)))
+  (testing "execution of an in-line query"
+    (run-test
+     "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])"
+     [{:?ent 3, :?attr :person/lname, :?val "Dee"} {:?ent 3, :?attr :person/fname, :?val "Peter"}]))
 
-    ;; This tests execution of an in-line query with a parameter.
-    (is (= [{:?e 2}]
-           (rew/rewrite* :ptag/exp
-                         "($qBob := query($name){[?e :name $name]}('Bob');
-                           $qBob([{'name' : 'Bob'}]))"
-                         :execute? true)))
 
-    ;; This tests rewriting a query using a mapping context with the default name 'source-data-1'.
-    (is (= '(bi/primary
-             (let [$mc (bi/thread (bi/$newContext)
-                                  (bi/$addSource
-                                   (with-meta [(-> {}
-                                                   (assoc "person/fname" "Bob")
-                                                   (assoc "person/lname" "Clark"))]
-                                     #:bi{:json-array? true})))
-                   $q  (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
-               ($q (bi/$getSource "source-data-1"))))
-           (rewrite-nicer "( $mc := $newContext() ~> $addSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
-                              $q := query(){[?person :person/fname ?fname]
-                                            [?person :person/lname ?lname]};
-                                $q($getSource('source-data-1')) )")))
+  (testing "execution of an in-line query with a parameter"
+    (run-test
+     "($qBob := query($name){[?e :name $name]}('Bob');
+       $qBob([{'name' : 'Bob'}]))"
+     [{:?e 2}]))
 
-    ;; This tests execution of a query using a mapping context with the default name 'source-data-1'.
-    (is (=  [{:?person 3, :?fname "Bob", :?lname "Clark"}]
-            (rew/rewrite*
-             :ptag/exp
-             "( $mc := $newContext() ~> $addSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
-                $q := query(){[?person :person/fname ?fname]
-                              [?person :person/lname ?lname]};
-                $q($getSource($mc, 'source-data-1')) )"
-             :execute? true)))
+  (testing "rewriting a query using a mapping context with the default name 'source-data-1'"
+    (run-test-rew
+     "( $mc := $newContext() ~> $addSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
+         $q := query(){[?person :person/fname ?fname]
+                       [?person :person/lname ?lname]};
+         $q($getSource('source-data-1')) )"
+     '(bi/primary
+       (let [$mc (bi/thread (bi/$newContext)
+                            (fn [_x1] (bi/$addSource
+                                       _x1
+                                       (with-meta [(-> {}
+                                                       (assoc "person/fname" "Bob")
+                                                       (assoc "person/lname" "Clark"))]
+                                         #:bi{:json-array? true}))))
+             $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
+         ($q (bi/$getSource "source-data-1"))))))
 
-    ;; Here is an example from the spec.
-    ;; This tests execution of a query using a mapping context with the default name 'source-data-1'.
-    (is (= [{:?person 4, :?fname "Peter", :?lname "Dee"}
-            {:?person 3, :?fname "Bob",   :?lname "Clark"}]
-           (rew/rewrite* :ptag/exp
-                         "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
-                                      {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
-                            $q := query(){[?person :Person/firstname ?fname]
-                                          [?person :Person/lastname  ?lname]};
-                            $q($data) )"
-                         :execute? true)))
+  (testing "execution of a query using a mapping context with the default name 'source-data-1'."
+    (run-test
+     "( $mc := $newContext() ~> $addSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
+         $q := query(){[?person :person/fname ?fname]
+                       [?person :person/lname ?lname]};
+         $q($getSource($mc, 'source-data-1')) )"
+     [{:?person 3, :?fname "Bob", :?lname "Clark"}]))
 
-    ;; This tests query on data (rather than directly on a DB).
-    (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
-             :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
-             :dol/feature :dol/time-interval}
-           (->> ((bi/query [] '[[?class :rdf/type :owl/Class] [?class :resource/iri  ?class-iri]]) dolce-test-data)
-                (map :?class-iri)
-                (map keyword)
-                set)))
+  (testing "tests execution of a query using a mapping context with the default name 'source-data-1' (in spec)"
+    (run-test
+     "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
+                  {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
+           $q := query(){[?person :Person/firstname ?fname]
+                         [?person :Person/lastname  ?lname]};
+        $q($data) )"
+     [{:?person 4, :?fname "Peter", :?lname "Dee"}
+      {:?person 3, :?fname "Bob",   :?lname "Clark"}]))
 
-    ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
-    (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
-             :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
-             :dol/feature :dol/time-interval}
-           (->> (rew/rewrite* :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
-                              "( $mc := $newContext() ~> $addSource($readFile('data/testing/dolce-2.edn'));
+  ;; This tests query on data (rather than directly on a DB).
+  (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+           :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
+           :dol/feature :dol/time-interval}
+         (->> ((bi/query [] '[[?class :rdf/type :owl/Class] [?class :resource/iri  ?class-iri]]) dolce-test-data)
+              (map :?class-iri)
+              (map keyword)
+              set)))
+
+  ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
+  (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+           :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
+           :dol/feature :dol/time-interval}
+         (->> (rew/rewrite* :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
+                            "( $mc := $newContext() ~> $addSource($readFile('data/testing/dolce-2.edn'));
                                  $q := query(){[?class :rdf/type     'owl/Class']
                                                [?class :resource/iri  ?class-iri]};
                                  $q($getSource($mc, 'source-data-1')) )"
-                              :execute? true)
-                (map :?class-iri)
-                (map keyword)
-                set)))))
+                            :execute? true)
+              (map :?class-iri)
+              (map keyword)
+              set)))))
 
 ;;;================================ testing enforce ==================================
 (def e0 "enforce()
@@ -208,34 +207,35 @@
                                      (assoc "instance-of" "FixedType")
                                      (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})]
 
-      ;; The function has metadata.
-      (is (= '{:bi/params [b-set], :enforce? true} (meta qfn)))
+      (testing "The function has metadata."
+        (is (= '{:bi/params [b-set], :enforce? true} (meta qfn))))
 
-      ;; The function is executable with a binding set, creating content.
-      (is (= {"instance-of" "FixedType", "content" "IRI"}
-             (qfn {:?class-iri "IRI"}))))
+      (testing "The function is executable with a binding set, creating content."
+        (is (= {"instance-of" "FixedType", "content" "IRI"}
+               (qfn {:?class-iri "IRI"}))))
 
-    ;;----- Rewrite for the parametric ("higher-order") is similar; :params and closed over $type differ.
-    (is (= '(bi/enforce {:params [$type],
-                         :body (-> {}
-                                   (assoc "instance-of" $type)
-                                   (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})
-           (rewrite-nicer e1)))
+      (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
+        (run-test-rew
+         e1
+         '(bi/enforce {:params [$type],
+                       :body (-> {}
+                                 (assoc "instance-of" $type)
+                                 (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})))
 
-    ;; Now however, the function returned is higher-order...
-    (let [ho-qfn (bi/enforce {:params [$type],
-                              :body (-> {}
-                                        (assoc "instance-of" $type)
-                                        (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})
-          ;; ... So we get a query function for it with $type = "MyType"
-          qfn (ho-qfn "MyType")]
+      (testing "the function returned is higher-order..."
+        (let [ho-qfn (bi/enforce {:params [$type],
+                                  :body (-> {}
+                                            (assoc "instance-of" $type)
+                                            (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})
+              ;; ... So we get a query function for it with $type = "MyType"
+              qfn (ho-qfn "MyType")]
 
-      ;; The function has the same metadata.
-      (is (= '{:bi/params [b-set], :enforce? true} (meta qfn)))
+          (testing "The function has the same metadata."
+            (is (= '{:bi/params [b-set], :enforce? true} (meta qfn))))
 
-      ;; Rather than 'FixedType', the instance-of is 'MyType'.
-      (is (= {"instance-of" "MyType", "content" "IRI"}
-             (qfn {:?class-iri "IRI"}))))))
+          (testing "Rather than 'FixedType', the instance-of is 'MyType'."
+            (is (= {"instance-of" "MyType", "content" "IRI"}
+                   (qfn {:?class-iri "IRI"})))))))))
 
 ;;; ToDo: This might be a good example for the spec.
 (defn enforce-reduce-demo
@@ -311,7 +311,7 @@
                      [?class :resource/iri        ?class-iri]
                      [?class :resource/namespace  ?class-ns]
                      [?class :resource/name       ?class-name]
-                   };  // Defines a higher-order function
+                   };  /* Defines a higher-order function */
 
       $bsets := $qClass($getSource($mc, 'owl-source'));
       $reduce($bsets,
@@ -322,7 +322,7 @@
                                        'resourceNamespace' : ?class-ns,
                                        'resourceLabel'     : ?class-name}}
                  },
-              [] // In updating the target, there would be data here.
+              [] /* In updating the target, there would be data here. */
               )
    )")
 
@@ -335,13 +335,13 @@
                      [?class :resource/iri        ?class-iri]
                      [?class :resource/namespace  ?class-ns]
                      [?class :resource/name       ?class-name]
-                   };  // Defines a higher-order function
+                   };  /* Defines a higher-order function */
 
       $qClass := $qtype('owl/Class');
       $qProp  := $qtype('owl/ObjectProperty');
 
-      $bsets := $qClass($getSource($mc, 'owl-source')); // Run query; return a collection of binding sets.
-                                                          // Could use ~> here; instead, I'm passing $bsets.
+      $bsets := $qClass($getSource($mc, 'owl-source')); /* Run query; return a collection of binding sets. */
+                                                        /* Could use ~> here; instead, I'm passing $bsets. */
       $reduce($bsets,
               enforce()
                  {  {'instance-of'  : 'insert-row',
@@ -350,7 +350,7 @@
                                        'resourceNamespace' : ?class-ns,
                                        'resourceLabel'     : ?class-name}}
                  },
-              [] // In updating the target, there would be data here.
+              [] /* In updating the target, there would be data here. */
               )
    )")
 
@@ -364,47 +364,50 @@
       }")
 
 (deftest owl-example-rewrite
-  (testing "Test rewriting the OWL example in the spec."
+  (testing "OWL example in the spec"
+    (testing "rewriting a query expression. Note quotes; bi/query isn't a macro"
+      (run-test-rew
+       "query($type){[?class :rdf/type $type]
+                     [?class :resource/iri ?class-iri]}"
+     '(bi/query '[$type] '[[?class :rdf/type $type] [?class :resource/iri ?class-iri]])))
 
-    ;; This is a test of rewriting a query expression. Note quotes; bi/query isn't a macro.
-    (is (= '(bi/query '[$type] '[[?class :rdf/type $type] [?class :resource/iri ?class-iri]])
-           (rewrite-nicer "query($type){[?class :rdf/type $type]
-                                        [?class :resource/iri ?class-iri]}")))
+    (testing "rewriting an enforce"
+      (run-test-rew
+       owl-immediate-e1  ; was :ptag/enforce-def
+       '(bi/enforce
+         {:params [],
+          :body (->  {}
+                     (assoc "instance-of" "insert-row")
+                     (assoc "table" "ObjectDefinition")
+                     (assoc "content" (-> {}
+                                          (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
+                                          (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
+                                          (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})))
 
-    ;; This is a test of rewriting an enforce.
-    (is (= '(bi/enforce
-             {:params [],
-              :body (->  {}
-                         (assoc "instance-of" "insert-row")
-                         (assoc "table" "ObjectDefinition")
-                         (assoc "content" (-> {}
-                                              (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
-                                              (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
-                                              (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
-           (rewrite-nicer owl-immediate-e1 :tag :ptag/enforce-def)))
-
-    ;; This is an example of rewriting the whole example.
-    (is (= '(bi/primary
-             (let [$mc (bi/thread (bi/$newContext) (bi/$addSource (bi/$readFile "data/testing/owl-example.edn") "owl-source"))
-                   $qClass (bi/query '[] '[[?class :rdf/type "owl/Class"]
-                                           [?class :resource/iri ?class-iri]
-                                           [?class :resource/namespace ?class-ns]
-                                           [?class :resource/name ?class-name]])
-                  $bsets ($qClass (bi/$getSource $mc "owl-source"))]
-               (bi/$reduce $bsets
-                           (bi/enforce
-                            {:params [],
-                             :body
-                             (->
-                              {}
-                              (assoc "instance-of" "insert-row")
-                              (assoc "table" "ObjectDefinition")
-                              (assoc "content" (-> {}
-                                                   (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
-                                                   (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
-                                                   (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
-                           [])))
-             (-> (rewrite-nicer owl-full-immediate))))))
+    (testing "rewriting the whole example"
+      (run-test-rew
+       owl-full-immediate
+       '(bi/primary
+         (let [$mc (bi/thread (bi/$newContext)
+                              (fn [_x1] (bi/$addSource _x1 (bi/$readFile "data/testing/owl-example.edn") "owl-source")))
+               $qClass (bi/query '[] '[[?class :rdf/type "owl/Class"]
+                                       [?class :resource/iri ?class-iri]
+                                       [?class :resource/namespace ?class-ns]
+                                       [?class :resource/name ?class-name]])
+               $bsets ($qClass (bi/$getSource $mc "owl-source"))]
+           (bi/$reduce $bsets
+                       (bi/enforce
+                        {:params [],
+                         :body
+                         (->
+                          {}
+                          (assoc "instance-of" "insert-row")
+                          (assoc "table" "ObjectDefinition")
+                          (assoc "content" (-> {}
+                                               (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
+                                               (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
+                                               (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
+                       [])))))))
 
 (def owl-query-immediate
 "
@@ -415,9 +418,9 @@
                      [?class :resource/iri        ?class-iri]
                      [?class :resource/namespace  ?class-ns]
                      [?class :resource/name       ?class-name]
-                   };  // Defines a higher-order function
+                   };  /* Defines a higher-order function */
 
-      $qClass($getSource($mc, 'owl-source'))  // Run query; return a collection of binding sets.
+      $qClass($getSource($mc, 'owl-source'))  /* Run query; return a collection of binding sets. */
   )")
 
 (def owl-query-parametric
@@ -429,11 +432,11 @@
                      [?class :resource/iri        ?class-iri]
                      [?class :resource/namespace  ?class-ns]
                      [?class :resource/name       ?class-name]
-                   };  // Defines a function that returns a higher-order function.
+                   };  /* Defines a function that returns a higher-order function. */
 
-      $qClass := $qtype('owl/Class'); // Make a query function by specifying parameter values.
+      $qClass := $qtype('owl/Class'); /* Make a query function by specifying parameter values. */
 
-      $qClass($getSource($mc, 'owl-source'))  // Run query; return a collection of binding sets.
+      $qClass($getSource($mc, 'owl-source'))  /* Run query; return a collection of binding sets. */
   )")
 
 (deftest owl-example-executes
@@ -444,7 +447,7 @@
     (let [data (-> (bi/$newContext) (bi/$addSource [{:name "Bob"}]))]
       (is (= [{:?e 2}] ((bi/query  []        '[[?e :name "Bob"]]) (bi/$getSource data "source-data-1"))))
       (is (= [{:?e 2}] (((bi/query '[$name]  '[[?e :name $name]]) "Bob") (bi/$getSource data "source-data-1"))))
-      (is (= []       (((bi/query '[$name]  '[[?e :name $name]]) "xxx") (bi/$getSource data "source-data-1")))))
+      (is (= []        (((bi/query '[$name]  '[[?e :name $name]]) "xxx") (bi/$getSource data "source-data-1")))))
 
     ;; This tests making a new data source and use of a special.
     ;; I just check the type because the actual DB can't be tested for equality.
@@ -454,29 +457,30 @@
                              :execute? true)
                (-> @bi/$ :sources (get "owl-data") type))))
 
-    ;; This one executes an immediate query.
-    (is (= [{:?class 12, :?class-iri "dol/endurant", :?class-ns "dol", :?class-name "endurant"}]
-           (rew/rewrite* :ptag/exp owl-query-immediate :execute? true)))
+    (testing "executing owl-query-immediate"
+      (run-test
+       owl-query-immediate
+       [{:?class 12, :?class-iri "dol/endurant", :?class-ns "dol", :?class-name "endurant"}]))
 
-    ;; This one executes a parametric query; same results as above.
-    (is (= [{:?class 12, :?class-iri "dol/endurant", :?class-ns "dol", :?class-name "endurant"}]
-           (rew/rewrite* :ptag/exp owl-query-parametric :execute? true)))
+    (testing "executing owl-query-parametric"
+      (run-test owl-query-parametric
+                [{:?class 12, :?class-iri "dol/endurant", :?class-ns "dol", :?class-name "endurant"}]))
 
-    ;; This executes query + enforce where an immediate query is being used.
-    (is (= [{:instance-of "insert-row",
-             :table "ObjectDefinition",
-             :content {:resourceIRI "dol/endurant"
-                       :resourceNamespace "dol"
-                       :resourceLabel "endurant"}}]
-           (rew/rewrite* :ptag/exp owl-full-immediate :execute? true)))
+    (testing "executing owl-full-immediate"
+      (run-test owl-full-immediate
+                [{:instance-of "insert-row",
+                  :table "ObjectDefinition",
+                  :content {:resourceIRI "dol/endurant"
+                            :resourceNamespace "dol"
+                            :resourceLabel "endurant"}}]))
 
-    ;; This executes query + enforce where a parametric query is being used.
-    (is (=  [{:instance-of "insert-row",
-              :table "ObjectDefinition",
-              :content {:resourceIRI "dol/endurant"
-                        :resourceNamespace "dol"
-                        :resourceLabel "endurant"}}]
-            (rew/rewrite* :ptag/exp owl-full-parametric :execute? true)))))
+    (testing "executing owl-full-parametric"
+      (run-test owl-full-parametric
+                '[{:instance-of "insert-row",
+                   :table "ObjectDefinition",
+                   :content {:resourceIRI "dol/endurant"
+                             :resourceNamespace "dol"
+                             :resourceLabel "endurant"}}]))))
 
 ;;;================================================================================================================
 ;;; "owl-db-tools is used only in development (See deps.edn.)  It is here mostly to ensure it has needed functionality."
@@ -512,8 +516,8 @@
                  [?class :resource/iri        ?class-iri]
                  [?class :resource/namespace  ?class-ns]
                  [?class :resource/name       ?class-name]
-                 // ToDo: $extraTrips
-               };  // Defines a higher-order function, a template of sorts.
+                 /* ToDo: $extraTrips */
+               };  /* Defines a higher-order function, a template of sorts. */
 
   $etype  := enforce($tableType)
               {  {'instance-of'  : 'insert-row',
@@ -521,59 +525,60 @@
                   'content'      : {'resourceIRI'       : ?class-iri,
                                     'resourceNamespace' : ?class-ns,
                                     'resourceLabel'     : ?class-name}}
-                           }; // Likewise, for an enforce template.
-                              // The target tables for objects and relations a very similar.
+                           }; /* Likewise, for an enforce template. */
+                              /* The target tables for objects and relations a very similar. */
 
-  $quClass := $qtype('owl/Class');     // Use the template, here and the next three assignments.
+  $quClass := $qtype('owl/Class');     /* Use the template, here and the next three assignments. */
 
-  // This one doesn't just specify a value for $rdfType, but for $extraTrips.
-  $quProp       := $qtype('owl/ObjectProperty'); // ToDo: ,queryTriples{[?class :rdfs/domain ?domain] [?class :rdfs/range ?range]});
+  /* This one doesn't just specify a value for $rdfType, but for $extraTrips. */
+  $quProp       := $qtype('owl/ObjectProperty'); /* ToDo: ,queryTriples{[?class :rdfs/domain ?domain] [?class :rdfs/range ?range]}); */
   $enClassTable := $etype('ClassDefinition');
   $enPropTable  := $etype('PropertyDefinition');
 
-  // Run the class query; return a collection of binding sets about classes.
+  /* Run the class query; return a collection of binding sets about classes. */
   $clasBsets := $quClass($data);
 
-  // We start enforcing with no data, thus the third argument is [].
+  /* We start enforcing with no data, thus the third argument is []. */
   $tar_data := $reduce($clasBsets, $enClassTable, []);
 
-  // Get bindings sets for the ObjectProperties and make similar tables.
+  /* Get bindings sets for the ObjectProperties and make similar tables. */
   $propBsets := $quProp($data);
 
-  // We pass in the target data created so far.
-  $reduce($propBsets, $enPropTable, $tar_data) // The code block returns the target data.
+  /* We pass in the target data created so far. */
+  $reduce($propBsets, $enPropTable, $tar_data) /* The code block returns the target data. */
 )")
 
 (deftest maybe-spec-example
   (testing "Testing the above long example"
-    (is (= '(bi/primary
-             (let [$data (bi/$readFile "data/testing/owl-example.edn")
-                   $qtype (bi/query '[$rdfType $extraTrips]
-                                    '[[?class :rdf/type $rdfType]
-                                      [?class :resource/iri ?class-iri]
-                                      [?class :resource/namespace ?class-ns]
-                                      [?class :resource/name ?class-name]])
-                   $etype (bi/enforce {:params [$tableType],
-                                       :body
-                                       (->
-                                        {}
-                                        (assoc "instance-of" "insert-row")
-                                        (assoc "table" $tableType)
-                                        (assoc
-                                         "content"
-                                         (-> {}
-                                             (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
-                                             (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
-                                             (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
-                   $quClass ($qtype "owl/Class")
-                   $quProp  ($qtype "owl/ObjectProperty")
-                   $enClassTable ($etype "ClassDefinition")
-                   $enPropTable ($etype "PropertyDefinition")
-                   $clasBsets ($quClass $data)
-                   $tar_data (bi/$reduce $clasBsets $enClassTable (with-meta [] #:bi{:json-array? true}))
-                   $propBsets ($quProp $data)]
-               (bi/$reduce $propBsets $enPropTable $tar_data)))
-           (rewrite-nicer owl-full-enforce-extra)))))
+    (run-test-rew
+     owl-full-enforce-extra
+     '(bi/primary
+       (let [$data (bi/$readFile "data/testing/owl-example.edn")
+             $qtype (bi/query '[$rdfType $extraTrips]
+                              '[[?class :rdf/type $rdfType]
+                                [?class :resource/iri ?class-iri]
+                                [?class :resource/namespace ?class-ns]
+                                [?class :resource/name ?class-name]])
+             $etype (bi/enforce {:params [$tableType],
+                                 :body
+                                 (->
+                                  {}
+                                  (assoc "instance-of" "insert-row")
+                                  (assoc "table" $tableType)
+                                  (assoc
+                                   "content"
+                                   (-> {}
+                                       (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
+                                       (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
+                                       (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
+             $quClass ($qtype "owl/Class")
+             $quProp  ($qtype "owl/ObjectProperty")
+             $enClassTable ($etype "ClassDefinition")
+             $enPropTable ($etype "PropertyDefinition")
+             $clasBsets ($quClass $data)
+             $tar_data (bi/$reduce $clasBsets $enClassTable (with-meta [] #:bi{:json-array? true}))
+             $propBsets ($quProp $data)]
+         (bi/$reduce $propBsets $enPropTable $tar_data))))))
 
 (defn tryme []
   (let [$data (bi/$readFile "data/testing/owl-example.edn")

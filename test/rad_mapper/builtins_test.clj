@@ -2,27 +2,8 @@
   "Test built-in functions"
   (:require
    [rad-mapper.builtins :as bi]
-   [rad-mapper.rewrite  :as rew]
-   [rad-mapper.devl.devl-util :refer [nicer]]
-   [clojure.test :refer  [deftest is testing]]))
-
-(defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
-  (let [execute? (not (or simplify? rewrite?))]
-    (rew/rewrite* :ptag/exp exp
-                  :simplify? simplify?
-                  :rewrite? rewrite?
-                  :execute? execute?
-                  :debug? debug?
-                  :debug-parse? debug-parse?)))
-
-(defn examine [exp]
-  (-> (rew/rewrite* :ptag/exp exp :rewrite? true) nicer))
-
-(defmacro run-test
-  "Print the test form using testing, run the test."
-  [form-string expect]
-  `(testing ~(str "\n(run \"" form-string "\")")
-     (is (= ~expect (run ~form-string)))))
+   [rad-mapper.devl.devl-util :refer [run-test run examine examine-]]
+   [clojure.test :refer [deftest is testing]]))
 
 (deftest jflatten
   (testing "Testing that JSONata flattening rules are obeyed."

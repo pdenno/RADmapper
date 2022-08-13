@@ -2,27 +2,7 @@
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
    [clojure.test        :refer  [deftest is testing]]
-   [rad-mapper.rewrite  :as rew]
-   ;[rad-mapper.builtins :as bi]
-   [rad-mapper.devl.devl-util :refer [nicer]]))
-
-(defn run [exp & {:keys [simplify? rewrite? debug? debug-parse?]}]
-  (let [execute? (not (or simplify? rewrite?))]
-    (rew/rewrite* :ptag/exp exp
-                  :simplify? simplify?
-                  :rewrite? rewrite?
-                  :execute? execute?
-                  :debug? debug?
-                  :debug-parse? debug-parse?)))
-
-(defn examine [exp]
-  (-> (rew/rewrite* :ptag/exp exp :rewrite? true) nicer))
-
-(defmacro run-test
-  "Print the test form using testing, run the test."
-  [form-string expect]
-  `(testing ~(str "\n(run \"" form-string "\")")
-     (is (= ~expect (run ~form-string)))))
+   [rad-mapper.devl.devl-util :refer [run-test examine run]]))
 
 (deftest today
   (run-test "[[1,2,3], 4].$[1]" 2)
@@ -166,10 +146,8 @@
 
     (testing "'immediate use' of a function"
       (run-test  "function($x){$x+1}(3)" 4) ; This one is true 'immediate use'.
-      (run-test  "4 ~> function($x){$x+1}()" 5))
-
-    (testing "another sort of immediate use, using the threading macro"
-      (run-test  "4 ~> function($x){$x+1}()" 5))
+      (run-test  "4 ~> function($x){$x+1}()" 5)
+      (run-test  "[1..5] ~> $reverse()" [5 4 3 2 1]))
 
     (testing "reduce."
       (run-test  "$reduce([1..5], function($i, $j){$i + $j})" 15))
@@ -182,7 +160,7 @@
 
     ;; ToDo: Not a high priority, I think. The problem is is in parsing, I suppose.
     #_(testing "That you can return functions for built-ins"
-        (is (= [bi/$sum bi/$sum] (run "[1,2].$sum"))))))
+        (run-test "[1,2].$sum"  [bi/$sum bi/$sum]))))
 
 (deftest code-block-evaluations
   (testing "Code block:"
@@ -304,6 +282,9 @@
   (testing "small code examples from the user's guide"
     (run-test (str addr-data "$ADDR.zipcode )")
               ["20898" "07010-3544" "10878"])
+
+    (testing "$ (EOL) works with regular expressions"
+      (run-test "$match('12345-12',/^[0-9]+$/)" nil))
 
     (run-test (str addr-data "$ADDR.zipcode[$match(/^[0-9]+$/)] )")
               ["20898" "10878"])

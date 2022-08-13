@@ -223,7 +223,7 @@
          (let [yarg# ~y]
            (if (fn? yarg#)
              (yarg# xarg#)
-             (throw (ex-info "The RHS argument to the threading operator is not a function"
+             (throw (ex-info "The RHS argument to the threading operator is not a function."
                              {:rhs-operator yarg#})))))))
 
 ;;; ------------------ Path implementation ---------------------------------
@@ -518,9 +518,10 @@
                              (core/+ adv (count match))
                              (if (number? lim) (dec lim) lim))))))]
      ;; ToDo: Or should I jflatten (which currently doesn't change things)?
-     (if (and (vector? result) (== 1 (count result)))
-       (first result)
-       result))))
+     (cond
+       (empty? result) nil,
+       (and (vector? result) (== 1 (count result))) (first result),
+       :else result))))
 
 ;;; JSONata looks like it uses a matcher:
 ;;;       "Product thing" ~> /^Product/
@@ -1589,7 +1590,10 @@
     (higher-order-query-fn body params)))
 
 (defmacro enforce
-  "See query!!!" ; ToDo: a doc string...
+  "Create an enforce function that either
+    1) can be used directly, or
+    2) can be called with parameters to return a function that
+       can be used directly."
   [& {:keys [params body]}]
   (if (empty? params)
     ;; The immediate function.

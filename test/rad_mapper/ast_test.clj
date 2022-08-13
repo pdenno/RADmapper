@@ -7,7 +7,7 @@
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [rad-mapper.devl.devl-util :refer [#_nicer nicer-sym]]))
+   [rad-mapper.devl.devl-util :refer [run-test]]))
 
 (deftest anytest
   (is (= true true)))

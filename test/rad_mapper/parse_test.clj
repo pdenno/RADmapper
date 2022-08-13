@@ -4,6 +4,7 @@
    [clojure.java.io :as io]
    [clojure.spec.alpha  :as s]
    [clojure.test :refer  [deftest is testing]]
+   [rad-mapper.devl.devl-util :as dev]
    [rad-mapper.parse    :as par]
    [rad-mapper.rewrite  :as rew]))
 
@@ -62,9 +63,7 @@
               {:tkn :rad-mapper.parse/eof}]
              (test-tokenize "true?'a':'b'"))))
 
-    ;; ToDo: I can't guess what is wrong here. Even stringifying and reading both sides
-    ;;       of the equality does not help.
-    #_(testing "triple roles are tokens"
+    (testing "triple roles are tokens"
       (is (= [{:tkn :true, :line 1, :col 1}
               {:tkn \?, :line 1, :col 5}
               {:tkn {:role-name :foo/bar}, :line 1, :col 6}
@@ -72,14 +71,13 @@
               {:tkn {:role-name :foo/bat}, :line 1, :col 15}
               {:tkn :rad-mapper.parse/eof}]
              (-> (test-tokenize "true?:foo/bar::foo/bat")
-                 str
-                 read-string))))))
+                 dev/remove-meta))))))
 
 (deftest regexp
   (testing "Testing translation of regular expression"
-    ;; ToDo: Looks fine.
-    #_(is (= {:raw "/^abc\\d+$/", :tkn {:base "/^abc\\d+$/", :flags {}}}
-           (par/regex-from-string "/^abc\\d+$/")))))
+    (is (= {:raw "/^abc\\d+$/", :tkn {:base "/^abc\\d+$/", :flags {}}}
+           (-> (par/regex-from-string "/^abc\\d+$/")
+               dev/remove-meta)))))
 
 ;;; Fix for BufferedReader
 #_(deftest continuable
