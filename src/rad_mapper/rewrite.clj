@@ -207,7 +207,7 @@
     ~@(map rewrite (:exp m))))
 
 (defrewrite :JaKVPair [m]
-  `(assoc ~(:key m) ~(rewrite (:val m))))
+  `(assoc ~(rewrite (:key m)) ~(rewrite (:val m))))
 
 (def ^:dynamic in-regex-fn?
   "While rewriting built-in functions that take regular expressions rewrite
@@ -244,10 +244,13 @@
 (defrewrite :JaQueryDef [m]
   `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:triples m))))
 
-(defrewrite :JaTriple [m]
+(defrewrite :JaQueryTriple [m]
   `[~(rewrite (:ent m))
     ~(rewrite (:rel m))
     ~(rewrite (:val-exp m))])
+
+(defrewrite :JaQueryPred [m]
+  `[~(rewrite (:exp m))])
 
 (defrewrite :JaEnforceDef [m]
     `(~'bi/enforce {:params ~(-> m :params rewrite)
@@ -283,13 +286,11 @@
     ~(-> m :exp1 rewrite)
     ~(-> m :exp2 rewrite)))
 
-(defn atomic?
-  "This is mostly to speed up stepping through walk-for-bvecs!"
-  [exp]
-  (or (string? exp)
-      (number? exp)
-      (keyword? exp)
-      (and (map? exp) (#{:JaField :JaJvar} (:_type exp)))))
+(defrewrite :JaOptionsMap [m]
+  (reduce (fn [res pair]
+            (assoc res (-> pair :key keyword) (-> pair :val rewrite)))
+          {}
+          (:kv-pairs m)))
 
 ;;;----------------------------- Rewriting binary operations (the remainder of this file) -------------
 

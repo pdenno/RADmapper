@@ -236,8 +236,8 @@
                      word (subs s 0 (or pos (count s)))]
                  (or ; We don't check for "builtin-fns"; as tokens they are just jvars.
                   (and (keywords word)    {:ws ws :raw word :tkn (keyword word)})
-                  (when-let [[_ id] (re-matches #"^([a-zA-Z0-9\_]+).*" word)]              ; field.
-                    {:ws ws :raw id :tkn (->JaField id)})
+                  (when-let [[_ id] (re-matches #"^([a-zA-Z0-9\_]+).*" word)]              ; field or symbol in params map
+                    {:ws ws :raw id :tkn (read-string id)})
                   (when-let [[_ id] (re-matches #"^(\$[a-zA-Z][A-Za-z0-9\_]*).*" word)]    ; jvar
                     {:ws ws :raw id :tkn (map->JaJvar {:jvar-name id})})
                   (when-let [[_ id] (re-matches #"^(\${1,3}).*" word)]                     ; $, $$, $$$.
@@ -621,10 +621,13 @@
           (literal? tkn)                      (parse :ptag/literal ps)       ; <literal>
           (and (jvar? tkn) (= tkn2 :binding)) (parse :ptag/jvar-decl ps)     ; <jvar-decl>
           (or (jvar? tkn)
-              (qvar? tkn) ; really?
-              (field? tkn))                   (as-> ps ?ps
+              (qvar? tkn)
+              (field? tkn))                   (as-> ps ?ps                   ; <jvar>, <qvar> or `backquoted field`
                                                 (assoc ?ps :result tkn)
-                                                (eat-token ?ps)),            ; <field>, <jvar>, or <qvar>
+                                                (eat-token ?ps))
+          (symbol? tkn)                       (as-> ps ?ps                   ; <field> (not part of param-struct)
+                                                (assoc ?ps :result (->JaField (name tkn)))
+                                                (eat-token ?ps)),
           :else
           (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
                     {:got tkn}))))
@@ -672,9 +675,13 @@
 
 (defparse :ptag/field
   [ps]
-  (as-> ps ?ps
-    (assoc ?ps :result (:head ?ps))
-    (eat-token ?ps field?)))
+  (cond (-> ps :head symbol?)  (as-> ps ?ps
+                                 (assoc ?ps :result (->JaField (?ps :head name)))
+                                 (eat-token ?ps))
+        (-> ps :head field?)   (as-> ps ?ps
+                                 (assoc ?ps :result (:head ?ps))
+                                 (eat-token ?ps))
+        :else                  (ps-throw ps "expected a path field" {:got (:head ps)})))
 
 (defparse :ptag/param
   [ps]
@@ -780,13 +787,18 @@
         (parse operand-tag ?ps1)
         (assoc ?ps1 :result (->JaUniOpExp (recall ?ps1 :op) (:result ?ps1)))))))
 
-;;; <map-pair> ::=  <exp>" ":" <exp>
+;;; <map-pair> ::=  ( <string> | <qvar> ) ":" <exp>
 (defrecord JaKVPair [key val])
 (defparse :ptag/obj-kv-pair
   [pstate]
   (as-> pstate ?ps
-    (parse :ptag/string ?ps)
-    (store ?ps :key)
+    (if (-> ?ps :head qvar?)
+      (as-> ?ps ?ps1
+        (store ?ps1 :key (:head ?ps))
+        (eat-token ?ps1))
+      (as-> ?ps ?ps1
+        (parse :ptag/string ?ps1)
+        (store ?ps1 :key)))
     (eat-token ?ps \:)
     (parse :ptag/exp ?ps)
     (assoc ?ps :result (->JaKVPair
@@ -834,21 +846,42 @@
       (parse-list ?ps \( \) \, :ptag/exp)
       (assoc ?ps :result (->JaFnCall (-> ?ps (recall :fn-name) :jvar-name) (:result ?ps)))))
 
-;;; <triples> ::= <triple>+
-(defparse :ptag/triples
+;;; <query-patterns> ::= <q-pattern>+
+(defparse :ptag/query-patterns
   [ps]
-  (let [ps-one (parse :ptag/triple ps)]
+  (let [ps-one (parse :ptag/q-pattern ps)]
     (loop [result (vector (:result ps-one))
            ps ps-one]
       (if (not= \[ (:head ps))
         (assoc ps :result result)
-        (let [ps (parse :ptag/triple ps)]
+        (let [ps (parse :ptag/q-pattern ps)]
           (recur (conj result (:result ps))
                  ps))))))
 
-;;; <triple> :: '[' <QueryVar> <TripleRole> (<QueryVar> | <exp>) ']'
-(defrecord JaTriple[ent rel val-exp])
-(defparse :ptag/triple
+;;; <q-pattern> :: <q-pattern-triple> | <q-pattern-pred>
+(defparse :ptag/q-pattern
+  [ps]
+  (let [ps   (look ps 1)
+        tkn2 (-> ps :look (get 1))]
+    (if (= tkn2 \()
+      (parse :ptag/q-pattern-pred ps)
+      (parse :ptag/q-pattern-triple ps))))
+
+;;; <q-pattern-pred> :: '[' '(' <query-predicate> ')' ']'
+(defrecord JaQueryPred[exp])
+(defparse :ptag/q-pattern-pred
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps \[)
+    (eat-token ?ps \()
+    (parse :ptag/fn-call ?ps)
+    (eat-token ?ps \))
+    (eat-token ?ps \])
+    (assoc ?ps :result (->JaQueryPred (:result ?ps)))))
+
+;;; <q-pattern-triple> :: '[' <QueryVar> <TripleRole> (<QueryVar> | <exp>) ']'
+(defrecord JaQueryTriple[ent rel val-exp])
+(defparse :ptag/q-pattern-triple
   [ps]
   (as-> ps ?ps
     (eat-token ?ps \[)
@@ -864,7 +897,7 @@
           (parse :ptag/exp ?ps1)
           (store ?ps1 :third)))
     (eat-token ?ps \])
-    (assoc ?ps :result (->JaTriple (recall ?ps :ent) (recall ?ps :role) (recall ?ps :third)))))
+    (assoc ?ps :result (->JaQueryTriple (recall ?ps :ent) (recall ?ps :role) (recall ?ps :third)))))
 
 ;;; <fn-def> ::= 'function' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
 (defrecord JaFnDef [vars body])
@@ -880,7 +913,7 @@
     (eat-token ?ps \})
     (assoc ?ps :result (->JaFnDef (recall ?ps :jvars) (recall ?ps :body)))))
 
-;;; <query-def> ::= 'query '(' <jvar>? [',' <jvar>]* ')' '{' <triples> '}'
+;;; <query-def> ::= 'query '(' <jvar>? [',' <jvar|options>]* ')' '{' <query-patterns> '}'
 (defrecord JaQueryDef  [params triples])
 (defparse :ptag/query-def
   [ps]
@@ -889,9 +922,20 @@
     (parse-list ?ps \( \) \, :ptag/jvar)
     (store ?ps :params)
     (eat-token ?ps \{)
-    (parse :ptag/triples ?ps)
+    (parse :ptag/query-patterns ?ps)
     (eat-token ?ps \})
     (assoc ?ps :result (->JaQueryDef (recall ?ps :params) (:result ?ps)))))
+
+;;; ToDo: I don't care where you put the options.
+;;;       I don't care whether there is more than one options map.
+;;;       Should I?
+(defparse :ptag/jvar|options
+  [ps]
+  (if (-> ps :head jvar?)
+    (as-> ps ?ps
+      (assoc ?ps :result (:head ?ps))
+      (eat-token ?ps))
+    (parse :ptag/options-map ps)))
 
 ;;; ToDo: These aren't jvars, probably want some sort of optional parameter syntax.
 ;;; <enforce-def> ::= 'enforce' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
@@ -900,7 +944,7 @@
   [ps]
   (as-> ps ?ps
     (eat-token ?ps :enforce)
-    (parse-list ?ps \( \) \, :ptag/exp)
+    (parse-list ?ps \( \) \, :ptag/jvar|options)
     (store ?ps :params)
     (eat-token ?ps \{)
     (parse :ptag/exp ?ps)
@@ -925,3 +969,48 @@
         (assoc ?ps :result (->JaImmediateUse (recall ?ps :def) (recall ?ps :args))))
       ;; This if it is just a definition (which will be assigned to a $id).
       ps)))
+
+;;; The next four 'options' rules are just for query and enforce keyword parameters (so far).
+(defrecord JaOptionsMap [kv-pairs])
+;;; <options-struct> '{' <options-kv-pair>* '}'
+(defparse :ptag/options-map
+  [ps]
+  (as-> ps ?ps
+    (parse-list ?ps \{ \} \, :ptag/option-kv-pair)
+    (assoc ?ps :result (->JaOptionsMap (:result ?ps)))))
+
+(defrecord JaOptionKeywordPair [key val])
+;;; <options-kv-pair> ::= <symbol> ':' <option-val>
+(defparse :ptag/option-kv-pair
+  [ps]
+  (as-> ps ?ps
+    (store ?ps :key (:head ?ps))
+    (eat-token ?ps symbol?)
+    (eat-token ?ps \:)
+    (parse :ptag/option-val ?ps)
+    (store ?ps :val)
+    (assoc ?ps :result (->JaOptionKeywordPair (recall ?ps :key) (recall ?ps :val)))))
+
+(defn oval? [obj]
+  (or (symbol? obj) (qvar? obj) (#{:true :false} obj)))
+
+(defrecord JaOptionVal [exp])
+;;; <option-val> ::= <option-val-atom> | '[' <option-val-atom> ( ',' <option-val-atom> )* ']'
+(defparse :ptag/option-val
+  [ps]
+  (let [tkn (:head ps)]
+    (if (oval? tkn)
+      (as-> ps ?ps
+        (assoc ?ps :result tkn)
+        (eat-token ?ps))
+      (parse-list ps \[ \] \, :ptag/option-val-atom))))
+
+;;; <option-val-atom> ::= <symbol> | <qvar> | <boolean>
+(defparse :ptag/option-val-atom
+  [ps]
+  (let [tkn (:head ps)]
+    (if (oval? tkn)
+      (as-> ps ?ps
+        (assoc ?ps :result tkn)
+        (eat-token ?ps))
+      (ps-throw ps "Expected a symbol, qvar or boolean." {:got tkn}))))

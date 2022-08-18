@@ -498,11 +498,14 @@
    It is an error if str is not a string."
   ([pattern] ($match @$ pattern :unlimited))
   ([p1 p2] (if (util/regex? p1) ($match @$ p1 p2) ($match p1 p2 :unlimited)))
-  ([str pattern limit]
-   (s/assert ::string str)
+  ([s pattern limit]
+   (s/assert (s/or ::string keyword?) s)
    (s/assert ::regex pattern)
    (s/assert ::pos-limit limit)
-   (let [matcher (re-matcher pattern str)
+   (let [s (if (keyword? s) ; query-roles are allowed.
+             (if (namespace s) (str (namespace s) "/" (name s)) (name s))
+             s)
+         matcher (re-matcher pattern s)
          result (loop [res []
                        adv 0
                        lim limit]
@@ -512,7 +515,7 @@
                     (cond (and (number? limit) (zero? lim)) res
                           (empty? match) res
                           :else
-                          (let [ix (core/+ adv (or (index-of (subs str adv) match) 0))]
+                          (let [ix (core/+ adv (or (index-of (subs s adv) match) 0))]
                             (recur
                              (conj res (with-meta {"match" match, "index" ix, "groups" (vec groups)}
                                          {:bi/regex-result? true}))
@@ -1244,13 +1247,6 @@
 ;;; (3) the name of a baseline for the numbering of years, for example the reign of a monarch
 
 ;;; https://docs.oracle.com/javase/8/docs/api/java/time/format/DateTimeFormatter.html
-
-[{:item "[M01]", :front "", :back "/"}
- {:item "[D01]", :front "/", :back "/"}
- {:item "[Y0001]", :front "/", :back " "}
- {:item "[h#1]", :front " ", :back ":"}
- {:item "[m01]", :front ":", :back ""}
- {:item "[P]", :front "", :back ""}]
 (defn translate-part
   [fmt-map]
   (let [[_ var fmt] (re-matches #"\[(\w)([^\]]*)\]" (:item fmt-map))
@@ -1259,7 +1255,7 @@
            :java
            (case var
              "P" "a"
-             ("z" "Z") "Z" ; ToDo: Investigte
+             ("z" "Z") "Z" ; ToDo: Investigate
              "Y"       (->> (repeat (-> fmt-map :fmt count) "y") (apply str))
              "M"       (->> (repeat (-> fmt-map :fmt count) "M") (apply str))
              "D"       (->> (repeat (-> fmt-map :fmt count) "d") (apply str))
@@ -1269,9 +1265,8 @@
              ""))))
 
 ;;; https://www.w3.org/TR/xpath-functions-31/#rules-for-datetime-formatting, 9.8.4.1 The picture string
-;;; Perhaps also https://www.baeldung.com/java-xpath
 ;;; (date-fmt-xpath2java "[M01]/[D01]/[Y0001] [h#1]:[m01][P]")
-;;; USE THIS SOLUTION STYLE IN $MATCH <=============================================================================!!!!!!
+;;; =======> USE THIS SOLUTION STYLE IN $MATCH <====================================
 (defn date-fmt-xpath2java
   "Return a string iterpreting an xpath picture to the equivalent string for
    for java.time.format.DateTimeFormatter.
@@ -1313,7 +1308,7 @@
   (if pic
     (let [fmt-string (date-fmt-xpath2java pic)
           dtf (DateTimeFormatter/ofPattern fmt-string)]
-      (str (.format dtf java-tstamp))) ; <========     Unsupported field: OffsetSeconds
+      (str (.format dtf java-tstamp)))
     (str java-tstamp)))
 
 ;;; $fromMillis
@@ -1544,7 +1539,7 @@
   "Read a file of JSON or XML, creating a map."
   ([fname] ($readFile fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([fname opts]
-   (let [type (second (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname))]
+   (let [type (-> (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname) second)]
      (reset! $$ (case (or (get opts "type") type "xml")
                   "json" (-> fname slurp json/read-str)
                   "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
@@ -1624,14 +1619,16 @@
                     (filter #(str/starts-with? % "?"))
                     distinct)]
     `[:find ~@vars
-      :keys ~@(map symbol vars)
+      :keys ~@(mapv symbol vars)
       :where ~@(tp-aux body)])))
 
 (defn immediate-query-fn
     "Return a function that can be used immediately to make the query defined in body."
   [body]
-  (fn [data|db]
-    (let [conn (if (core/= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
+  (fn [data|db] ; ToDo: Could I make this use $ if no data supplied?
+    (let [conn (if (core/= datahike.db.DB (type data|db))
+                 data|db
+                 (-> data|db keywordize-keys qu/db-for!))]
       (->> (d/q (qform-runtime-sub body {}) conn) ; This is possible because body is data to d/q.
            ;; Remove binding sets that involve a schema entity.
            (remove (fn [bset] (some (fn [bval]
@@ -1685,7 +1682,7 @@
     2) can be called with parameters to return a function that
        can be used directly."
   [& {:keys [params body]}]
-  (if (empty? params)
+  (if (or (empty? params) (not (contains? params :templateParams)))
     ;; The immediate function.
     `(->
       (fn [~'b-set] ~body)

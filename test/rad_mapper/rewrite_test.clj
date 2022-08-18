@@ -174,3 +174,10 @@
                        $y "bat"
                        $yy "ybat"]
                    ($f $x $y))))))
+
+(deftest options-map
+  (testing "rewriting an options map"
+    (is (= '{:asKeys [?ownerName ?systemName], :otherStuff true}
+           (rew/rewrite* :ptag/options-map "{asKeys     : [?ownerName, ?systemName],
+                                             otherStuff : true}"
+                         :rewrite? true)))))

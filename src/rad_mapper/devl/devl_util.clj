@@ -2,7 +2,9 @@
   "Tools for repl-based development"
   (:require
    [clojure.pprint :refer [pprint]]
-   [clojure.test :refer [is testing]]))
+   [clojure.test :refer [is testing]]
+   [datahike.api           :as d]
+   [datahike.pull-api      :as dp]))
 
 ;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])
 
@@ -90,3 +92,31 @@
                       :simplify? ~simplify?
                       :rewrite? ~rewrite?
                       :keep-meta? ~keep-meta?)))))
+
+;;; Adapted from owl-db-tools/resolve-obj, which uses :resource/iri as keys exclusively.
+(defn resolve-tree
+  "Resolve :db/id in the argument map."
+  [m conn & {:keys [keep-db-ids?] :or {keep-db-ids? true}}]
+  (let [expanded? (atom #{})]
+    (letfn [(subobj [x]
+              (cond
+                ;; for object references...
+                (and (map? x) (contains? x :db/id) (== (count x) 1))
+                (if (@expanded? (:db/id x))
+                  {:reference-to x}
+                  (do (swap! expanded? conj (:db/id x))
+                      (subobj (dp/pull conn '[*] (:db/id x))))),
+
+                ;; for an ordinary entity...
+                (map? x)
+                (reduce-kv
+                 (fn [m k v] (if (and (= k :db/id) (not keep-db-ids?)) m (assoc m k (subobj v))))
+                 {} x),
+
+                ;; for collections of data...
+                (vector? x) (mapv subobj x),
+
+                ;; for a data element
+                :else x))]
+      (cond-> (reduce-kv (fn [m k v] (assoc m k (subobj v))) {} m)
+        (not keep-db-ids?) (dissoc :db/id)))))

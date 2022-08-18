@@ -122,22 +122,22 @@
 
 (deftest query-tests
   (testing "Testing that queries parse okay."
-    (is (= {:_type :JaTriple,
+    (is (= {:_type :JaQueryTriple,
             :ent {:_type :JaQvar, :qvar-name "?x"},
             :rel {:_type :JaTripleRole, :role-name :rdf/type},
             :val-exp "owl/Class"}
-           (rew/rewrite* :ptag/triple "[?x :rdf/type 'owl/Class']" :simplify? true)))
-    (is (= [{:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?x"},
+           (rew/rewrite* :ptag/q-pattern "[?x :rdf/type 'owl/Class']" :simplify? true)))
+    (is (= [{:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?x"},
              :rel {:_type :JaTripleRole, :role-name :a}, :val-exp "one"}
-            {:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?y"},
+            {:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?y"},
              :rel {:_type :JaTripleRole, :role-name :b}, :val-exp "two"}]
-           (rew/rewrite* :ptag/triples "[?x :a 'one'] [?y :b 'two']" :simplify? true)))
+           (rew/rewrite* :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']" :simplify? true)))
     (is (= {:_type :JaQueryDef,
             :params [],
             :triples
-            [{:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
+            [{:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
               :rel {:_type :JaTripleRole, :role-name :rdf/type}, :val-exp "owl/Class"}
-             {:_type :JaTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
+             {:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
               :rel {:_type :JaTripleRole, :role-name :resource/iri},
               :val-exp {:_type :JaQvar, :qvar-name "?class-iri"}}]}
            (rew/rewrite* :ptag/exp q1 :simplify? true)))))
@@ -161,7 +161,7 @@
     (is (= '{:_type :JaImmediateUse,
              :def {:_type :JaQueryDef,
                    :params [{:_type :JaJvar, :jvar-name "$name"}],
-                   :triples [{:_type :JaTriple,
+                   :triples [{:_type :JaQueryTriple,
                               :ent {:_type :JaQvar, :qvar-name "?e"},
                               :rel {:_type :JaTripleRole, :role-name :name},
                               :val-exp {:_type :JaJvar, :jvar-name "$name"}}]},

@@ -1,0 +1,52 @@
+{
+  "systems": {
+    "system1": {
+      "owners": {
+	"owner1": {
+	  "device1": {
+	    "id": 100,
+	    "status": "Ok"
+	  },
+	  "device2": {
+	    "id": 200,
+	    "status": "Ok"
+	  }
+	},
+	"owner2": {
+	  "device3": {
+	    "id": 300,
+	    "status": "Ok"
+	  },
+	  "device4": {
+	    "id": 400,
+	    "status": "Ok"
+	  }
+	}
+      }
+    },
+    "system2": {
+      "owners": {
+	"owner1": {
+	  "device5": {
+	    "id": 500,
+	    "status": "Ok"
+	  },
+	  "device6": {
+	    "id": 600,
+	    "status": "Ok"
+	  }
+	},
+	"owner2": {
+	  "device7": {
+	    "id": 700,
+	    "status": "Ok"
+	  },
+	  "device8": {
+	    "id": 800,
+	    "status": "Ok"
+	  }
+	}
+      }
+    }
+  }
+}

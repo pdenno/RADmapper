@@ -2,13 +2,14 @@
   (:require
    [clojure.pprint         :refer [pprint]]
    [clojure.test           :refer  [deftest is testing]]
+   [clojure.walk]
    [datahike.api           :as d]
    [datahike.pull-api      :as dp]
    [owl-db-tools.resolvers :refer [pull-resource]]
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer run run-rew examine]]))
+   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine]]))
 
 (defmacro run-test-rew
   "Use this to expand devl/run-test with :rewrite? true."
@@ -241,29 +242,29 @@
 (defn enforce-reduce-demo
   "This demonstrates rewriting and basics operation; some _stuff below is not used."
   []
-  (let [_b-sets   [{:?ent 1 :?word-1 "Hello" :?word-2 "world!"}
-                   {:?ent 2 :?word-1 "Nice"  :?word-2 "day!"}]
+  (let [_b-sets   [{:?ent 1 :?word1 "Hello" :?word2 "world!"}
+                   {:?ent 2 :?word1 "Nice"  :?word2 "day!"}]
         ;; Same thing produced by running a query with in-line data.
         b-sets (rew/rewrite* :ptag/exp
-                             "query(){[?ent :greeting/word-1 ?word-1] [?ent :greeting/word-2 ?word-2]}
-                                       ([{'greeting/word-1' : 'Hello', 'greeting/word-2' : 'world!'},
-                                         {'greeting/word-1' : 'Nice',  'greeting/word-2' : 'day!'}])"
+                             "query(){[?ent :greeting/word1 ?word1] [?ent :greeting/word2 ?word2]}
+                                       ([{'greeting/word1' : 'Hello', 'greeting/word2' : 'world!'},
+                                         {'greeting/word1' : 'Nice',  'greeting/word2' : 'day!'}])"
                              :execute? true)
         ;; Body will be used by bi/enforce to define a function and associate metadata with it.
         _e-fn :nyi #_(bi/enforce {:params [],
                            :body (-> {}
-                                     (assoc "target/word-1" (bi/get-from-b-set b-set :?word-1))
-                                     (assoc "target/word-2" (bi/get-from-b-set b-set :?word-2)))})
+                                     (assoc "target/word1" (bi/get-from-b-set b-set :?word1))
+                                     (assoc "target/word2" (bi/get-from-b-set b-set :?word2)))})
         ;; Same thing
         e-fn (rew/rewrite* :ptag/exp
-                           "enforce (){ {'target/word-1' : ?word-1, 'target/word-2' : ?word-2} }"
+                           "enforce (){ {'target/word1' : ?word1, 'target/word2' : ?word2} }"
                            :execute? true)]
         ;; Run it!
     (bi/$reduce b-sets e-fn [])))
 
 (deftest the-enforce-reduce-demo
   (testing "Testing the basic use of enforce in $reduce."
-    (is (= [#:target{:word-1 "Nice", :word-2 "day!"} #:target{:word-1 "Hello", :word-2 "world!"}]
+    (is (= [#:target{:word1 "Nice", :word2 "day!"} #:target{:word1 "Hello", :word2 "world!"}]
            (enforce-reduce-demo)))))
 
 ;;;====================================================================
@@ -336,10 +337,8 @@
                      [?class :resource/namespace  ?class-ns]
                      [?class :resource/name       ?class-name]
                    };  /* Defines a higher-order function */
-
       $qClass := $qtype('owl/Class');
       $qProp  := $qtype('owl/ObjectProperty');
-
       $bsets := $qClass($getSource($mc, 'owl-source')); /* Run query; return a collection of binding sets. */
                                                         /* Could use ~> here; instead, I'm passing $bsets. */
       $reduce($bsets,
@@ -409,6 +408,7 @@
                                                (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
                        [])))))))
 
+;;; ToDo: Drop the addSource stuff?
 (def owl-query-immediate
 "
   (   $mc := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'), 'owl-source');
@@ -580,26 +580,75 @@
              $propBsets ($quProp $data)]
          (bi/$reduce $propBsets $enPropTable $tar_data))))))
 
+(deftest rearrange
+  (testing "rearrange data as shown in  https://try.jsonata.org/sTPDRs--6."
+    (testing "query for rearrange example."
+      (let [result (->> (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
+                                  $q := query(){ [?s ?system-name ?x]
+                                                 [($match(?system-name, /system\\d/))]
+                                                 [?x :owners ?y]
+                                                 [?y ?owner-name ?z]
+                                                 [($match(?owner-name, /owner\\d/))]
+                                                 [?z ?device-name ?d]
+                                                 [($match(?device-name, /device\\d/))]
+                                                 [?d :id ?id]
+                                                 [?d :status ?status] };
+                                   $q($data) )")
+                        (map #(dissoc % :?y :?s :?z :?d :?x))
+                        set)]
+        (is (= #{{:?device-name :device3, :?system-name :system1, :?id 300, :?status "Ok", :?owner-name :owner2}
+                 {:?device-name :device8, :?system-name :system2, :?id 800, :?status "Ok", :?owner-name :owner2}
+                 {:?device-name :device2, :?system-name :system1, :?id 200, :?status "Ok", :?owner-name :owner1}
+                 {:?device-name :device4, :?system-name :system1, :?id 400, :?status "Ok", :?owner-name :owner2}
+                 {:?device-name :device5, :?system-name :system2, :?id 500, :?status "Ok", :?owner-name :owner1}
+                 {:?device-name :device7, :?system-name :system2, :?id 700, :?status "Ok", :?owner-name :owner2}
+                 {:?device-name :device6, :?system-name :system2, :?id 600, :?status "Ok", :?owner-name :owner1}
+                 {:?device-name :device1, :?system-name :system1, :?id 100, :?status "Ok", :?owner-name :owner1}}
+               result))))
+    (testing "full example"
+      (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
+                $q := query(){ [?s ?systemName ?x]
+                               [($match(?systemName, /system\\d/))]
+                               [?x :owners ?y]
+                               [?y ?ownerName ?z]
+                               [($match(?ownerName, /owner\\d/))]
+                               [?z ?deviceName ?d]
+                               [($match(?deviceName, /device\\d/))]
+                               [?d :id ?id]
+                               [?d :status ?status] };
+
+             $bsets := $q($data);
+
+             $reduce($bsets,
+                     enforce({asKeys : [?ownerName, ?systemName]})
+                              {  {'owners':
+                                     {?ownerName:
+                                        {?systemName:
+                                           {?deviceName : {'id'     : ?id,
+                                                           'status' : ?status}}}}}
+                              }
+                    )
+            )"))))
+
+
 (defn tryme []
-  (let [$data (bi/$readFile "data/testing/owl-example.edn")
-        $qtype (bi/query '[$rdfType $extraTrips]
-                         '[[?class :rdf/type $rdfType]
-                           [?class :resource/iri ?class-iri]
-                           [?class :resource/namespace ?class-ns]
-                           [?class :resource/name ?class-name]])
-        $etype (bi/enforce {:params [$tableType],
-                            :body (-> {}
-                                      (assoc "instance-of" "insert-row")
-                                      (assoc "table" $tableType)
-                                      (assoc "content" (-> {}
-                                                           (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
-                                                           (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
-                                                           (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
-        $quClass ($qtype "owl/Class")
-        $quProp ($qtype "owl/ObjectProperty")
-        $enClassTable ($etype "ClassDefinition")
-        $enPropTable ($etype "PropertyDefinition")
-        $clasBsets ($quClass $data)
-        $tar_data (bi/$reduce $clasBsets $enClassTable [])
-        $propBsets ($quProp $data)]
-    (bi/$reduce $propBsets $enPropTable $tar_data)))
+  (let [f (bi/primary
+           (let [$data (bi/$readFile "data/testing/jsonata/sTPDRs--6.json")
+                 $q (bi/query
+                     '[]
+                     '[[?s ?system-name ?x]
+                       [(bi/$match ?system-name #"system\d")]
+                       [?x :owners ?y]
+                       [?y ?owner-name ?z]
+                       [(bi/$match ?owner-name #"owner\d")]
+                       [?z ?device-name ?d]
+                       [(bi/$match ?device-name #"device\d")]
+                       [?d :id ?id]
+                       [?d :status ?status]])]
+             ($q $data)))]
+    (f)))
+
+(defn make-db []
+  (-> (bi/$readFile "data/testing/jsonata/sTPDRs--6.json") ; "data/testing/jsonata/sTPDRs--6-output.json"
+      clojure.walk/keywordize-keys
+      qu/db-for!))
