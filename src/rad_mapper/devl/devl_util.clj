@@ -8,19 +8,23 @@
 
 ;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])
 
-(defn clean-form [form]
+(defn clean-form
+  "Replace some namespaces with aliases"
+  [form]
   (let [ns-alia {"rad-mapper.builtins" "bi"
                  "bi"                  "bi"
                  "java.lang.Math"      "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
     (letfn [(ni [form]
-              (cond (vector? form) (->> form (map ni) doall vec)
-                    (seq? form)    (->> form (map ni) doall)
-                    (map? form)    (reduce-kv (fn [m k v] (assoc m k (ni v))) {} form)
-                    (symbol? form) (let [nsa (-> form namespace ns-alia)]
-                                     (if-let [[_ s] (re-matches #"([a-zA-Z0-9\-]+)__.*" (name form))]
-                                       (symbol nsa s)
-                                       (->> form name (symbol nsa))))
-                    :else form))]
+              (let [m (meta form)]
+                (cond (vector? form) (-> (->> form (map ni) doall vec) (with-meta m)),
+                      (seq? form)    (-> (->> form (map ni) doall) (with-meta m)),
+                      (map? form)    (-> (reduce-kv (fn [m k v] (assoc m k (ni v))) {} form) (with-meta m)),
+                      (symbol? form) (-> (let [nsa (-> form namespace ns-alia)]
+                                           (if-let [[_ s] (re-matches #"([a-zA-Z0-9\-]+)__.*" (name form))]
+                                             (symbol nsa s)
+                                             (->> form name (symbol nsa))))
+                                         (with-meta m)),
+                      :else form)))]
       (ni form))))
 
 (defn nicer
@@ -58,20 +62,23 @@
   []
   (-> (symbol "rad-mapper.rewrite" "rewrite*") resolve))
 
+(def diag (atom nil))
+
 (defn run
   "Run the exp through whatever steps are specified; defaults to :execute and
    removes any metadata from value returned and its substructure."
   [exp & {:keys [simplify? rewrite? debug? debug-parse? keep-meta?]}]
   (let [execute? (not (or simplify? rewrite?))]
-    (cond-> ((rew-rewrite*)
-             :ptag/exp exp
-             :simplify? simplify?
-             :rewrite? rewrite?
-             :execute? execute?
-             :debug? debug?
-             :debug-parse? debug-parse?)
+    (cond->> ((rew-rewrite*)
+              :ptag/exp exp
+              :simplify? simplify?
+              :rewrite? rewrite?
+              :execute? execute?
+              :debug? debug?
+              :debug-parse? debug-parse?)
+      true (reset! diag)
       (not keep-meta?) remove-meta
-      true nicer-sym)))
+      false nicer-sym))) ; ToDo: temporarily removed
 
 (defn run-rew
   "Run, but with :rewrite? true."

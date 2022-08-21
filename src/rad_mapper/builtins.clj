@@ -80,19 +80,21 @@
    (flatten nil) returns an empty sequence.
    EXCEPTION: If the thing is a vector with metadata :type :bi/json-array, it isn't flattened. "
   [x]
-  (letfn [(seq-except? [o]
-            (and (sequential? o)
-                 (not (-> o meta :bi/json-array?))))]
-    (-> (remove seq-except? (tree-seq seq-except? seq x))
-        vec)))
+  (let [m (meta x)]
+    (letfn [(seq-except? [o]
+              (and (sequential? o)
+                   (not (-> o meta :bi/json-array?))))]
+      (-> (remove seq-except? (tree-seq seq-except? seq x))
+          vec
+          (with-meta m)))))
 
 (defn container?   [obj] (-> obj meta :bi/container?))
-(defn containerize [obj] (with-meta obj (merge (meta obj) {:bi/container? true})))
+(defn containerize [obj] (-> obj (with-meta (merge (meta obj) {:bi/container? true}))))
 (defn containerize?
   "If obj is a vector, set  metadata :bi/container?."
   [obj]
   (if (vector? obj)
-    (with-meta obj (merge (meta obj) {:bi/container? true}))
+    (-> obj (with-meta (merge (meta obj) {:bi/container? true})))
     obj))
 
 (defn cmap
@@ -131,23 +133,26 @@
        the level of the outer sequence. A result sequence will never contain child sequences (they are flattened)."
   [obj]
   (letfn [(elim-empty [o] ; rule-1
-            (cond (map? o) (reduce-kv
-                            (fn [m k v]
-                              (if (or (nil? v) (and (coll? v) (empty? v))) m (assoc m k (elim-empty v))))
-                            {}
-                            o)
-                  (vector? o) (->> o (remove nil?) (mapv elim-empty))
-                  :else o))]
+            (let [m (meta o)]
+              (cond (map? o) (-> (reduce-kv
+                                  (fn [m k v]
+                                    (if (or (nil? v) (and (coll? v) (empty? v))) m (assoc m k (elim-empty v))))
+                                  {}
+                                  o)
+                                 (with-meta m)),
+                    (vector? o) (-> (->> o (remove nil?) (mapv elim-empty)) (with-meta m))
+                    :else o)))]
     (cond (container? obj)
           (let [len (count obj)]
             (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
                   (== 1 len) (-> obj first elim-empty) ; (-> Rule 2, Rule 1)
                   :else (-> (elim-empty obj) flatten-except-json containerize))) ; Rule 1, Rule 3 JSON array.
 
-          (vector? obj) (let [obj (->> obj (remove nil?) vec)
+          (vector? obj) (let [m   (meta obj)
+                              obj (-> (->> obj (remove nil?) vec) (with-meta m))
                               len (count obj)]
                           (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
-                                ;(== 1 len) (first obj)
+                                ;;(== 1 len) (first obj)
                                 :else obj))
           :else obj)))
 
@@ -271,89 +276,79 @@
         If the array contains objects, and the location path selects fields within these objects, then each object within the array
         will be queried for selection. [This rule has nothing to do with filtering!]"
   [pred|ix-fn]
-  (with-meta
-    (fn filter-step [obj prior-step]
-      (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
-            call-type (:bi/call-type prior-step)
-            ob (if (core/= :bi/get-step call-type)
-                 (let [k (:bi/attr prior-step)] ; non-compositional semantics
-                   (if (vector? obj)
-                     (cmap #(get % k) (containerize obj))
-                     (get obj k)))
-                 obj)]
-        (if (number? prix)   ; Array behavior. Caller will map over it.
-          (let [ix (-> prix Math/floor int)] ; Really! I checked!
-            (if (-> ob meta :bi/json-array?)
-              (aref ob ix)
-              (-> (cmap #(aref % ix) ob) jflatten)))
-          (as-> ob ?o          ; Filter behavior.
-            (singlize ?o)
-            (-> (filterv pred|ix-fn ?o) containerize?)))))
-    {:bi/step-type :bi/filter-step}))
+  (-> (fn filter-step [obj prior-step]
+        (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
+              call-type (:bi/call-type prior-step)
+              ob (if (core/= :bi/get-step call-type)
+                   (let [k (:bi/attr prior-step)] ; non-compositional semantics
+                     (if (vector? obj)
+                       (cmap #(get % k) (containerize obj))
+                       (get obj k)))
+                   obj)]
+          (if (number? prix)   ; Array behavior. Caller will map over it.
+            (let [ix (-> prix Math/floor int)] ; Really! I checked!
+              (if (-> ob meta :bi/json-array?)
+                (aref ob ix)
+                (-> (cmap #(aref % ix) ob) jflatten)))
+            (as-> ob ?o          ; Filter behavior.
+              (singlize ?o)
+              (-> (filterv pred|ix-fn ?o) containerize?)))))
+      (with-meta {:bi/step-type :bi/filter-step})))
 
 (defn get-step
   "Perform the mapping activity of the 'a' in $.a, for example.
    This function is called with the state object.
    It returns the state object with :sys/$ updated."
   [k]
-  (with-meta
-    (fn get-step [& args] ; No arg if called in a primary.
-      (let [obj (-> (if (-> args first empty?) @$ (first args)))]
-        (cond (map? obj)      (get obj k)
-              (vector? obj)   (->> obj
-                                   containerize
-                                   (cmap #(get % k))
-                                   ;; lightweight flatten
-                                   (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) [])
-                                   containerize)
-              :else           nil)))
-    {:bi/step-type :bi/get-step :bi/arg k}))
+  (-> (fn get-step [& args] ; No arg if called in a primary.
+        (let [obj (-> (if (-> args first empty?) @$ (first args)))]
+          (cond (map? obj)      (get obj k)
+                (vector? obj)   (->> obj
+                                     containerize
+                                     (cmap #(get % k))
+                                     ;; lightweight flatten
+                                     (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) [])
+                                     containerize)
+                :else           nil)))
+      (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
 ;;; ToDo: Currently this really only gets called for [] syntax. Is there more I just haven't seen?
 (defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
   [body]
-  `(with-meta
+  `(->
      (fn ~'value-step [x#]
        (let [func# (fn [y#] (binding [$ (atom y#)] ~body))]
          (if (vector? x#)
            (->> (mapv func# x#) (mapv vector))
            (vector (func# x#)))))
-     {:bi/step-type :bi/value-step}))
+     (with-meta {:bi/step-type :bi/value-step})))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
   ([k] (get-scoped @$ k))
   ([obj k] (get obj k)))
 
-#_(defmacro primary
+(defmacro primary
   "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
    the context atom and runs the body."
   [body]
-  `(with-meta
-     (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
-     {:bi/step-type :bi/primary}))
-
-(defmacro primary [body]
-  `(with-meta
-     (fn [& args#] ~body)
-     {:bi/step-type :bi/primary}))
+  `(-> (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
+       (with-meta {:bi/step-type :bi/primary})))
 
 (defmacro init-step
   "All the arguments of bi/run-steps are functions. This one just runs the argument body,
    which might construct a literal value, be a literal value, or call a function."
   [body]
-  `(with-meta
-     (fn [_x#] ~body)
-     {:bi/step-type :bi/init-step}))
+  `(-> (fn [_x#] ~body)
+       (with-meta {:bi/step-type :bi/init-step})))
 
 (defmacro map-step
   "All the arguments of bi/run-steps are functions. This one maps $ over the argument body."
   [body]
-  `(with-meta
-     (fn [_x#] ~body)
-     {:bi/step-type :bi/map-step}))
+  `(-> (fn [_x#] ~body)
+       (with-meta {:bi/step-type :bi/map-step})))
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
@@ -377,13 +372,15 @@
    and called in map/filter/reduce settings."
   [form sym]
   (letfn [(sba-aux [form]
-            (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
-                  (vector? form) (mapv sba-aux form)
-                  (seq? form) (cond (and (core/= (first form) 'bi/key) (== 2 (count form)))
-                                    (list 'bi/key sym (second form))
-                                    (core/= form '(core/deref rad-mapper.builtins/$)) sym ; 2022-05-29, added.
-                                    :else (map sba-aux form))
-                  :else form))]
+            (let [m (meta form)]
+              (-> (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
+                        (vector? form) (mapv sba-aux form)
+                        (seq? form) (cond (and (core/= (first form) 'bi/key) (== 2 (count form)))
+                                          (list 'bi/key sym (second form))
+                                          (core/= form '(core/deref rad-mapper.builtins/$)) sym ; 2022-05-29, added.
+                                          :else (map sba-aux form))
+                        :else form)
+                  (with-meta m))))]
     (sba-aux form)))
 
 ;;;--------------------------- JSONata built-in functions ------------------------------------
@@ -522,8 +519,8 @@
                           :else
                           (let [ix (core/+ adv (or (index-of (subs s adv) match) 0))]
                             (recur
-                             (conj res (with-meta {"match" match, "index" ix, "groups" (vec groups)}
-                                         {:bi/regex-result? true}))
+                             (conj res (-> {"match" match, "index" ix, "groups" (vec groups)}
+                                           (with-meta {:bi/regex-result? true})))
                              (core/+ adv (count match))
                              (if (number? lim) (dec lim) lim))))))]
      ;; ToDo: Or should I jflatten (which currently doesn't change things)?
@@ -554,13 +551,12 @@
          groups (if (string? m) [] (-> m rest vec))]
      (when match
        (let [ix (index-of s match)]
-         (with-meta
-           {"match" match
-            "start" ix
-            "end"   (core/+ ix (count match))
-            "groups" groups
-            "next" matcher}
-           {:bi/regex-result? true}))))))
+         (-> {"match" match
+              "start" ix
+              "end"   (core/+ ix (count match))
+              "groups" groups
+              "next" matcher}
+             (with-meta {:bi/regex-result? true})))))))
 
 ;;; $pad
 (defn $pad
@@ -1434,7 +1430,7 @@
                             {:vars (-> func meta :bi/params)})))))
 
 ;;; $reduce
-(declare reduce-typical reduce-enforce reduce-enforce-as-keys)
+(declare reduce-typical reduce-enforce)
 (defn $reduce
   "Signature: $reduce(array, function [, init])
 
@@ -1456,15 +1452,18 @@
 
   If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
   If not supplied, the initial value is the first value in the array parameter"
-  ([coll func] ($reduce coll func []))
+  ([coll func] ($reduce coll func nil))
   ([coll func init]
    (let [met (meta func)]
      (cond (:bi/enforce-template? met)                          (throw (ex-info "Reducing called on template fn." {})),
            (empty? met)                                         (throw (ex-info "No meta on reduce function!" {})), ; ToDo: remove.
-           (and (:bi/enforce? met) (-> met :asKeys not-empty))  (reduce-enforce-as-keys coll func init),
+           (and (not (core/<= 2 (-> met :bi/params count) 4))
+                (-> met :bi/enforce? not))                      (throw (ex-info "Reduce function must take 2 to 4 args." {}))
+           (and (:bi/enforce? met) (-> met :asKeys not-empty))  (reduce-enforce coll func init),
            (:bi/enforce? met)                                   (reduce-typical coll func), ; <=========================
-           (core/<= 2 (-> met :bi/params count) 4)              (reduce-typical (into (vector init) coll) func),
-           :else                                                (reduce-typical coll func)))))
+           (not init)                                           (reduce-typical coll func)
+           :else                                                (reduce-typical (into (vector init) coll) func)))))
+
 
 ;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
 ;;;       My doc-string below doesn't say.
@@ -1592,8 +1591,8 @@
 (defn $schemaFor
   "Study the argument data and heuristically suggest the types and multiplicity of data.
    Note that this function does not make a guess at what the keys (db/key) are."
-  [data_]
-  (qu/learn-schema-walking data_))
+  [data]
+  (qu/learn-schema data))
 
 ;;;---------- query ---------------------------------------
 (defn substitute-in-form
@@ -1611,20 +1610,27 @@
       :keys ~@(mapv symbol vars)
       :where ~@(tp-aux body)])))
 
-(defn immediate-query-fn
-    "Return a function that can be used immediately to make the query defined in body."
-  [body]
-  (fn [data|db] ; ToDo: Could I make this use $ if no data supplied?
-    (let [conn (if (core/= datahike.db.DB (type data|db))
-                 data|db
-                 (-> data|db keywordize-keys qu/db-for!))]
-      (->> (d/q (substitute-in-form body {}) conn) ; This is possible because body is data to d/q.
+(defn query-fn-aux
+  "The function that returns a binding set.
+   Note that it attaches meta for the DB and body."
+  [db-atm body param-subs]
+  (-> (->> (d/q (substitute-in-form body param-subs) @db-atm) ; This is possible because body is data to d/q.
            ;; Remove binding sets that involve a schema entity.
            (remove (fn [bset] (some (fn [bval]
                                       (and (keyword? bval)
                                            (core/= "db" (namespace bval))))
                                     (vals bset))))
-           vec))))
+           vec)
+      (with-meta {:bi/b-set? true :bi/db-atm db-atm :bi/query-form body})))
+
+(defn immediate-query-fn
+    "Return a function that can be used immediately to make the query defined in body."
+  [body]
+  (fn [data|db] ; ToDo: Could I make this use $ if no data supplied?
+    (let [db-atm (if (util/db? data|db)
+                   data|db
+                   (-> data|db keywordize-keys qu/db-for!))]
+      (query-fn-aux db-atm body {}))))
 
 (defn higher-order-query-fn
   "Return a function that can be called with parameters to return a function to m
@@ -1633,14 +1639,10 @@
   (fn [& args]
     (let [param-subs (zipmap params args)] ; the closure.
       (fn [data|db]
-        (let [conn (if (core/= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
-           (->> (d/q (substitute-in-form body param-subs) conn)
-                ;; Remove binding sets that involve a schema entity.
-                (remove (fn [bset] (some (fn [bval]
-                                           (and (keyword? bval)
-                                                (core/= "db" (namespace bval))))
-                                         (vals bset))))
-                vec))))))
+        (let [db-atm (if (util/db? data|db)
+                       data|db
+                       (-> data|db keywordize-keys qu/db-for!))]
+          (query-fn-aux db-atm body param-subs))))))
 
 (defn query
   "There are two uses scenarios for query:
@@ -1665,8 +1667,8 @@
     (immediate-query-fn body)
     (higher-order-query-fn body params)))
 
-;;;==================== Enforce ===============================================
-(declare enforce-body enforce-body-as-keys)
+;;;------------------ Enforce --------------------------------------------
+(declare enforce-body)
 (defn enforce
   "Return an function that either
     (1) has no template variable and can be used directly with a binding set, or
@@ -1678,23 +1680,16 @@
   [& {:keys [params options body]}]
   (if (empty? params)
     ;; The immediate function.
-    (->
-     (if (:asKeys options)
-       (fn [b-set] (enforce-body-as-keys body b-set))
-       (fn [b-set] (enforce-body         body b-set)))
-     (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
-                       options {:bi/body body})))
+    (-> (fn [b-set] (enforce-body body b-set))
+        (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
+                          options {:bi/body body})))
     ;; body has template params that must be replaced
-    (->
-     (fn [& psubs]
-       (let [new-body (substitute-in-form (zipmap params psubs))]
-         (->
-          (if (:asKeys options)
-            (fn [b-set] (enforce-body-as-keys new-body b-set))
-            (fn [b-set] (enforce-body         new-body b-set)))
-          (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
-                            options {:bi/body body})))))
-     (with-meta {:bi/enforce-template? true}))))
+    (-> (fn [& psubs]
+          (let [new-body (substitute-in-form (zipmap params psubs))]
+            (-> (fn [b-set] (enforce-body new-body b-set))
+                (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
+                                  options {:bi/body body})))))
+        (with-meta {:bi/enforce-template? true}))))
 
 ;;; ToDo: If general expressions prove useful, they will have to be wrapped
 ;;;       in functions or something (this? enforce?) will have to be a macro.
@@ -1712,7 +1707,6 @@
                   (and (symbol? obj) (-> obj name (subs 0 1) (= "?"))) (lookup obj),
                   :else obj))]
     (eb-aux body)))
-
 
 (defn new-enforce-body
   "Revise body with information from b-set and key.
@@ -1733,95 +1727,53 @@
                   :else obj))]
     (eb-aux body)))
 
-(defn reduce-enforce-as-keys
-  [{:keys [coll body-fn _init]}]
-  (let [gkeys   (->> body-fn meta :asKeys (map #(-> % name symbol)))
+(defn reduce-enforce
+  [b-sets body-fn init]
+  (let [gkeys   (->> body-fn meta :asKeys (map keyword))
         kcoll   (->> (reduce (fn [res bset]
                                (let [k (reduce (fn [r k-part] (conj r (k-part bset))) [] gkeys)]
                                  (conj res {:key k :bset bset})))
                              []
-                             coll)
+                             b-sets)
                      (sort-by :key))
         pattern (-> body-fn meta :body)]
     ;; We are doing something like reduce on update-in here!
-    {#_#_:result  (reduce (fn [body bset]
-                        (let [full-key (zipmap gkeys (:key bset))
-                              rpattern (new-enforce-body {} pattern full-key)]
-                          (new-enforce-body body rpattern (:bset bset) full-key)))
-                      (->> body-fn meta :body)
-                      kcoll)
+    {:query  (-> b-sets meta :bi/query-form)
+     :db-atm (-> b-sets meta :bi/db-atm)
      :kcoll kcoll
      :body pattern}))
 
+;;; Instead, write a query to get 3-tuples. See if that helps build a structure.
+;;; I thought owner1 has responsibility for certain devices in system1 and certain devices is system2!!!
+;;; Is that not what I'm saying by this data? (The query must be hosed).
+(defn tryme
+  [owner system]
+  (let [data
+        [{:ownerName "owner1", :o--s {:systemName "system1", :s--d {:deviceName "device1", :id 100, :status "Ok"}}}
+         {:ownerName "owner1", :o--s {:systemName "system1", :s--d {:deviceName "device2", :id 200, :status "Ok"}}}
+         {:ownerName "owner1", :o--s {:systemName "system2", :s--d {:deviceName "device5", :id 500, :status "Ok"}}}
+         {:ownerName "owner1", :o--s {:systemName "system2", :s--d {:deviceName "device6", :id 600, :status "Ok"}}}
+         {:ownerName "owner2", :o--s {:systemName "system1", :s--d {:deviceName "device3", :id 300, :status "Ok"}}}
+         {:ownerName "owner2", :o--s {:systemName "system1", :s--d {:deviceName "device4", :id 400, :status "Ok"}}}
+         {:ownerName "owner2", :o--s {:systemName "system2", :s--d {:deviceName "device7", :id 700, :status "Ok"}}}
+         {:ownerName "owner2", :o--s {:systemName "system2", :s--d {:deviceName "device8", :id 800, :status "Ok"}}}]
+        schema {:ownerName  #:db{:cardinality :db.cardinality/many :valueType :db.type/string}
+                :systemName #:db{:cardinality :db.cardinality/many :valueType :db.type/string}
+                :deviceName #:db{:cardinality :db.cardinality/many :valueType :db.type/string}
+                :o--s  #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}
+                :s--d #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}}
+        db-atm (qu/db-for! data :known-schema schema)]
+  (d/q `[:find ?d
+         :keys device-ref
+         :where
+         [?o :ownerName ~owner]
+         [?o :o--s ?s]
+         [?s :systemName ~system]
+         [?s :s--d ?d]]
+       @db-atm)))
 
-
-
-
-(def pattern
-  '{:toplevel {:owners {:ownerName ?ownerName
-                        :ownerName--systemName {:systemName ?systemName
-                                                :systemName--deviceName {:deviceName ?deviceName
-                                                                         :id ?id
-                                                                         :status ?status}}}}})
-
-(def data-old
-  [{:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device1", :id 100, :status "Ok"}}}}}
-   {:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device2", :id 200, :status "Ok"}}}}}
-   {:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device5", :id 500, :status "Ok"}}}}}
-   {:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device6", :id 600, :status "Ok"}}}}}
-   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device3", :id 300, :status "Ok"}}}}}
-   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device4", :id 400, :status "Ok"}}}}}
-   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device7", :id 700, :status "Ok"}}}}}
-   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device8", :id 800, :status "Ok"}}}}}])
-
-(def data
-  [{:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device1", :id 100, :status "Ok"}}}
-   {:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device2", :id 200, :status "Ok"}}}
-   {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device5", :id 500, :status "Ok"}}}
-   {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device6", :id 600, :status "Ok"}}}
-   {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device3", :id 300, :status "Ok"}}}
-   {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device4", :id 400, :status "Ok"}}}
-   {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device7", :id 700, :status "Ok"}}}
-   {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device8", :id 800, :status "Ok"}}}])
-
-
-(defn tryme [] ; There should be only 8 facts! (There are currently 16.)
-  (let [schema {:ownerName  #:db{:cardinality :db.cardinality/one :valueType :db.type/string :unique :db.unique/identity}
-                :systemName #:db{:cardinality :db.cardinality/one :valueType :db.type/string :unique :db.unique/identity}
-                :deviceName #:db{:cardinality :db.cardinality/one :valueType :db.type/string :unique :db.unique/identity}
-                :ownerName--systemName  #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}
-                :systemName--deviceName #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}}
-        db (qu/db-for! data :known-schema schema)]
-    {:query (d/q '[:find ?ownerName ?systemName ?deviceName
-                   :keys ownerName systemName deviceName
-                   :where
-                   [?o :ownerName ?ownerName]
-                   [?o :ownerName--systemName ?s]
-                   [?s :systemName ?systemName]
-                   [?s :systemName--deviceName ?d]
-                   [?d :deviceName ?deviceName]]
-                 db)
-     :db db}))
-
-
-
-(defn enforce-body-as-keys
-  "Return a form with like the argument, but with qvars substituted with b-set values."
-  [body b-set]
-  (enforce-body body b-set)) ; ToDo: Temporary
-
-(defn reduce-enforce
-  "This is for reducing with an enforce function, where metadata on the
-   function directs various behaviors such as whether results are returned
-   or a database is updated.
-   body-subst-fn is a fn returned form enforce (directly or after specifying
-   parameter values), which calls enforce-body to do substitutions."
-  [res bset body-subst-fn init] ; ToDo: Collection could be a DB (e.g. from $getSource()).
-  (conj res (body-subst-fn bset))) ; ToDo: Put  (qu/db-for! res) somewhere
-
-(def diag (atom nil))
-  "This function plays the role of reduce-enforce when :asKeys is specified.
-   It performs the enforce reduction where the enforce option asKeys is specified.
+;;;------------- reduce-enforce function  docline
+  "This function preforms $reduce on an enforce function
    The asKeys option reorganizes data so that what might be interpreted as a unique
    identifier for the object isn't contained in the object but is the key of a nesting object.
 
@@ -1832,6 +1784,8 @@
    {:people {'fred' {....
 
    The order of the keys is important because successive 'group-by' functions are applied."
+
+;;;----------------------- Stuff for development
 '{"owners"
   {?ownerName
    {?systemName
@@ -1848,13 +1802,6 @@
               "device4" { :status "Ok", :id 400}}
    "system2" {"device7" { :status "Ok", :id 700}
               "device8" { :status "Ok", :id 800}}}}}
-
-(defn fix-coll [obj] ; <===================== temporary
-  (cond (map? obj)     (reduce-kv (fn [m k v] (assoc m (fix-coll k) (fix-coll v))) {} obj)
-        (vector? obj)  (mapv fix-coll obj)
-        (keyword? obj) (name obj)
-        :else          obj))
-
 
 ;;;---- not enforce ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

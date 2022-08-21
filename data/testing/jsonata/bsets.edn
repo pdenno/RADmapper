@@ -1,0 +1,8 @@
+[{:?systemName :system1, :?d 25, :?s 18, :?deviceName :device3, :?x 19, :?y 20, :?z 24, :?ownerName :owner2, :?id 300, :?status "Ok"}
+ {:?systemName :system2, :?d 34, :?s 18, :?deviceName :device8, :?x 27, :?y 28, :?z 32, :?ownerName :owner2, :?id 800, :?status "Ok"}
+ {:?systemName :system1, :?d 26, :?s 18, :?deviceName :device4, :?x 19, :?y 20, :?z 24, :?ownerName :owner2, :?id 400, :?status "Ok"}
+ {:?systemName :system2, :?d 30, :?s 18, :?deviceName :device5, :?x 27, :?y 28, :?z 29, :?ownerName :owner1, :?id 500, :?status "Ok"}
+ {:?systemName :system2, :?d 33, :?s 18, :?deviceName :device7, :?x 27, :?y 28, :?z 32, :?ownerName :owner2, :?id 700, :?status "Ok"}
+ {:?systemName :system2, :?d 31, :?s 18, :?deviceName :device6, :?x 27, :?y 28, :?z 29, :?ownerName :owner1, :?id 600, :?status "Ok"}
+ {:?systemName :system1, :?d 22, :?s 18, :?deviceName :device1, :?x 19, :?y 20, :?z 21, :?ownerName :owner1, :?id 100, :?status "Ok"}
+ {:?systemName :system1, :?d 23, :?s 18, :?deviceName :device2, :?x 19, :?y 20, :?z 21, :?ownerName :owner1, :?id 200, :?status "Ok"}]

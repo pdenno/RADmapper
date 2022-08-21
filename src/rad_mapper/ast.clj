@@ -147,5 +147,5 @@
       mark-toplevel
       adjust-exp
       set-indexes
-      qu/learn-schema-walking
+      qu/learn-schema
       #_qu/db-for!))

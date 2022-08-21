@@ -185,6 +185,8 @@
   (let [nvec (into (range 1 20) (map #(* 10 %) (range 2 10)))]
     (zipmap (map #(cl-format nil "~r" %) nvec) nvec)))
 
+(defn db? [o] (= datahike.db.DB (type o)))
+
 (def ^:private num-word (-> num-map keys set))
 
 ;;; ToDo: Add :creative? an do 'word concatenation' for e.g. 'twenty twenty two', triple eight, double.

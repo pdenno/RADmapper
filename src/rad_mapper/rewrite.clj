@@ -33,7 +33,7 @@
       (let [ps (with-open [rdr (io/reader (if file? str (char-array str)))]
                  (as-> (par/make-pstate rdr) ?ps
                    (par/parse tag ?ps)
-                   (reset! diag (dissoc ?ps :line-seq)) ; dissoc so you can print it.
+                   (dissoc ?ps :line-seq) ; dissoc so you can print it.
                    (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))))]
         (if (= :ok (:parse-status ps))
           (as-> (:result ps) ?r

@@ -26,8 +26,13 @@
       (throw (ex-info  "Heterogeneous types:" {:types result :attribute k :vector vec}))
       (first result))))
 
-(defn learn-schema-walking
-  "Return DH schema objects for the data provided."
+;;; ToDo: It should be possible to learn schema from binding sets and query combined.
+;;;       That would be an entirely different function, though.
+(defn learn-schema
+  "Return DH schema objects for the data provided.
+
+   Limitation: It can't learn from binding sets; the attributes of those are not the
+   data's attributes, and everything will appear as multiplicity 1."
   [data & {:keys [known-schema] :or {known-schema {}}}]
   (let [learned (atom known-schema)]
     (letfn [(update-learned! [k v]
@@ -79,16 +84,18 @@
         (vector? obj) (mapv clj-like obj),
         :else obj))
 
+;;; BTW, I can make a trivial DB on my laptop using this in 6 milliseconds.
 (defn db-for!
   "Create a database for the argument data and return a connection to it.
    Called by builtins for query and enforce, for example.
-   The argument known-schema takes a map indexed by db/ident (not a vector)."
+   The argument known-schema takes a map indexed by db/ident (not a vector).
+   NOTE: The db attributes (map keys) have to be keyword; you can't use strings etc."
   [data & {:keys [known-schema db-name] :or {known-schema {} db-name "temp"}}]
   (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}
         data (-> (if (vector? data) data (vector data)) clj-like)]
     (when (d/database-exists? db-cfg) (d/delete-database db-cfg))
     (d/create-database db-cfg)
     (let [conn-atm (d/connect db-cfg)]
-      (d/transact conn-atm (learn-schema-walking data :known-schema known-schema))
+      (d/transact conn-atm (learn-schema data :known-schema known-schema))
       (d/transact conn-atm data)
-      @conn-atm)))
+      conn-atm)))

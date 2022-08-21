@@ -9,7 +9,7 @@
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine]]))
+   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]))
 
 (defmacro run-test-rew
   "Use this to expand devl/run-test with :rewrite? true."
@@ -42,7 +42,7 @@
 
 (deftest db-for-tests-1
   (testing "Testing that basic db-for! (and its schema-making) work"
-    (let [conn (qu/db-for! dolce-test-data)
+    (let [conn @(qu/db-for! dolce-test-data)
           binding-set (d/q '[:find ?class ?class-iri ?class-ns ?class-name ?rel ?rel-name ?rel-range
                              :keys class class-iri class-ns class-name rel rel-name rel-range
                              :where
@@ -60,7 +60,7 @@
 
 (deftest db-for-tests-2
   (testing "Testing that basic db-for! (and its schema-making) work"
-    (let [conn (qu/db-for! dolce-test-data)
+    (let [conn @(qu/db-for! dolce-test-data)
           binding-set (d/q '[:find ?class ?class-iri
                              :keys class class-iri
                              :where
@@ -76,7 +76,7 @@
     (is (= [#:db{:id 1, :cardinality :db.cardinality/one, :ident :person/fname, :valueType :db.type/string}
             #:db{:id 2, :cardinality :db.cardinality/one, :ident :person/lname, :valueType :db.type/string}
             {:db/id 3, :person/fname "Bob", :person/lname "Clark"}]
-           (let [conn (qu/db-for! {:person/fname "Bob" :person/lname "Clark"})]
+           (let [conn @(qu/db-for! {:person/fname "Bob" :person/lname "Clark"})]
              (dp/pull-many conn '[*] (range 1 (-> conn :max-eid inc))))))))
 
 ;;;================================ testing query ==================================
@@ -204,35 +204,31 @@
 
     ;; This creates the function. :params are empty, so this is the "immediate" type.
     (let [qfn (bi/enforce {:params [],
-                           :body (-> {}
-                                     (assoc "instance-of" "FixedType")
-                                     (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})]
+                           :body '{"instance-of" "FixedType"
+                                   "content" :?class-iri}})]
 
       (testing "The function has metadata."
-        (is (= '{:bi/params [b-set], :enforce? true} (meta qfn))))
+        (is (= '#:bi{:params [b-set], :enforce? true, :body {"instance-of" "FixedType", "content" :?class-iri}}
+            (meta qfn))))
 
       (testing "The function is executable with a binding set, creating content."
         (is (= {"instance-of" "FixedType", "content" "IRI"}
-               (qfn {:?class-iri "IRI"}))))
+               (-> (qfn {:?class-iri "IRI"}) remove-meta))))
 
       (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
         (run-test-rew
          e1
-         '(bi/enforce {:params [$type],
-                       :body (-> {}
-                                 (assoc "instance-of" $type)
-                                 (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})))
+         '(bi/enforce {:map-body '{"instance-of" $type, "content" ?class-iri}, :params '($type), :options 'nil})))
 
       (testing "the function returned is higher-order..."
-        (let [ho-qfn (bi/enforce {:params [$type],
-                                  :body (-> {}
-                                            (assoc "instance-of" $type)
-                                            (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})
+        (let [ho-qfn (bi/enforce '{:params [$type],
+                                   :body {"instance-of" $type
+                                          "content" :?class-iri}})
               ;; ... So we get a query function for it with $type = "MyType"
               qfn (ho-qfn "MyType")]
 
           (testing "The function has the same metadata."
-            (is (= '{:bi/params [b-set], :enforce? true} (meta qfn))))
+            (is (= '{:bi/params [b-set], :bi/enforce? true} (meta qfn))))
 
           (testing "Rather than 'FixedType', the instance-of is 'MyType'."
             (is (= {"instance-of" "MyType", "content" "IRI"}
@@ -632,6 +628,22 @@
 
 (defn diag-1 []
   (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
+            $q := query(){ [?s ?systemName ?x]
+                           [($match(?systemName, /system\\d/))]
+                           [?x :owners ?y]
+                           [?y ?ownerName ?z]
+                           [($match(?ownerName, /owner\\d/))]
+                           [?z ?deviceName ?d]
+                           [($match(?deviceName, /device\\d/))]
+                           [?d :id ?id]
+                           [?d :status ?status] };
+
+             $q($data); )"
+    :keep-meta? true))
+
+
+(defn diag-2 []
+      (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
                 $q := query(){ [?s ?systemName ?x]
                                [($match(?systemName, /system\\d/))]
                                [?x :owners ?y]
@@ -642,81 +654,34 @@
                                [?d :id ?id]
                                [?d :status ?status] };
 
-             $bsets := $q($data);)"))
+             $bsets := $q($data);
 
-
-
-
-(defn diag-2 []
-  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
-         $reduce($bsets,
-                 enforce()
-                         {  {'owners':
-                                {?ownerName:
-                                   {?systemName:
-                                      {?deviceName : {'id'     : ?id,
-                                                      'status' : ?status}}}}}
-                         })
-                  )"))
-
-(defn diag-3 []
-  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
-         $enf   :=  enforce()
-                         {  {'owners':
-                                {?ownerName:
-                                   {?systemName:
-                                      {?deviceName : {'id'     : ?id,
-                                                      'status' : ?status}}}}}
-                         };
-         $reduce($bsets,$enf)
-        )"))
-
-
-(defn diag-4 []
-  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
-         $enf   := enforce() {  {'owners': ?ownerName } };
-         $reduce($bsets,$enf)
-         )"))
-
-(defn diag-5 []
-  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
-         $enf   := enforce() {  {'owners': ?ownerName } };
-         )"))
-
-(defn diag-6 []
-  (run "($enf   := enforce() {  {'owners': ?ownerName } };
-         )"))
-
-(defn diag-7 []
-  (run "(enforce() {  {'owners': ?ownerName } } )"))
-
-
-
-
-
-
-
+             $reduce($bsets,
+                     enforce({asKeys : [?ownerName, ?systemName, ?deviceName]})
+                              {  {'owners':
+                                     {?ownerName:
+                                        {?systemName:
+                                           {?deviceName : {'id'     : ?id,
+                                                           'status' : ?status}}}}}
+                              }
+                    )
+            )"))
 
 
 (defn tryme []
-  (let [$data (bi/$readFile "data/testing/jsonata/sTPDRs--6.json")
-        $q (bi/query '[]
-                     '[[?s ?systemName ?x]
-                       [(bi/$match ?systemName #"system\d")]
-                       [?x :owners ?y]
-                       [?y ?ownerName ?z]
-                       [(bi/$match ?ownerName #"owner\d")]
-                       [?z ?deviceName ?d]
-                       [(bi/$match ?deviceName #"device\d")]
-                       [?d :id ?id]
-                       [?d :status ?status]])
-        $bsets  ($q $data)]
-    (bi/$reduce
-     $bsets
-     (bi/enforce
-      {:map-body
-       '{"owners"
-         {?ownerName
-          {?systemName {?deviceName {"id" ?id, "status" ?status}}}}},
-       :params '(),
-       :options 'nil}))))
+  (let [fff (-> (fn primary [& arg]
+                  (binding  [bi/$ (if (empty? arg) bi/$ (-> arg first atom))]
+                    (let [$data (bi/$readFile "data/testing/jsonata/sTPDRs--6.json")
+                          $q (bi/query '[]
+                                       '[[?s ?systemName ?x]
+                                         [(bi/$match ?systemName #"system\d")]
+                                         [?x :owners ?y]
+                                         [?y ?ownerName ?z]
+                                         [(bi/$match ?ownerName #"owner\d")]
+                                         [?z ?deviceName ?d]
+                                         [(bi/$match ?deviceName #"device\d")]
+                                         [?d :id ?id]
+                                         [?d :status ?status]])]
+                      ($q $data))))
+                (with-meta #:bi{:step-type :bi/primary}))]
+    (fff)))
