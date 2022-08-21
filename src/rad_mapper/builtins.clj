@@ -327,12 +327,17 @@
   ([k] (get-scoped @$ k))
   ([obj k] (get obj k)))
 
-(defmacro primary
+#_(defmacro primary
   "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
    the context atom and runs the body."
   [body]
   `(with-meta
      (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
+     {:bi/step-type :bi/primary}))
+
+(defmacro primary [body]
+  `(with-meta
+     (fn [& args#] ~body)
      {:bi/step-type :bi/primary}))
 
 (defmacro init-step
@@ -1429,41 +1434,7 @@
                             {:vars (-> func meta :bi/params)})))))
 
 ;;; $reduce
-(defn reduce-body-enforce
-  "This is for reducing with an enforce function, where metadata on the
-   function directs various behaviors such as whether results are returned
-   or a database is updated."
-  [coll func init] ; ToDo: Collection could be a DB (e.g. from $getSource()).
-  (let [result (->> (loop [c coll,
-                           r init]
-                      (if (empty? c) r (recur (rest c), (conj r (func (first c))))))
-                    (mapv keywordize-keys))
-        _db (qu/db-for! result)]
-      ;; result is just the collection of results from body mechanically produced.
-      ;; They describe fact types that need to be organized according to the schema.
-      ;; (-> func meta :options) describes the schema, among other things.
-      result))
-
-;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
-;;;       My doc-string below doesn't say.
-;;;       In the above I pass it the collection untouched every time.
-;;;       The JSONata documentation (http://docs.jsonata.org/higher-order-functions) doesn't say either!
-(defn reduce-body-typical
-  "This is for $reduce with JSONata semantics."
-  [coll func]
-  (let [num-params (-> func meta :bi/params count)]
-    (loop [c (rest coll),
-           r (first coll)
-           i 0]
-      (if (empty? c)
-        r
-        (recur (rest c),
-               (case num-params
-                 4 (func r (first c) i coll),
-                 3 (func r (first c) i),
-                 2 (func r (first c))),
-               (inc i))))))
-
+(declare reduce-typical reduce-enforce reduce-enforce-as-keys)
 (defn $reduce
   "Signature: $reduce(array, function [, init])
 
@@ -1485,17 +1456,35 @@
 
   If the optional init parameter is supplied, then that value is used as the initial value in the aggregation (fold) process.
   If not supplied, the initial value is the first value in the array parameter"
-  ([coll func init]  (if (-> func meta :enforce?)
-                       (reduce-body-enforce coll func init)
-                       (if (core/<= 2 (-> func meta :bi/params count) 4)
-                         ($reduce (into (vector init) coll) func)
-                         (throw (ex-info "$reduce expects a function of 2 to 4 arguments:"
-                                         {:vars (-> func meta :bi/params)})))))
-  ([coll func] (if (-> func meta :enforce?)
-                 (reduce-body-enforce coll func [])
-                 (reduce-body-typical coll func))))
+  ([coll func] ($reduce coll func []))
+  ([coll func init]
+   (let [met (meta func)]
+     (cond (:bi/enforce-template? met)                          (throw (ex-info "Reducing called on template fn." {})),
+           (empty? met)                                         (throw (ex-info "No meta on reduce function!" {})), ; ToDo: remove.
+           (and (:bi/enforce? met) (-> met :asKeys not-empty))  (reduce-enforce-as-keys coll func init),
+           (:bi/enforce? met)                                   (reduce-typical coll func), ; <=========================
+           (core/<= 2 (-> met :bi/params count) 4)              (reduce-typical (into (vector init) coll) func),
+           :else                                                (reduce-typical coll func)))))
 
-;;; $sift
+;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
+;;;       My doc-string below doesn't say.
+;;;       In the above I pass it the collection untouched every time.
+;;;       The JSONata documentation (http://docs.jsonata.org/higher-order-functions) doesn't say either!
+(defn reduce-typical
+  "This is for $reduce with JSONata semantics."
+  [coll func]
+  (let [num-params (-> func meta :bi/params count)]
+    (loop [c (rest coll),
+           r (first coll)
+           i 0]
+      (if (empty? c)
+        r
+        (recur (rest c),
+               (case num-params
+                 4 (func r (first c) i coll),
+                 3 (func r (first c) i),
+                 2 (func r (first c))),
+               (inc i))))))
 
 ;;; $single
 (defn $single
@@ -1607,7 +1596,7 @@
   (qu/learn-schema-walking data_))
 
 ;;;---------- query ---------------------------------------
-(defn qform-runtime-sub
+(defn substitute-in-form
   "Return a DH query [:find...] form that substitutes values as though syntax quote were being used."
   [body param-val-map]
   (letfn [(tp-aux [x]
@@ -1629,7 +1618,7 @@
     (let [conn (if (core/= datahike.db.DB (type data|db))
                  data|db
                  (-> data|db keywordize-keys qu/db-for!))]
-      (->> (d/q (qform-runtime-sub body {}) conn) ; This is possible because body is data to d/q.
+      (->> (d/q (substitute-in-form body {}) conn) ; This is possible because body is data to d/q.
            ;; Remove binding sets that involve a schema entity.
            (remove (fn [bset] (some (fn [bval]
                                       (and (keyword? bval)
@@ -1645,7 +1634,7 @@
     (let [param-subs (zipmap params args)] ; the closure.
       (fn [data|db]
         (let [conn (if (core/= datahike.db.DB (type data|db)) data|db (qu/db-for! data|db))]
-           (->> (d/q (qform-runtime-sub body param-subs) conn)
+           (->> (d/q (substitute-in-form body param-subs) conn)
                 ;; Remove binding sets that involve a schema entity.
                 (remove (fn [bset] (some (fn [bval]
                                            (and (keyword? bval)
@@ -1676,36 +1665,204 @@
     (immediate-query-fn body)
     (higher-order-query-fn body params)))
 
-(defmacro enforce
-  "Create an enforce function that either
-    1) can be used directly, or
-    2) can be called with parameters to return a function that
-       can be used directly."
-  [& {:keys [params body]}]
-  (if (or (empty? params) (not (contains? params :templateParams)))
+;;;==================== Enforce ===============================================
+(declare enforce-body enforce-body-as-keys)
+(defn enforce
+  "Return an function that either
+    (1) has no template variable and can be used directly with a binding set, or
+    (2) has template variables and returns a parameterized version of (1) that
+        can be called with parameter values to get the a function like (1) to
+        be used with binding sets.
+     The function returned has meta {enforce? true} so that, for example, $reduce
+     knows that there should be a database involved."
+  [& {:keys [params options body]}]
+  (if (empty? params)
     ;; The immediate function.
-    `(->
-      (fn [~'b-set] ~body)
-      (with-meta {:bi/params '[~'b-set] :enforce? true}))
-    `(fn [~@params]
-       (->
-        (fn [~'b-set] ~body)
-        (with-meta {:bi/params '[~'b-set] :enforce? true})))))
+    (->
+     (if (:asKeys options)
+       (fn [b-set] (enforce-body-as-keys body b-set))
+       (fn [b-set] (enforce-body         body b-set)))
+     (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
+                       options {:bi/body body})))
+    ;; body has template params that must be replaced
+    (->
+     (fn [& psubs]
+       (let [new-body (substitute-in-form (zipmap params psubs))]
+         (->
+          (if (:asKeys options)
+            (fn [b-set] (enforce-body-as-keys new-body b-set))
+            (fn [b-set] (enforce-body         new-body b-set)))
+          (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
+                            options {:bi/body body})))))
+     (with-meta {:bi/enforce-template? true}))))
 
+;;; ToDo: If general expressions prove useful, they will have to be wrapped
+;;;       in functions or something (this? enforce?) will have to be a macro.
+(defn enforce-body
+  "Return a form with like the argument, but with qvars substituted with b-set values."
+  [body b-set]
+  (letfn [(lookup [k]
+            (when-not (contains? b-set k)
+              (throw (ex-info "Argument binding set does not contain the key provided"
+                              {:binding-set b-set :key k})))
+            (get b-set k))
+          (eb-aux [obj]
+            (cond (map? obj) (reduce-kv (fn [m k v] (assoc m (eb-aux k) (eb-aux v))) {} obj),
+                  (vector? obj) (mapv eb-aux obj)
+                  (and (symbol? obj) (-> obj name (subs 0 1) (= "?"))) (lookup obj),
+                  :else obj))]
+    (eb-aux body)))
+
+
+(defn new-enforce-body
+  "Revise body with information from b-set and key.
+   pattern here is resolved for the given b-set.
+   If key is empty, this will just conj the resolved body onto the argument body." ; <========= ToDo!
+  [body pattern b-set key]
+  (letfn [(kobj [k v] (with-meta {k v} {:key-obj? true}))
+          (lookup [k]
+            (when-not (contains? b-set k)
+              (throw (ex-info "Argument binding set does not contain the key provided"
+                              {:binding-set b-set :key k})))
+            (get b-set k))
+          (eb-aux [obj]
+            (cond (and (map? obj) (-> obj meta :key-obj?)) obj,
+                  (map? obj) (reduce-kv (fn [m k v] (assoc m (eb-aux k) (eb-aux v))) {} obj),
+                  (vector? obj) (mapv eb-aux obj)
+                  (and (symbol? obj) (-> obj name (subs 0 1) (= "?"))) (kobj obj (lookup obj)),
+                  :else obj))]
+    (eb-aux body)))
+
+(defn reduce-enforce-as-keys
+  [{:keys [coll body-fn _init]}]
+  (let [gkeys   (->> body-fn meta :asKeys (map #(-> % name symbol)))
+        kcoll   (->> (reduce (fn [res bset]
+                               (let [k (reduce (fn [r k-part] (conj r (k-part bset))) [] gkeys)]
+                                 (conj res {:key k :bset bset})))
+                             []
+                             coll)
+                     (sort-by :key))
+        pattern (-> body-fn meta :body)]
+    ;; We are doing something like reduce on update-in here!
+    {#_#_:result  (reduce (fn [body bset]
+                        (let [full-key (zipmap gkeys (:key bset))
+                              rpattern (new-enforce-body {} pattern full-key)]
+                          (new-enforce-body body rpattern (:bset bset) full-key)))
+                      (->> body-fn meta :body)
+                      kcoll)
+     :kcoll kcoll
+     :body pattern}))
+
+
+
+
+
+(def pattern
+  '{:toplevel {:owners {:ownerName ?ownerName
+                        :ownerName--systemName {:systemName ?systemName
+                                                :systemName--deviceName {:deviceName ?deviceName
+                                                                         :id ?id
+                                                                         :status ?status}}}}})
+
+(def data-old
+  [{:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device1", :id 100, :status "Ok"}}}}}
+   {:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device2", :id 200, :status "Ok"}}}}}
+   {:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device5", :id 500, :status "Ok"}}}}}
+   {:toplevel {:owners {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device6", :id 600, :status "Ok"}}}}}
+   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device3", :id 300, :status "Ok"}}}}}
+   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device4", :id 400, :status "Ok"}}}}}
+   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device7", :id 700, :status "Ok"}}}}}
+   {:toplevel {:owners {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device8", :id 800, :status "Ok"}}}}}])
+
+(def data
+  [{:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device1", :id 100, :status "Ok"}}}
+   {:ownerName "owner1", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device2", :id 200, :status "Ok"}}}
+   {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device5", :id 500, :status "Ok"}}}
+   {:ownerName "owner1", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device6", :id 600, :status "Ok"}}}
+   {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device3", :id 300, :status "Ok"}}}
+   {:ownerName "owner2", :ownerName--systemName {:systemName "system1", :systemName--deviceName {:deviceName "device4", :id 400, :status "Ok"}}}
+   {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device7", :id 700, :status "Ok"}}}
+   {:ownerName "owner2", :ownerName--systemName {:systemName "system2", :systemName--deviceName {:deviceName "device8", :id 800, :status "Ok"}}}])
+
+
+(defn tryme [] ; There should be only 8 facts! (There are currently 16.)
+  (let [schema {:ownerName  #:db{:cardinality :db.cardinality/one :valueType :db.type/string :unique :db.unique/identity}
+                :systemName #:db{:cardinality :db.cardinality/one :valueType :db.type/string :unique :db.unique/identity}
+                :deviceName #:db{:cardinality :db.cardinality/one :valueType :db.type/string :unique :db.unique/identity}
+                :ownerName--systemName  #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}
+                :systemName--deviceName #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}}
+        db (qu/db-for! data :known-schema schema)]
+    {:query (d/q '[:find ?ownerName ?systemName ?deviceName
+                   :keys ownerName systemName deviceName
+                   :where
+                   [?o :ownerName ?ownerName]
+                   [?o :ownerName--systemName ?s]
+                   [?s :systemName ?systemName]
+                   [?s :systemName--deviceName ?d]
+                   [?d :deviceName ?deviceName]]
+                 db)
+     :db db}))
+
+
+
+(defn enforce-body-as-keys
+  "Return a form with like the argument, but with qvars substituted with b-set values."
+  [body b-set]
+  (enforce-body body b-set)) ; ToDo: Temporary
+
+(defn reduce-enforce
+  "This is for reducing with an enforce function, where metadata on the
+   function directs various behaviors such as whether results are returned
+   or a database is updated.
+   body-subst-fn is a fn returned form enforce (directly or after specifying
+   parameter values), which calls enforce-body to do substitutions."
+  [res bset body-subst-fn init] ; ToDo: Collection could be a DB (e.g. from $getSource()).
+  (conj res (body-subst-fn bset))) ; ToDo: Put  (qu/db-for! res) somewhere
+
+(def diag (atom nil))
+  "This function plays the role of reduce-enforce when :asKeys is specified.
+   It performs the enforce reduction where the enforce option asKeys is specified.
+   The asKeys option reorganizes data so that what might be interpreted as a unique
+   identifier for the object isn't contained in the object but is the key of a nesting object.
+
+   The symbols in asKeys name b-set properties where this transformation of a flat substitution
+   is to take place. For example:
+
+   {:people {:?person-name 'fred'...} becomes
+   {:people {'fred' {....
+
+   The order of the keys is important because successive 'group-by' functions are applied."
+'{"owners"
+  {?ownerName
+   {?systemName
+    {?deviceName  {"id"     ?id,
+                   "status" ?status}}}}}
+'{"owners"
+ {"owner1"
+  {"system1" {"device1" { :status "Ok", :id 100}
+              "device2" { :status "Ok", :id 200}}
+   "system2" {"device5" { :status "Ok", :id 500}
+              "device6" { :status "Ok", :id 600}}}
+  "owner2"
+  {"system1" {"device3" { :status "Ok", :id 300}
+              "device4" { :status "Ok", :id 400}}
+   "system2" {"device7" { :status "Ok", :id 700}
+              "device8" { :status "Ok", :id 800}}}}}
+
+(defn fix-coll [obj] ; <===================== temporary
+  (cond (map? obj)     (reduce-kv (fn [m k v] (assoc m (fix-coll k) (fix-coll v))) {} obj)
+        (vector? obj)  (mapv fix-coll obj)
+        (keyword? obj) (name obj)
+        :else          obj))
+
+
+;;;---- not enforce ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
 (defn update-db
   "DB is a DH database. Create a new one based on the existing one's content and the new data.
    This entails updating the schema."
   [db data]
   (d/transact db data))
-
-(defn get-from-b-set
-  "Given a binding-set and ?query-var (key), return the map's value at that index."
-  [bs k]
-  (when-not (contains? bs k)
-    (throw (ex-info "Argument binding set does not contain the key provided"
-                    {:binding-set bs :key k})))
-  (get bs k))
 
 ;;; ToDo: Theses are always an atom, right?
 (defn $newContext

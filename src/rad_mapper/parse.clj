@@ -20,6 +20,8 @@
 ;;;              on exit, it pops it. Macros store and recall push onto the top map of the stack.
 ;;;              For example use, see :ptag/MapSpec and parse-list.
 
+;;; ToDo: Replace all the records with speced maps with :_type.
+
 (def ^:dynamic *debugging?* false)
 (util/config-log (if *debugging?* :debug :info))
 
@@ -689,15 +691,21 @@
     (assoc ?ps :result (:head ?ps))
     (eat-token ?ps jvar?)))
 
+(def ^:dynamic in-enforce?
+  "When true, any :ptag/obj expression encountered will create a JaEnforceMap, not JaObjExp."
+  nil)
 ;;; ToDo: Verify that no distinction in syntax between reduce and obj construction.
 ;;;       Keep the distinction in structures created, however!
 (defrecord JaObjExp    [operand kv-pairs])
 (defrecord JaReduceExp [operand kv-pairs])
+(defrecord JaEnforceMap [kv-pairs])
 (defparse :ptag/obj-exp
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
-    (assoc ?ps :result (map->JaObjExp {:exp (:result ?ps)}))))
+    (if in-enforce?
+      (assoc ?ps :result (->JaEnforceMap (:result ?ps)))
+      (assoc ?ps :result (map->JaObjExp {:exp (:result ?ps)})))))
 
 ;;; <reduce-exp> ::= '{' <obj-kv-pair>* '}'
 (defparse :ptag/reduce-exp
@@ -705,6 +713,26 @@
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
     (assoc ?ps :result (map->JaReduceExp {:exp (:result ?ps)}))))
+
+;;; ToDo: Perhaps for enforce body, key could be any expression?
+;;; <map-pair> ::=  ( <string> | <qvar> ) ":" <exp>
+(defrecord JaKVPair [key val])
+(defrecord JaEnforceKVPair [key val])
+(defparse :ptag/obj-kv-pair
+  [pstate]
+  (as-> pstate ?ps
+    (if (-> ?ps :head qvar?)
+      (as-> ?ps ?ps1
+        (store ?ps1 :key (:head ?ps))
+        (eat-token ?ps1))
+      (as-> ?ps ?ps1
+        (parse :ptag/string ?ps1)
+        (store ?ps1 :key)))
+    (eat-token ?ps \:)
+    (parse :ptag/exp ?ps)
+    (assoc ?ps :result ((if in-enforce? ->JaEnforceKVPair ->JaKVPair)
+                        (recall ?ps :key)
+                        (:result ?ps)))))
 
 (defrecord JaRangeExp [start stop])
 ;;; <range|array-exp> ::=  <range-exp> | <array>
@@ -786,24 +814,6 @@
         (as-> ?ps ?ps1
         (parse operand-tag ?ps1)
         (assoc ?ps1 :result (->JaUniOpExp (recall ?ps1 :op) (:result ?ps1)))))))
-
-;;; <map-pair> ::=  ( <string> | <qvar> ) ":" <exp>
-(defrecord JaKVPair [key val])
-(defparse :ptag/obj-kv-pair
-  [pstate]
-  (as-> pstate ?ps
-    (if (-> ?ps :head qvar?)
-      (as-> ?ps ?ps1
-        (store ?ps1 :key (:head ?ps))
-        (eat-token ?ps1))
-      (as-> ?ps ?ps1
-        (parse :ptag/string ?ps1)
-        (store ?ps1 :key)))
-    (eat-token ?ps \:)
-    (parse :ptag/exp ?ps)
-    (assoc ?ps :result (->JaKVPair
-                        (recall ?ps :key)
-                        (:result ?ps)))))
 
 ;;;----- 'atomic' expressions, these are useful for parse-list etc. -------
 (defparse :ptag/jvar
@@ -942,15 +952,16 @@
 (defrecord JaEnforceDef [params body])
 (defparse :ptag/enforce-def
   [ps]
-  (as-> ps ?ps
-    (eat-token ?ps :enforce)
-    (parse-list ?ps \( \) \, :ptag/jvar|options)
-    (store ?ps :params)
-    (eat-token ?ps \{)
-    (parse :ptag/exp ?ps)
-    (store ?ps :body)
-    (eat-token ?ps \})
-    (assoc ?ps :result (->JaEnforceDef (recall ?ps :params) (recall ?ps :body)))))
+  (binding [in-enforce? true]
+    (as-> ps ?ps
+      (eat-token ?ps :enforce)
+      (parse-list ?ps \( \) \, :ptag/jvar|options)
+      (store ?ps :params)
+      (eat-token ?ps \{)
+      (parse :ptag/obj-exp ?ps)
+      (store ?ps :body)
+      (eat-token ?ps \})
+      (assoc ?ps :result (->JaEnforceDef (recall ?ps :params) (recall ?ps :body))))))
 
 (defrecord JaImmediateUse [def args])
 ;;; <construct-def> ::= ( <fn-def> | <query-def> | <enforce-def> )( '(' <exp>* ')' )?

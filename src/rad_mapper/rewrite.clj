@@ -155,19 +155,13 @@
   "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than inside-delim?
   false)
 
-(def ^:dynamic in-enforce?
-  "While inside an enforce, qvar references are wrapped."
-  false)
-
 (defrewrite :JaField [m]
   (cond inside-delim? (:field-name m),
         inside-step?  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than inside-delim?
         :else `(~'bi/get-step  ~(:field-name m))))
 
 (defrewrite :JaQvar [m]
-  (if in-enforce? ; b-set is an argument passed into the enforce function.
-    `(~'bi/get-from-b-set ~'b-set ~(-> m :qvar-name keyword))
-    (-> m :qvar-name symbol)))
+  (-> m :qvar-name symbol))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
@@ -184,7 +178,7 @@
    These search the string for the pattern; they ignore characters outside of the
    pattern. For example, /e/.test('The best things in life are free!') ==> returns true.
    Thus it is like #'.*(pattern).*'."
-  [base flags & {:keys [regex-param?]}]
+  [base flags]
   (when (or (:sticky? flags) (:global? flags))
     (throw (ex-info "Regex currently does not support sticky or global flags."
                     {:base base :flags flags})))
@@ -194,20 +188,33 @@
                    (:multi-line? flags)    (str "m")
                    (:unicode? flags)       (str "u")
                    (:dot-all? flags)       (str "s"))]
-;    (if regex-param? ; A built-in function that takes a regex...
-      (if (empty? flag-str)
-        (re-pattern (cl-format nil "~A" body))
-        (re-pattern (cl-format nil "(?~A)~A" flag-str body)))
-      #_(if (empty? flag-str) ; ...else a 'bare' regexe like 'The best things...' ~> /e/.
-        (re-pattern (cl-format nil ".*(~A).*" body))
-        (re-pattern (cl-format nil "(?~A).*(~A).*" flag-str body)))))
+    (if (empty? flag-str)
+      (re-pattern (cl-format nil "~A" body))
+      (re-pattern (cl-format nil "(?~A)~A" flag-str body)))))
 
+(defrewrite :JaEnforceDef [m]
+  (let [p (-> m :params rewrite)]
+    `(~'bi/enforce {:params   '~(remove map? p)
+                    :options  ' ~(some #(when (map? %) %) p)
+                    :map-body '~(-> m :body   rewrite)})))
+
+;;; JaEnforceBody is like an JaObjExp (map) but not rewritten as one.
+;;; Below they are interleaved.
 (defrewrite :JaObjExp [m]
   `(-> {}
-    ~@(map rewrite (:exp m))))
+       ~@(map rewrite (:exp m))))
+
+(defrewrite :JaEnforceMap [m]
+  (reduce (fn [res kv-pair]
+            (assoc res (-> kv-pair :key rewrite) (-> kv-pair :val rewrite)))
+          {}
+          (:kv-pairs m)))
 
 (defrewrite :JaKVPair [m]
   `(assoc ~(rewrite (:key m)) ~(rewrite (:val m))))
+
+(defrewrite :JaEnforceKVPair [m]
+  (list (rewrite (:key m)) (rewrite (:val m))))
 
 (def ^:dynamic in-regex-fn?
   "While rewriting built-in functions that take regular expressions rewrite
@@ -223,7 +230,7 @@
 
 (defrewrite :JaRegExp [m]
     (if in-regex-fn?
-      (make-regex (:base m) (:flags m) :regex-param? true)
+      (make-regex (:base m) (:flags m))
       (let [s (dgensym!)]
         `(fn [~s] (bi/match-regex ~s ~(make-regex (:base m) (:flags m)))))))
 
@@ -251,10 +258,6 @@
 
 (defrewrite :JaQueryPred [m]
   `[~(rewrite (:exp m))])
-
-(defrewrite :JaEnforceDef [m]
-    `(~'bi/enforce {:params ~(-> m :params rewrite)
-                    :body ~(binding [in-enforce? true] (-> m :body rewrite))}))
 
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
 ;;; User functions also translate using this, but don't use the metadata.

@@ -1,15 +1,13 @@
 ;;; https://github.com/borkdude/clj-kondo/blob/master/doc/config.md
 {:lint-as {#_#_rad-mapper.builtins/defn*      clojure.core/defn
-           rad-mapper.builtins/enforce    clojure.core/defmacro
            rad-mapper.builtins/step->     clojure.core/defmacro
            rad-mapper.builtins/defn*      clojure.core/defn
            rad-mapper.builtins/defn$      clojure.core/defn
            rad-mapper.parse/defparse      clojure.core/defn
            rad-mapper.rewrite/defrewrite  clojure.core/defn
-           
+
            com.wsscode.pathom3.connect.operation/defmutation clojure.core/defn
            com.wsscode.pathom3.connect.operation/defresolver clojure.core/defn
            com.wsscode.pathom3.plugin/defplugin              clojure.core/def
            com.wsscode.promesa.macros/clet                   clojure.core/let
            com.wsscode.promesa.macros/ctry                   clojure.core/try}}
-

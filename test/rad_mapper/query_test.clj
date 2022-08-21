@@ -630,25 +630,93 @@
                     )
             )"))))
 
+(defn diag-1 []
+  (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
+                $q := query(){ [?s ?systemName ?x]
+                               [($match(?systemName, /system\\d/))]
+                               [?x :owners ?y]
+                               [?y ?ownerName ?z]
+                               [($match(?ownerName, /owner\\d/))]
+                               [?z ?deviceName ?d]
+                               [($match(?deviceName, /device\\d/))]
+                               [?d :id ?id]
+                               [?d :status ?status] };
+
+             $bsets := $q($data);)"))
+
+
+
+
+(defn diag-2 []
+  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
+         $reduce($bsets,
+                 enforce()
+                         {  {'owners':
+                                {?ownerName:
+                                   {?systemName:
+                                      {?deviceName : {'id'     : ?id,
+                                                      'status' : ?status}}}}}
+                         })
+                  )"))
+
+(defn diag-3 []
+  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
+         $enf   :=  enforce()
+                         {  {'owners':
+                                {?ownerName:
+                                   {?systemName:
+                                      {?deviceName : {'id'     : ?id,
+                                                      'status' : ?status}}}}}
+                         };
+         $reduce($bsets,$enf)
+        )"))
+
+
+(defn diag-4 []
+  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
+         $enf   := enforce() {  {'owners': ?ownerName } };
+         $reduce($bsets,$enf)
+         )"))
+
+(defn diag-5 []
+  (run "($bsets := $readFile('data/testing/jsonata/bsets.edn');
+         $enf   := enforce() {  {'owners': ?ownerName } };
+         )"))
+
+(defn diag-6 []
+  (run "($enf   := enforce() {  {'owners': ?ownerName } };
+         )"))
+
+(defn diag-7 []
+  (run "(enforce() {  {'owners': ?ownerName } } )"))
+
+
+
+
+
+
+
+
 
 (defn tryme []
-  (let [f (bi/primary
-           (let [$data (bi/$readFile "data/testing/jsonata/sTPDRs--6.json")
-                 $q (bi/query
-                     '[]
-                     '[[?s ?system-name ?x]
-                       [(bi/$match ?system-name #"system\d")]
+  (let [$data (bi/$readFile "data/testing/jsonata/sTPDRs--6.json")
+        $q (bi/query '[]
+                     '[[?s ?systemName ?x]
+                       [(bi/$match ?systemName #"system\d")]
                        [?x :owners ?y]
-                       [?y ?owner-name ?z]
-                       [(bi/$match ?owner-name #"owner\d")]
-                       [?z ?device-name ?d]
-                       [(bi/$match ?device-name #"device\d")]
+                       [?y ?ownerName ?z]
+                       [(bi/$match ?ownerName #"owner\d")]
+                       [?z ?deviceName ?d]
+                       [(bi/$match ?deviceName #"device\d")]
                        [?d :id ?id]
-                       [?d :status ?status]])]
-             ($q $data)))]
-    (f)))
-
-(defn make-db []
-  (-> (bi/$readFile "data/testing/jsonata/sTPDRs--6.json") ; "data/testing/jsonata/sTPDRs--6-output.json"
-      clojure.walk/keywordize-keys
-      qu/db-for!))
+                       [?d :status ?status]])
+        $bsets  ($q $data)]
+    (bi/$reduce
+     $bsets
+     (bi/enforce
+      {:map-body
+       '{"owners"
+         {?ownerName
+          {?systemName {?deviceName {"id" ?id, "status" ?status}}}}},
+       :params '(),
+       :options 'nil}))))
