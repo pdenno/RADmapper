@@ -13,7 +13,7 @@
    [clojure.spec.alpha           :as s]
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str :refer [index-of]]
-   [clojure.walk                 :refer [keywordize-keys]]
+   [clojure.walk                 :as walk :refer [keywordize-keys]]
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
    [rad-mapper.query             :as qu]
@@ -1596,7 +1596,8 @@
 
 ;;;---------- query ---------------------------------------
 (defn substitute-in-form
-  "Return a DH query [:find...] form that substitutes values as though syntax quote were being used."
+  "Return a map for a datalog queryy [:find...] form that substitutes values as
+   though syntax quote were being used."
   [body param-val-map]
   (letfn [(tp-aux [x]
             (cond (vector? x)                  (mapv tp-aux x),
@@ -1605,23 +1606,34 @@
                   :else x))]
     (let [vars (->> (reduce (fn [r x] (into r x)) body)
                     (filter #(str/starts-with? % "?"))
-                    distinct)]
-    `[:find ~@vars
-      :keys ~@(mapv symbol vars)
-      :where ~@(tp-aux body)])))
+                    distinct
+                    vec)]
+    `{:vars  ~vars
+      :keys  ~(mapv symbol vars)
+      :where ~(tp-aux body)})))
+
+(defn rewrite-qform
+  "Rewrite a query map such as returned by subsitute-in-form into a form acceptable as a datalog query.
+   Accepts map keys :find :keys :in and :where."
+  [qmap]
+  `[:find ~@(:vars qmap)
+    :keys ~@(:keys qmap)
+    :in ~@(into '[$] (:in qmap))
+    :where ~@(:where qmap)])
 
 (defn query-fn-aux
   "The function that returns a binding set.
    Note that it attaches meta for the DB and body."
   [db-atm body param-subs]
-  (-> (->> (d/q (substitute-in-form body param-subs) @db-atm) ; This is possible because body is data to d/q.
-           ;; Remove binding sets that involve a schema entity.
-           (remove (fn [bset] (some (fn [bval]
-                                      (and (keyword? bval)
-                                           (core/= "db" (namespace bval))))
-                                    (vals bset))))
-           vec)
-      (with-meta {:bi/b-set? true :bi/db-atm db-atm :bi/query-form body})))
+  (let [qmap (substitute-in-form body param-subs)]
+    (-> (->> (d/q (-> qmap rewrite-qform)  @db-atm) ; This is possible because body is data to d/q.
+             ;; Remove binding sets that involve a schema entity.
+             (remove (fn [bset] (some (fn [bval]
+                                        (and (keyword? bval)
+                                             (core/= "db" (namespace bval))))
+                                      (vals bset))))
+             vec)
+        (with-meta {:bi/b-set? true :bi/db-atm db-atm :bi/query-map qmap}))))
 
 (defn immediate-query-fn
     "Return a function that can be used immediately to make the query defined in body."
@@ -1685,7 +1697,7 @@
                           options {:bi/body body})))
     ;; body has template params that must be replaced
     (-> (fn [& psubs]
-          (let [new-body (substitute-in-form (zipmap params psubs))]
+          (let [new-body (substitute-in-form body (zipmap params psubs))]
             (-> (fn [b-set] (enforce-body new-body b-set))
                 (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
                                   options {:bi/body body})))))
@@ -1727,70 +1739,46 @@
                   :else obj))]
     (eb-aux body)))
 
-(defn reduce-enforce
-  [b-sets body-fn init]
-  (let [gkeys   (->> body-fn meta :asKeys (map keyword))
-        kcoll   (->> (reduce (fn [res bset]
-                               (let [k (reduce (fn [r k-part] (conj r (k-part bset))) [] gkeys)]
-                                 (conj res {:key k :bset bset})))
-                             []
-                             b-sets)
-                     (sort-by :key))
-        pattern (-> body-fn meta :body)]
-    ;; We are doing something like reduce on update-in here!
-    {:query  (-> b-sets meta :bi/query-form)
-     :db-atm (-> b-sets meta :bi/db-atm)
-     :kcoll kcoll
-     :body pattern}))
+(defn qvar? [obj] (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
 
-;;; Instead, write a query to get 3-tuples. See if that helps build a structure.
-;;; I thought owner1 has responsibility for certain devices in system1 and certain devices is system2!!!
-;;; Is that not what I'm saying by this data? (The query must be hosed).
-(defn tryme
-  [owner system]
-  (let [data
-        [{:ownerName "owner1", :o--s {:systemName "system1", :s--d {:deviceName "device1", :id 100, :status "Ok"}}}
-         {:ownerName "owner1", :o--s {:systemName "system1", :s--d {:deviceName "device2", :id 200, :status "Ok"}}}
-         {:ownerName "owner1", :o--s {:systemName "system2", :s--d {:deviceName "device5", :id 500, :status "Ok"}}}
-         {:ownerName "owner1", :o--s {:systemName "system2", :s--d {:deviceName "device6", :id 600, :status "Ok"}}}
-         {:ownerName "owner2", :o--s {:systemName "system1", :s--d {:deviceName "device3", :id 300, :status "Ok"}}}
-         {:ownerName "owner2", :o--s {:systemName "system1", :s--d {:deviceName "device4", :id 400, :status "Ok"}}}
-         {:ownerName "owner2", :o--s {:systemName "system2", :s--d {:deviceName "device7", :id 700, :status "Ok"}}}
-         {:ownerName "owner2", :o--s {:systemName "system2", :s--d {:deviceName "device8", :id 800, :status "Ok"}}}]
-        schema {:ownerName  #:db{:cardinality :db.cardinality/many :valueType :db.type/string}
-                :systemName #:db{:cardinality :db.cardinality/many :valueType :db.type/string}
-                :deviceName #:db{:cardinality :db.cardinality/many :valueType :db.type/string}
-                :o--s  #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}
-                :s--d #:db{:cardinality :db.cardinality/many :valueType :db.type/ref}}
-        db-atm (qu/db-for! data :known-schema schema)]
-  (d/q `[:find ?d
-         :keys device-ref
-         :where
-         [?o :ownerName ~owner]
-         [?o :o--s ?s]
-         [?s :systemName ~system]
-         [?s :s--d ?d]]
-       @db-atm)))
 
-;;;------------- reduce-enforce function  docline
-  "This function preforms $reduce on an enforce function
-   The asKeys option reorganizes data so that what might be interpreted as a unique
-   identifier for the object isn't contained in the object but is the key of a nesting object.
+(defn query-db-with-qform
+  "Return resolved results of a query where keys are replaced with values
+   in the argument qform, a [:find ...] form."
+  [db-atm qmap kv-pairs]    ; See https://docs.datomic.com/on-prem/query/query.html#multiple-inputs
+  (letfn [(sub-where [form] ; <====================================== THIS IS NOT WHAT I NEED!!! Use the :in
+            (mapv (fn [triple] ; It could actually be a [(bi/$match ...)]. These are ignored.
+                    (mapv #(if (and (symbol? %) (contains? kv-pairs %)) (get kv-pairs %) %)
+                          triple))
+                  form))]
+    (let [query (-> qmap
+                    (update qmap :where #(sub-where %))
+                    rewrite-qform)]
+      (d/q query @db-atm))))
 
-   The symbols in asKeys name b-set properties where this transformation of a flat substitution
-   is to take place. For example:
+(defn q-build-order
+  "Walk the form looking for qvar symbols, return them in the order found (pre-walk).
+   The same qvar can appear multiple times if it is so used."
+  [form]
+  (let [res (atom [])]
+    (walk/prewalk #(if (qvar? %) (do (swap! res conj %) %) %) form)
+    @res))
 
-   {:people {:?person-name 'fred'...} becomes
-   {:people {'fred' {....
-
-   The order of the keys is important because successive 'group-by' functions are applied."
+(defn make-bset-keys
+  "Return the b-sets vectors of tuples [<gkey-symbol> <val>]
+     - :bset - a argument bset unchanged, and
+     - :key  - a vector (of size = gkey size) of two-place vectors of form [k v] with
+               meta {:kt? true} where k is the gkey and v is the value of that key in the bset."
+  [b-sets gkeys] ; g in "gkey" is "group".
+  (->> (reduce (fn [res bset]
+                 (let [k (reduce (fn [r gkey] (conj r (vector gkey (get bset (keyword gkey))))) [] gkeys)]
+                   (conj res k)))
+               []
+               b-sets)
+       sort
+       (mapv #(with-meta % {:kt? true}))))
 
 ;;;----------------------- Stuff for development
-'{"owners"
-  {?ownerName
-   {?systemName
-    {?deviceName  {"id"     ?id,
-                   "status" ?status}}}}}
 '{"owners"
  {"owner1"
   {"system1" {"device1" { :status "Ok", :id 100}
@@ -1802,6 +1790,92 @@
               "device4" { :status "Ok", :id 400}}
    "system2" {"device7" { :status "Ok", :id 700}
               "device8" { :status "Ok", :id 800}}}}}
+
+'{"owners"
+  {?ownerName
+   {?systemName
+    {?deviceName  {"id"     ?id,
+                   "status" ?status}}}}}
+
+(defn pre-key
+  "Return the vector of k-tuples that leads to gkey in the body"
+  [_body _gkey]
+  [])
+
+(defn post-keys
+  [pre-key bset-keys]
+  (if (empty? pre-key)
+    (->> bset-keys (map first) distinct sort (mapv #(with-meta % {:kt? true}))) ; ToDo: This is the only place sort is needed. AND META
+    :nyi))
+
+
+;;; Add to cond for vector.
+(defn merge-replacements
+  "Find paths to the gkey and replace them (duplicating) with corresponding :k? tuples."
+  [body gkey bset-keys]
+  (let [pre-key (pre-key body gkey)]
+    (letfn [(mr-aux [x]
+              (cond (map? x)    (reduce-kv (fn [m k v]
+                                             (cond (= k gkey)
+                                                   (let [post-keys (post-keys pre-key bset-keys)]
+                                                     (reduce (fn [res post-key] (assoc res (first post-key) v)) m post-keys))
+                                                   :else (assoc m k (mr-aux v))))
+                                           {} x)
+                    (vector? x)  (mapv mr-aux x)
+                    :else x))]
+      (mr-aux body))))
+
+(defn replace-key
+  "Reduce body by replacing gkey as appropriate given bset-keys."
+  [body gkey bset-keys]
+  (let [body-atm (atom body)]
+    (letfn [(rk-aux [obj]
+              (cond (-> obj meta :kt?)    obj, ; It is something already replaced.
+                    (= gkey obj)         (swap! body-atm #(merge-replacements % gkey bset-keys)),
+                    (map? obj)           (reduce-kv (fn [m k v] (assoc m (rk-aux k) (rk-aux v))) {} obj),
+                    (vector? obj)        (mapv rk-aux obj),
+                    :else obj))]
+      (rk-aux @body-atm)
+      @body-atm)))
+
+;;; I'm not using the body-fn at all!
+(defn reduce-enforce
+  [b-sets body-fn _init]
+  (let [body (-> body-fn meta :bi/body)
+        gkeys  (q-build-order body)
+        bset-keys (make-bset-keys b-sets gkeys)]
+    ;; Reduce the form by replacing qvars by resolved :k? objects, mindful of all matching.
+    (reduce (fn [body gkey] (replace-key body gkey bset-keys)) body gkeys)))
+
+;;;==========================================================================================================
+#_(defn reduce-enforce
+  [b-sets body-fn _init]
+  (let [gkeys   (->> body-fn meta :asKeys (map keyword))
+        kcoll   (->> (reduce (fn [res bset]
+                               (let [k (reduce (fn [r k-part] (conj r (k-part bset))) [] gkeys)]
+                                 (conj res {:key k :bset bset})))
+                             []
+                             b-sets)
+                     (sort-by :key))
+        pattern (-> body-fn meta :body)]
+    ;; We are doing something like reduce on update-in here!
+    {:qmap   (-> b-sets meta :bi/query-map)
+     :db-atm (-> b-sets meta :bi/db-atm)
+     :kcoll kcoll
+     :body pattern}))
+
+;;;------------- reduce-enforce function docline
+  "This function preforms $reduce on an enforce function
+   The asKeys option reorganizes data so that what might be interpreted as a unique
+   identifier for the object isn't contained in the object but is the key of a nesting object.
+
+   The symbols in asKeys name b-set properties where this transformation of a flat substitution
+   is to take place. For example:
+
+   {:people {:?person-name 'fred'...} becomes
+   {:people {'fred' {....
+
+   The order of the keys is important because successive 'group-by' functions are applied."
 
 ;;;---- not enforce ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

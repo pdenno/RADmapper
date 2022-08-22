@@ -196,7 +196,7 @@
   (let [p (-> m :params rewrite)]
     `(~'bi/enforce {:params   '~(remove map? p)
                     :options  ' ~(some #(when (map? %) %) p)
-                    :map-body '~(-> m :body   rewrite)})))
+                    :body '~(-> m :body rewrite)})))
 
 ;;; JaEnforceBody is like an JaObjExp (map) but not rewritten as one.
 ;;; Below they are interleaved.
