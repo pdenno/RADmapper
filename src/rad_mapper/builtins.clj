@@ -1739,9 +1739,6 @@
                   :else obj))]
     (eb-aux body)))
 
-(defn qvar? [obj] (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
-
-
 (defn query-db-with-qform
   "Return resolved results of a query where keys are replaced with values
    in the argument qform, a [:find ...] form."
@@ -1756,40 +1753,83 @@
                     rewrite-qform)]
       (d/q query @db-atm))))
 
+;;;========================================================================
+(defn sbind? [obj] (-> obj meta :sbind?))
+(defn qvar? [obj] (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
+
 (defn q-build-order
-  "Walk the form looking for qvar symbols, return them in the order found (pre-walk).
+  "Walk the form looking for qvar symbols, return sbind- maps (sbind sans :val)
+   in the order in which they occur in the form.
    The same qvar can appear multiple times if it is so used."
   [form]
-  (let [res (atom [])]
-    (walk/prewalk #(if (qvar? %) (do (swap! res conj %) %) %) form)
-    @res))
+  (let [sbind-order (atom [])
+        cnt-order (atom 0)
+        k|v (atom nil)]
+    (letfn [(walk-q [x]
+                (cond (qvar? x)          (do (swap! cnt-order inc) ; They can occur multiply.
+                                             (swap! sbind-order conj (-> {:sym x :pos @cnt-order} (with-meta {:sbind? true})))
+                                             (-> @sbind-order last)),
+                      (map? x)            (doall (reduce-kv (fn [m k v] (assoc m (walk-q k) (walk-q v))) {} x)),
+                      (vector? x)         (doall (mapv walk-q x)),
+                      :else x))
+            (what? [x s]
+              (cond @k|v  nil
+                    (-> x meta :sbind?)   (reset! k|v :val) ; If vector.
+                    (map? x)              (or @k|v
+                                              (doseq [[k v] x]
+                                                (cond (and (-> k meta :sbind?) (= k s)) (reset! k|v :key)
+                                                      (and (-> v meta :sbind?) (= v s)) (reset! k|v :val)
+                                                      :else (what? v s))))
+                    (vector? x)           (doall (map #(what? % s) x))))]
+      (let [oform (walk-q form)]
+        (doall (reduce (fn [res sbind-]
+                         (reset! k|v nil)
+                         (what? oform sbind-)
+                         (conj res (assoc sbind- :binds @k|v)))
+                       []
+                       @sbind-order))))))
+              
 
-(defn make-bset-keys
-  "Return the b-sets vectors of tuples [<gkey-symbol> <val>]
-     - :bset - a argument bset unchanged, and
-     - :key  - a vector (of size = gkey size) of two-place vectors of form [k v] with
-               meta {:kt? true} where k is the gkey and v is the value of that key in the bset."
-  [b-sets gkeys] ; g in "gkey" is "group".
-  (->> (reduce (fn [res bset]
-                 (let [k (reduce (fn [r gkey] (conj r (vector gkey (get bset (keyword gkey))))) [] gkeys)]
-                   (conj res k)))
-               []
-               b-sets)
-       sort
-       (mapv #(with-meta % {:kt? true}))))
+;;;  Old: ([?ownerName :owner2] [?systemName :system2] [?deviceName :device8] [?id 800] [?status "Ok"])
+;;;  New: (<:sym ?ownerName :val :owner2 :binds-key? true>
+(defn make-bset-sbinds
+  "Return the b-sets as maps with meta {:sbind? true} having three keys:
+     - :sym         - the symbol from the query
+     - :val         - the value bound
+     - :pos         - the ordinal position of the symbol in the body.
+     - :binds-key?  - true if it binds a map key, rather than map value.
+   The returned vector of b-sets is sorted by a vector of :val.
+   The argument prim-bsets are how they are returned from query."
+  [prim-sets body] 
+  (let [sbinds- (q-build-order body)] ; sbind-b is the map in need of :val.
+    (->> (reduce (fn [res pbset]
+                  (let [k (reduce (fn [r sbind] (conj r (assoc sbind :val (get pbset (-> sbind :sym keyword)))))
+                                  []
+                                  sbinds-)]
+                    (conj res k)))
+                []
+                prim-sets)
+         ;; Now sort them.
+         (mapv (fn [bset] (vector (mapv :val bset) bset)))
+         (sort-by first)
+         (mapv second)
+         ;; And index them by [:sym :pos]
+         (mapv (fn [bset] (reduce (fn [m sbind]
+                                    (assoc m (vector (:sym sbind) (:pos sbind)) sbind))
+                                  {} bset))))))
 
 ;;;----------------------- Stuff for development
 '{"owners"
- {"owner1"
-  {"system1" {"device1" { :status "Ok", :id 100}
-              "device2" { :status "Ok", :id 200}}
-   "system2" {"device5" { :status "Ok", :id 500}
-              "device6" { :status "Ok", :id 600}}}
+  {"owner1"
+   {"system1" {"device1" { :status "Ok", :id 100}
+               "device2" { :status "Ok", :id 200}}
+    "system2" {"device5" { :status "Ok", :id 500}
+               "device6" { :status "Ok", :id 600}}}
   "owner2"
-  {"system1" {"device3" { :status "Ok", :id 300}
-              "device4" { :status "Ok", :id 400}}
-   "system2" {"device7" { :status "Ok", :id 700}
-              "device8" { :status "Ok", :id 800}}}}}
+   {"system1" {"device3" { :status "Ok", :id 300}
+               "device4" { :status "Ok", :id 400}}
+    "system2" {"device7" { :status "Ok", :id 700}
+               "device8" { :status "Ok", :id 800}}}}}
 
 '{"owners"
   {?ownerName
@@ -1797,62 +1837,131 @@
     {?deviceName  {"id"     ?id,
                    "status" ?status}}}}}
 
-(defn pre-key
-  "Return the vector of k-tuples that leads to gkey in the body"
-  [_body _gkey]
-  [])
-
-(defn post-keys
-  [pre-key bset-keys]
-  (if (empty? pre-key)
-    (->> bset-keys (map first) distinct sort (mapv #(with-meta % {:kt? true}))) ; ToDo: This is the only place sort is needed. AND META
-    :nyi))
-
-
-;;; Add to cond for vector.
-(defn merge-replacements
-  "Find paths to the gkey and replace them (duplicating) with corresponding :k? tuples."
-  [body gkey bset-keys]
-  (let [pre-key (pre-key body gkey)]
-    (letfn [(mr-aux [x]
-              (cond (map? x)    (reduce-kv (fn [m k v]
-                                             (cond (= k gkey)
-                                                   (let [post-keys (post-keys pre-key bset-keys)]
-                                                     (reduce (fn [res post-key] (assoc res (first post-key) v)) m post-keys))
-                                                   :else (assoc m k (mr-aux v))))
-                                           {} x)
-                    (vector? x)  (mapv mr-aux x)
+(defn base-body
+  "Return the body with nil sbinds (sbind with :val nil) replacing qvars."
+  [form sample-bset]
+  (let [bset-atm (atom (vals sample-bset))]
+    (letfn [(bb-aux [x]
+              (cond (map? x)  (reduce-kv (fn [m k v] (assoc m (bb-aux k) (bb-aux v))) {} x)
+                    (qvar? x) (let [use (some #(when (= x (:sym %)) %) @bset-atm)]
+                                   (swap! bset-atm (fn [sbinds] (remove #(= % use) sbinds)))
+                                   (assoc use :val nil))
+                    (vector? x) (mapv bb-aux x)
                     :else x))]
-      (mr-aux body))))
+      (bb-aux form))))
+        
+(defn lookup-key
+  "The k value can be either a qvar or a key-tuple.
+   The way this is used, if it is a key-tuple, it is not the one you want (which is in the b-set),
+   but its qvar is used to look it up."
+  [k bset]
+  (if (sbind? k)
+    (get bset (first k))
+    (throw (ex-info "Huh?" {:k k :b-set bset})))) ; ToDo: remove this.
 
-(defn replace-key
-  "Reduce body by replacing gkey as appropriate given bset-keys."
-  [body gkey bset-keys]
-  (let [body-atm (atom body)]
-    (letfn [(rk-aux [obj]
-              (cond (-> obj meta :kt?)    obj, ; It is something already replaced.
-                    (= gkey obj)         (swap! body-atm #(merge-replacements % gkey bset-keys)),
-                    (map? obj)           (reduce-kv (fn [m k v] (assoc m (rk-aux k) (rk-aux v))) {} obj),
-                    (vector? obj)        (mapv rk-aux obj),
-                    :else obj))]
-      (rk-aux @body-atm)
-      @body-atm)))
+(defn nil-sbind?
+  "The keys of the original pattern are (with-meta [sbind nil] {:sbind? true}).
+   This returns true if the argument is a such a key."
+  [s]
+  (and (sbind? s) (-> s :val nil?)))
 
-;;; I'm not using the body-fn at all!
+(def diag (atom nil))
+
+(defn rem-sbind [x] ; This just cleans up the result.
+  (cond (map? x)      (reduce-kv (fn [m k v] (assoc m (rem-sbind k) (rem-sbind v))) {} x),
+        (sbind? x)    (:val x),
+        (vector? x)   (mapv rem-sbind x),
+        (keyword? x)  (name x),
+        :else         x))
+
+(defn push-path!
+  [path-atm k]
+  (swap! path-atm (fn [p] (update p :path #(conj % k))))
+  (cl-format *out* "~% push to ~S" (-> path-atm deref :path)))
+
+(defn pop-path! [path-atm]
+  (swap! path-atm (fn [p] (update p :path #(-> % butlast vec))))
+  (cl-format *out* "~% pop to ~S" (-> path-atm deref :path)))
+
+(defn modify?
+  [m k v path bset]
+  (cl-format *out* "~% Key = ~S ~% value = ~S ~% path = ~S~% map = ~S bset = ~S ~% "
+             k v (-> path deref :path) m (map :val (vals bset)))
+  (cond (-> k sbind? not) true
+        (nil-sbind? k)   true
+        :else :nyi))
+
+(defn update-map-key
+  "If the key is not in the path, and this bset is on the path,
+   add the k v pair to the map."
+  [m k v path-atm bset]
+  (let [path-keys (filter sbind? (-> @path-atm :path))
+        cand-sbind  (get bset [(:sym k) (:pos k)])]
+    (if (not-any? #(and (=  (:sym %) (:sym cand-sbind))
+                        (== (:pos %) (:pos cand-sbind))
+                        (=  (:val %) (:val cand-sbind)))
+                  path-keys)
+      {:new-map (cond-> m 
+                  true            (assoc cand-sbind v)
+                  (nil-sbind? k)  (dissoc k))
+       :new-key cand-sbind}
+      m)))
+
+(defn update-map-val
+  [m k v path-atm bset]
+  (if (sbind? v)
+    (let [path-keys (filter sbind? (-> @path-atm :path))
+          cand-sbind  (get bset [(:sym v) (:pos v)])]
+      (if (not-any? #(and (=  (:sym %) (:sym cand-sbind))
+                          (== (:pos %) (:pos cand-sbind))
+                          (=  (:val %) (:val cand-sbind)))
+                    path-keys)
+        (assoc m k cand-sbind)
+        m))
+    (assoc m k v)))
+
 (defn reduce-enforce
   [b-sets body-fn _init]
   (let [body (-> body-fn meta :bi/body)
-        gkeys  (q-build-order body)
-        bset-keys (make-bset-keys b-sets gkeys)]
-    ;; Reduce the form by replacing qvars by resolved :k? objects, mindful of all matching.
-    (reduce (fn [body gkey] (replace-key body gkey bset-keys)) body gkeys)))
+        b-sets (make-bset-sbinds b-sets body)
+        path (atom {:path [] :completed []})]
+    (letfn [(ubod [x bset] ; Walk the current form, threading in the bset.
+              (cond (map? x)
+                    (doall
+                     (reduce-kv (fn [m k v] ; depth-first complete a bset.
+                                  (push-path! path k)
+                                  (as-> m ?m
+                                    (if (sbind? k)
+                                      (let [{:keys [new-map new-key]} (update-map-key ?m k v path bset)]
+                                        (-> (assoc new-map new-key (ubod (get new-map new-key) bset))
+                                          (update-map-val new-key v path bset)))
+                                      ?m),
+                                    (if (sbind? v) (update-map-val ?m k v path bset)  ?m),
+                                    (if (not (or (sbind? k) (sbind? v)))
+                                      (assoc ?m k (ubod v bset))
+                                      (throw (ex-info "huh?" (reset! diag {:m ?m :k k :v v :bset bset})))))
+                                  (pop-path! path))
+                                {} x)),
+                    (sbind? x) x,
+                    (vector? x)  (mapv #(ubod % bset) x)
+                    :else         x))]
+      (->
+       (doall
+        (reduce (fn [bod bset]
+                  (cl-format *out* "~2% Starting ~S" (mapv :val (vals bset)))
+                  (let [r (ubod bod bset)]
+                    (swap! path (fn [p] (update p :completed #(conj % (mapv :vals (vals bset))))))
+                    r))
+                (base-body body (first b-sets)) #_b-sets (-> b-sets first vector)))
+       rem-sbind))))
+
 
 ;;;==========================================================================================================
 #_(defn reduce-enforce
   [b-sets body-fn _init]
-  (let [gkeys   (->> body-fn meta :asKeys (map keyword))
+  (let [sbinds   (->> body-fn meta :asKeys (map keyword))
         kcoll   (->> (reduce (fn [res bset]
-                               (let [k (reduce (fn [r k-part] (conj r (k-part bset))) [] gkeys)]
+                               (let [k (reduce (fn [r k-part] (conj r (k-part bset))) [] sbinds)]
                                  (conj res {:key k :bset bset})))
                              []
                              b-sets)
