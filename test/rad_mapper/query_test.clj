@@ -685,3 +685,25 @@
                       ($q $data))))
                 (with-meta #:bi{:step-type :bi/primary}))]
     (fff)))
+
+(def data
+  {[:owners :owner1 :system1 :device1 :status] "Ok"
+   [:owners :owner1 :system1 :device1 :id] 100
+   [:owners :owner1 :system1 :device2 :status] "Ok"
+   [:owners :owner1 :system1 :device2 :id] 200
+   [:owners :owner1 :system2 :device5 :status] "Ok"
+   [:owners :owner1 :system2 :device5 :id] 500
+   [:owners :owner1 :system2 :device6 :status] "Ok"
+   [:owners :owner1 :system2 :device6 :id] 600
+
+   [:owners :owner2 :system1 :device3 :status] "Ok"
+   [:owners :owner2 :system1 :device3 :id] 300
+   [:owners :owner2 :system1 :device4 :status] "Ok"
+   [:owners :owner2 :system1 :device4 :id] 400
+   [:owners :owner2 :system2 :device7 :status] "Ok"
+   [:owners :owner2 :system2 :device7 :id] 700
+   [:owners :owner2 :system2 :device8 :status] "Ok"
+   [:owners :owner2 :system2 :device8 :id] 800 })
+
+
+(defn tryme []

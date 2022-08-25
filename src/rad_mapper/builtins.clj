@@ -65,6 +65,7 @@
 (s/def ::objects (s/and vector? (s/coll-of map? :min-count 1)))
 (s/def ::radix (s/and number? #(core/<= 2 % 36)))
 (s/def ::fn fn?)
+(s/def ::sbind #(-> % meta :sbind?))
 
 (defn reset-env
   "Clean things up just prior to running user code."
@@ -1760,7 +1761,7 @@
 (defn q-build-order
   "Walk the form looking for qvar symbols, return sbind- maps (sbind sans :val)
    in the order in which they occur in the form.
-   The same qvar can appear multiple times if it is so used."
+   The same qvar can appear multiple times if it is so used, thus the :pos key."
   [form]
   (let [sbind-order (atom [])
         cnt-order (atom 0)
@@ -1788,10 +1789,27 @@
                          (conj res (assoc sbind- :binds @k|v)))
                        []
                        @sbind-order))))))
-              
 
 ;;;  Old: ([?ownerName :owner2] [?systemName :system2] [?deviceName :device8] [?id 800] [?status "Ok"])
 ;;;  New: (<:sym ?ownerName :val :owner2 :binds-key? true>
+#_(defn make-bset-sbinds
+  "Return the b-sets as maps with meta {:sbind? true} having three keys:
+     - :sym         - the symbol from the query
+     - :val         - the value bound
+     - :pos         - the ordinal position of the symbol in the body.
+     - :binds-key?  - true if it binds a map key, rather than map value.
+   The returned vector of b-sets is sorted by a vector of :val.
+   The argument prim-bsets is the vector of binding sets as returned from query."
+  [prim-sets body]
+  (let [sbinds- (q-build-order body)] ; sbind-b is the map in need of :val.
+    (reduce (fn [res pbset]
+                  (let [k (reduce (fn [r sbind] (conj r (assoc sbind :val (get pbset (-> sbind :sym keyword)))))
+                                  []
+                                  sbinds-)]
+                    (conj res k)))
+                []
+                prim-sets)))
+
 (defn make-bset-sbinds
   "Return the b-sets as maps with meta {:sbind? true} having three keys:
      - :sym         - the symbol from the query
@@ -1799,8 +1817,8 @@
      - :pos         - the ordinal position of the symbol in the body.
      - :binds-key?  - true if it binds a map key, rather than map value.
    The returned vector of b-sets is sorted by a vector of :val.
-   The argument prim-bsets are how they are returned from query."
-  [prim-sets body] 
+   The argument prim-bsets is the vector of binding sets as returned from query."
+  [prim-sets body]
   (let [sbinds- (q-build-order body)] ; sbind-b is the map in need of :val.
     (->> (reduce (fn [res pbset]
                   (let [k (reduce (fn [r sbind] (conj r (assoc sbind :val (get pbset (-> sbind :sym keyword)))))
@@ -1817,6 +1835,7 @@
          (mapv (fn [bset] (reduce (fn [m sbind]
                                     (assoc m (vector (:sym sbind) (:pos sbind)) sbind))
                                   {} bset))))))
+
 
 ;;;----------------------- Stuff for development
 '{"owners"
@@ -1838,153 +1857,73 @@
                    "status" ?status}}}}}
 
 (defn base-body
-  "Return the body with nil sbinds (sbind with :val nil) replacing qvars."
+  "Return the body replacing qvars with nil-sbinds."
   [form sample-bset]
   (let [bset-atm (atom (vals sample-bset))]
     (letfn [(bb-aux [x]
               (cond (map? x)  (reduce-kv (fn [m k v] (assoc m (bb-aux k) (bb-aux v))) {} x)
                     (qvar? x) (let [use (some #(when (= x (:sym %)) %) @bset-atm)]
                                    (swap! bset-atm (fn [sbinds] (remove #(= % use) sbinds)))
-                                   (assoc use :val nil))
+                                   (dissoc  use :val))
                     (vector? x) (mapv bb-aux x)
                     :else x))]
       (bb-aux form))))
-        
-(defn lookup-key
-  "The k value can be either a qvar or a key-tuple.
-   The way this is used, if it is a key-tuple, it is not the one you want (which is in the b-set),
-   but its qvar is used to look it up."
-  [k bset]
-  (if (sbind? k)
-    (get bset (first k))
-    (throw (ex-info "Huh?" {:k k :b-set bset})))) ; ToDo: remove this.
 
-(defn nil-sbind?
-  "The keys of the original pattern are (with-meta [sbind nil] {:sbind? true}).
-   This returns true if the argument is a such a key."
-  [s]
-  (and (sbind? s) (-> s :val nil?)))
-
-(def diag (atom nil))
-
-(defn rem-sbind [x] ; This just cleans up the result.
-  (cond (map? x)      (reduce-kv (fn [m k v] (assoc m (rem-sbind k) (rem-sbind v))) {} x),
-        (sbind? x)    (:val x),
-        (vector? x)   (mapv rem-sbind x),
-        (keyword? x)  (name x),
-        :else         x))
-
-(defn push-path!
-  [path-atm k]
-  (swap! path-atm (fn [p] (update p :path #(conj % k))))
-  (cl-format *out* "~% push to ~S" (-> path-atm deref :path)))
-
-(defn pop-path! [path-atm]
-  (swap! path-atm (fn [p] (update p :path #(-> % butlast vec))))
-  (cl-format *out* "~% pop to ~S" (-> path-atm deref :path)))
-
-(defn modify?
-  [m k v path bset]
-  (cl-format *out* "~% Key = ~S ~% value = ~S ~% path = ~S~% map = ~S bset = ~S ~% "
-             k v (-> path deref :path) m (map :val (vals bset)))
-  (cond (-> k sbind? not) true
-        (nil-sbind? k)   true
-        :else :nyi))
-
-(defn update-map-key
-  "If the key is not in the path, and this bset is on the path,
-   add the k v pair to the map."
-  [m k v path-atm bset]
-  (let [path-keys (filter sbind? (-> @path-atm :path))
-        cand-sbind  (get bset [(:sym k) (:pos k)])]
-    (if (not-any? #(and (=  (:sym %) (:sym cand-sbind))
-                        (== (:pos %) (:pos cand-sbind))
-                        (=  (:val %) (:val cand-sbind)))
-                  path-keys)
-      {:new-map (cond-> m 
-                  true            (assoc cand-sbind v)
-                  (nil-sbind? k)  (dissoc k))
-       :new-key cand-sbind}
-      m)))
-
-(defn update-map-val
-  [m k v path-atm bset]
-  (if (sbind? v)
-    (let [path-keys (filter sbind? (-> @path-atm :path))
-          cand-sbind  (get bset [(:sym v) (:pos v)])]
-      (if (not-any? #(and (=  (:sym %) (:sym cand-sbind))
-                          (== (:pos %) (:pos cand-sbind))
-                          (=  (:val %) (:val cand-sbind)))
-                    path-keys)
-        (assoc m k cand-sbind)
-        m))
-    (assoc m k v)))
+(defn bset-kv-maps
+  "Process the bset and body together, returning each 'kv-maps' it defines.
+   A kv-map describes a :val that is to be assoc-in'd to a :key
+   The form of the  kv-map is:
+   {:key - some vector of keys constructed from the body and bset;
+           the elements of the vector are either sbinds or strings.
+    :val - the value associated with the bset's qvar at the end of this path.}
+   The body argument has sbinds wherever the user's enforce body has qvars."
+  [body bset]
+  (let [val-sbinds (filter #(= (:binds %) :val) bset)
+        key-sbinds (filter #(= (:binds %) :key) bset)
+        path (atom [])
+        found? (atom nil)] ; Need this because recursively throwing out of path-to.
+    (letfn [(ppop! [] (swap! path #(if @found? % (-> % butlast vec))))
+            (ppush! [step] (swap! path #(if @found? % (conj % step))))
+            (sbind-eq [x y] (and (sbind? x) (sbind? y)
+                                 (= (:sym x) (:sym x)) (== (:pos x) (:pos y))))
+            (path-to [vsb bod]
+              (try (cond @found?               (throw (Throwable.)) ; unwind.
+                         (sbind-eq vsb bod)    (do (reset! found? true) (throw (Throwable.)))
+                         ;; ToDo: Needs investigation! Works in debugger, for works, suggesting it is a lazy problem.
+                         (map? bod)            #_(doseq [[k v] bod]
+                                                       (when @found? (throw (Throwable.)))
+                                                       (ppush! k) (path-to vsb v) (ppop!)),
+                                               (loop [pairs (seq bod)] ; Why doesn't doseq work here?
+                                                 (cond
+                                                   @found? (throw (Throwable.))
+                                                   (empty? pairs) nil
+                                                   :else  (let [[k v] (first pairs)]
+                                                            (ppush! k) (path-to vsb v) (ppop!)
+                                                            (recur (rest pairs)))))
+                                               ;; ToDo: This probably doesn't either!
+                         (vector? bod)         (doseq [elem bod] (path-to vsb elem)))
+                   (catch Throwable _e @path)))]
+          (doall (reduce
+            (fn [res vsb]
+              (reset! path []) (reset! found? nil)
+              (let [k ; @path has the nil-sbinds; we need the :val on the arg vsb.
+                    (doall (mapv (fn [kpart]
+                                   (if (sbind? kpart)
+                                     (some #(when (sbind-eq kpart %) (-> % :val name)) key-sbinds)
+                                     kpart))
+                                 (path-to vsb body)))]
+                    (assoc res k (:val vsb))))
+            {} val-sbinds)))))
 
 (defn reduce-enforce
+  "This function preforms $reduce on an enforce function"
   [b-sets body-fn _init]
   (let [body (-> body-fn meta :bi/body)
         b-sets (make-bset-sbinds b-sets body)
-        path (atom {:path [] :completed []})]
-    (letfn [(ubod [x bset] ; Walk the current form, threading in the bset.
-              (cond (map? x)
-                    (doall
-                     (reduce-kv (fn [m k v] ; depth-first complete a bset.
-                                  (push-path! path k)
-                                  (as-> m ?m
-                                    (if (sbind? k)
-                                      (let [{:keys [new-map new-key]} (update-map-key ?m k v path bset)]
-                                        (-> (assoc new-map new-key (ubod (get new-map new-key) bset))
-                                          (update-map-val new-key v path bset)))
-                                      ?m),
-                                    (if (sbind? v) (update-map-val ?m k v path bset)  ?m),
-                                    (if (not (or (sbind? k) (sbind? v)))
-                                      (assoc ?m k (ubod v bset))
-                                      (throw (ex-info "huh?" (reset! diag {:m ?m :k k :v v :bset bset})))))
-                                  (pop-path! path))
-                                {} x)),
-                    (sbind? x) x,
-                    (vector? x)  (mapv #(ubod % bset) x)
-                    :else         x))]
-      (->
-       (doall
-        (reduce (fn [bod bset]
-                  (cl-format *out* "~2% Starting ~S" (mapv :val (vals bset)))
-                  (let [r (ubod bod bset)]
-                    (swap! path (fn [p] (update p :completed #(conj % (mapv :vals (vals bset))))))
-                    r))
-                (base-body body (first b-sets)) #_b-sets (-> b-sets first vector)))
-       rem-sbind))))
-
-
-;;;==========================================================================================================
-#_(defn reduce-enforce
-  [b-sets body-fn _init]
-  (let [sbinds   (->> body-fn meta :asKeys (map keyword))
-        kcoll   (->> (reduce (fn [res bset]
-                               (let [k (reduce (fn [r k-part] (conj r (k-part bset))) [] sbinds)]
-                                 (conj res {:key k :bset bset})))
-                             []
-                             b-sets)
-                     (sort-by :key))
-        pattern (-> body-fn meta :body)]
-    ;; We are doing something like reduce on update-in here!
-    {:qmap   (-> b-sets meta :bi/query-map)
-     :db-atm (-> b-sets meta :bi/db-atm)
-     :kcoll kcoll
-     :body pattern}))
-
-;;;------------- reduce-enforce function docline
-  "This function preforms $reduce on an enforce function
-   The asKeys option reorganizes data so that what might be interpreted as a unique
-   identifier for the object isn't contained in the object but is the key of a nesting object.
-
-   The symbols in asKeys name b-set properties where this transformation of a flat substitution
-   is to take place. For example:
-
-   {:people {:?person-name 'fred'...} becomes
-   {:people {'fred' {....
-
-   The order of the keys is important because successive 'group-by' functions are applied."
+        bbody (base-body body (first b-sets))
+        b-sets (mapv vals b-sets)  ; Temporary
+        assoc-in-map (doall (reduce (fn [r bset] (merge r (bset-kv-maps bbody bset))) {} b-sets))]
+    (reduce-kv (fn [m k v] (assoc-in m k v)) {} (sort-by key assoc-in-map))))
 
 ;;;---- not enforce ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
