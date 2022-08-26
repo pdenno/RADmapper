@@ -30,7 +30,9 @@
            java.time.ZoneId
            java.time.ZoneOffset))
 
-;;; ToDo: Consider Small Clojure Interpreter (SCI) for Clojure version.
+;;; ToDo:
+;;;  * Consider Small Clojure Interpreter (SCI) for Clojure version.
+;;;  * Make sure meta isn't used where a closure would work.
 
 (def ^:dynamic $  "JSONata context variable" (atom nil))
 (def           $$ "JSONata root context."    (atom nil))
@@ -1701,27 +1703,10 @@
                                   options {:bi/body body})))))
         (with-meta {:bi/enforce-template? true}))))
 
-;;; ToDo: If general expressions prove useful, they will have to be wrapped
-;;;       in functions or something (this? enforce?) will have to be a macro.
-(defn enforce-body
-  "Return a form with like the argument, but with qvars substituted with b-set values."
-  [body b-set]
-  (letfn [(lookup [k]
-            (when-not (contains? b-set k)
-              (throw (ex-info "Argument binding set does not contain the key provided"
-                              {:binding-set b-set :key k})))
-            (get b-set k))
-          (eb-aux [obj]
-            (cond (map? obj) (reduce-kv (fn [m k v] (assoc m (eb-aux k) (eb-aux v))) {} obj),
-                  (vector? obj) (mapv eb-aux obj)
-                  (and (symbol? obj) (-> obj name (subs 0 1) (= "?"))) (lookup obj),
-                  :else obj))]
-    (eb-aux body)))
-
 (defn sbind? [obj] (-> obj meta :sbind?))
 (defn qvar? [obj] (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
 
-(defn q-build-order
+(defn body-sbinds
   "Walk the form looking for qvar symbols, return sbind- maps (sbind sans :val)
    in the order in which they occur in the form.
    The same qvar can appear multiple times if it is so used, thus the :pos key."
@@ -1753,23 +1738,16 @@
                        []
                        @sbind-order))))))
 
-(defn make-bset-sbinds
+(defn bset-sbind
   "Return the b-sets as maps with meta {:sbind? true} having three keys:
      - :sym         - the symbol from the query
      - :val         - the value bound
      - :pos         - the ordinal position of the symbol in the body.
      - :binds-key?  - true if it binds a map key, rather than map value.
    The returned vector of b-sets is sorted by a vector of :val.
-   The argument prim-bsets is the vector of binding sets as returned from query."
-  [prim-sets body]
-  (let [sbinds- (q-build-order body)] ; sbind-b is the map in need of :val.
-     (reduce (fn [res pbset]
-                  (let [k (reduce (fn [r sbind] (conj r (assoc sbind :val (get pbset (-> sbind :sym keyword)))))
-                                  []
-                                  sbinds-)]
-                    (conj res k)))
-                []
-                prim-sets)))
+   The argument prim-bset is the vector of binding sets as returned from query; they are keyed by keywords."
+  [prim-bset body-sbinds]
+  (reduce (fn [r sbind] (conj r (assoc sbind :val (get prim-bset (-> sbind :sym keyword))))) [] body-sbinds))
 
 (defn base-body
   "Return the body replacing qvars with nil-sbinds."
@@ -1830,11 +1808,22 @@
                 (assoc res k (:val vsb))))
             {} val-sbinds))))
 
+;;; GOAL: This should return a function that can be called with a bset and return a collection of assoc-in-maps.
+(defn enforce-body
+  "Return a form like the argument, but with qvars substituted with b-set values."
+  [body b-set]
+  (let [body-sbinds (body-sbinds body)                                                          ; close over
+        bset (bset-sbind b-set body-sbinds)                                                     ; close over
+        bbody (base-body body bset) ; body with sbind- substitutions; Can use any full bset.    ; close over
+        assoc-in-map (apply merge {} (bset-kv-maps bbody bset))]
+    (reduce-kv (fn [m k v] (assoc-in m k v)) {} (sort-by key assoc-in-map))))
+
 (defn reduce-enforce
-  "This function preforms $reduce on an enforce function"
-  [b-sets body-fn _init & {:keys [separate]}]
+  "This function performs $reduce on an enforce function"
+  [prim-bsets body-fn _init & {:keys [separate]}]
   (let [body (-> body-fn meta :bi/body)
-        b-sets (make-bset-sbinds b-sets body)
+        body-sbinds (body-sbinds body)
+        b-sets (mapv #(bset-sbind % body-sbinds) prim-bsets)
         bbody (base-body body (first b-sets))] ; body with sbind- substitutions, could use any b-set.
     (if (not separate) ; Then "join"
       (let [assoc-in-map (doall (reduce (fn [r bset] (merge r (bset-kv-maps bbody bset))) {} b-sets))]

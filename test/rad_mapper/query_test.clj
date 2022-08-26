@@ -194,17 +194,17 @@
             }")
 
 ;;; This creates a function. :params are empty, so this is the "immediate" type.
-(def qfn (bi/enforce {:params [],
+(def efn (bi/enforce {:params [],
                       :options '{separate true}
                       :body '{"instance-of" "FixedType"
-                              "content" :?class-iri}}))
+                              "content" ?class-iri}}))
 
 ;;; This creates a higher-order function. This is the "immediate" type.
-(def param-qfn (bi/enforce '{:params [$type],
+(def param-efn (bi/enforce '{:params [$type],
                              :body {"instance-of" $type
                                     "content" :?class-iri}}))
 
-(def pqfn (param-qfn "MyType"))
+(def pefn (param-efn "MyType"))
 
 (deftest enforce-basics
   (testing "Testing basic enforce"
@@ -217,11 +217,11 @@
 
     (testing "The function has metadata."
       (is (= '#:bi{:params [b-set], :enforce? true, :body {"instance-of" "FixedType", "content" :?class-iri}}
-             (meta qfn))))
+             (meta efn))))
 
     (testing "The function is executable with a binding set, creating content."
       (is (= {"instance-of" "FixedType", "content" "IRI"}
-             (-> (qfn {:?class-iri "IRI"}) remove-meta))))
+             (-> (efn {:?class-iri "IRI"}) remove-meta))))
 
     (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
       (run-test-rew
@@ -232,11 +232,11 @@
 
       (testing "The function has the same metadata."
         (is (= '#:bi{:params [b-set], :enforce? true, :body {"instance-of" $type, "content" :?class-iri}}
-               (meta pqfn))))
+               (meta pefn))))
 
       (testing "Rather than 'FixedType', the instance-of is 'MyType'."
         (is (= {"instance-of" "MyType", "content" "IRI"}
-               (pqfn {:?class-iri "IRI"})))))))
+               (pefn {:?class-iri "IRI"})))))))
 
 ;;; ToDo: This might be a good example for the spec.
 (defn enforce-reduce-demo
