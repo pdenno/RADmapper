@@ -185,7 +185,9 @@
   (let [nvec (into (range 1 20) (map #(* 10 %) (range 2 10)))]
     (zipmap (map #(cl-format nil "~r" %) nvec) nvec)))
 
-(defn db? [o] (= datahike.db.DB (type o)))
+(defn db-atm? [o]
+  (and (= clojure.lang.Atom (type o))
+       (= datahike.db.DB (type @o))))
 
 (def ^:private num-word (-> num-map keys set))
 

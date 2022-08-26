@@ -193,6 +193,19 @@
                 'content'      : ?class-iri }
             }")
 
+;;; This creates a function. :params are empty, so this is the "immediate" type.
+(def qfn (bi/enforce {:params [],
+                      :options '{separate true}
+                      :body '{"instance-of" "FixedType"
+                              "content" :?class-iri}}))
+
+;;; This creates a higher-order function. This is the "immediate" type.
+(def param-qfn (bi/enforce '{:params [$type],
+                             :body {"instance-of" $type
+                                    "content" :?class-iri}}))
+
+(def pqfn (param-qfn "MyType"))
+
 (deftest enforce-basics
   (testing "Testing basic enforce"
     (testing "rewriting"
@@ -202,37 +215,28 @@
                                         (assoc "instance-of" "example")
                                         (assoc "content" (bi/get-from-b-set b-set :?class-iri)))})))
 
-    ;; This creates the function. :params are empty, so this is the "immediate" type.
-    (let [qfn (bi/enforce {:params [],
-                           :body '{"instance-of" "FixedType"
-                                   "content" :?class-iri}})]
+    (testing "The function has metadata."
+      (is (= '#:bi{:params [b-set], :enforce? true, :body {"instance-of" "FixedType", "content" :?class-iri}}
+             (meta qfn))))
 
-      (testing "The function has metadata."
-        (is (= '#:bi{:params [b-set], :enforce? true, :body {"instance-of" "FixedType", "content" :?class-iri}}
-            (meta qfn))))
+    (testing "The function is executable with a binding set, creating content."
+      (is (= {"instance-of" "FixedType", "content" "IRI"}
+             (-> (qfn {:?class-iri "IRI"}) remove-meta))))
 
-      (testing "The function is executable with a binding set, creating content."
-        (is (= {"instance-of" "FixedType", "content" "IRI"}
-               (-> (qfn {:?class-iri "IRI"}) remove-meta))))
+    (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
+      (run-test-rew
+       e1
+       '(bi/enforce {:map-body '{"instance-of" $type, "content" ?class-iri}, :params '($type), :options 'nil})))
 
-      (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
-        (run-test-rew
-         e1
-         '(bi/enforce {:map-body '{"instance-of" $type, "content" ?class-iri}, :params '($type), :options 'nil})))
+    (testing "the function returned is higher-order..."
 
-      (testing "the function returned is higher-order..."
-        (let [ho-qfn (bi/enforce '{:params [$type],
-                                   :body {"instance-of" $type
-                                          "content" :?class-iri}})
-              ;; ... So we get a query function for it with $type = "MyType"
-              qfn (ho-qfn "MyType")]
+      (testing "The function has the same metadata."
+        (is (= '#:bi{:params [b-set], :enforce? true, :body {"instance-of" $type, "content" :?class-iri}}
+               (meta pqfn))))
 
-          (testing "The function has the same metadata."
-            (is (= '{:bi/params [b-set], :bi/enforce? true} (meta qfn))))
-
-          (testing "Rather than 'FixedType', the instance-of is 'MyType'."
-            (is (= {"instance-of" "MyType", "content" "IRI"}
-                   (qfn {:?class-iri "IRI"})))))))))
+      (testing "Rather than 'FixedType', the instance-of is 'MyType'."
+        (is (= {"instance-of" "MyType", "content" "IRI"}
+               (pqfn {:?class-iri "IRI"})))))))
 
 ;;; ToDo: This might be a good example for the spec.
 (defn enforce-reduce-demo
@@ -602,67 +606,35 @@
                  {:?device-name :device1, :?system-name :system1, :?id 100, :?status "Ok", :?owner-name :owner1}}
                result))))
     (testing "full example"
-      (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
-                $q := query(){ [?s ?systemName ?x]
-                               [($match(?systemName, /system\\d/))]
-                               [?x :owners ?y]
-                               [?y ?ownerName ?z]
-                               [($match(?ownerName, /owner\\d/))]
-                               [?z ?deviceName ?d]
-                               [($match(?deviceName, /device\\d/))]
-                               [?d :id ?id]
-                               [?d :status ?status] };
+      (run-test "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
+                     $q := query(){ [?s ?systemName ?x]
+                                    [($match(?systemName, /system\\d/))]
+                                    [?x :owners ?y]
+                                    [?y ?ownerName ?z]
+                                    [($match(?ownerName, /owner\\d/))]
+                                    [?z ?deviceName ?d]
+                                    [($match(?deviceName, /device\\d/))]
+                                    [?d :id ?id]
+                                    [?d :status ?status] };
 
-             $bsets := $q($data);
+                  $bsets := $q($data);
 
-             $reduce($bsets,
-                     enforce({asKeys : [?ownerName, ?systemName]})
-                              {  {'owners':
-                                     {?ownerName:
-                                        {?systemName:
-                                           {?deviceName : {'id'     : ?id,
-                                                           'status' : ?status}}}}}
-                              }
-                    )
-            )"))))
-
-(defn diag-1 []
-  (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
-            $q := query(){ [?s ?systemName ?x]
-                           [($match(?systemName, /system\\d/))]
-                           [?x :owners ?y]
-                           [?y ?ownerName ?z]
-                           [($match(?ownerName, /owner\\d/))]
-                           [?z ?deviceName ?d]
-                           [($match(?deviceName, /device\\d/))]
-                           [?d :id ?id]
-                           [?d :status ?status] };
-
-             $q($data); )"
-    :keep-meta? true))
-
-
-(defn diag-2 []
-      (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
-                $q := query(){ [?s ?systemName ?x]
-                               [($match(?systemName, /system\\d/))]
-                               [?x :owners ?y]
-                               [?y ?ownerName ?z]
-                               [($match(?ownerName, /owner\\d/))]
-                               [?z ?deviceName ?d]
-                               [($match(?deviceName, /device\\d/))]
-                               [?d :id ?id]
-                               [?d :status ?status] };
-
-             $bsets := $q($data);
-
-             $reduce($bsets,
-                     enforce({asKeys : [?ownerName, ?systemName, ?deviceName]})
-                              {  {'owners':
-                                     {?ownerName:
-                                        {?systemName:
-                                           {?deviceName : {'id'     : ?id,
-                                                           'status' : ?status}}}}}
-                              }
-                    )
-            )"))
+                  $reduce($bsets,
+                          enforce()
+                                 {  {'owners':
+                                        {?ownerName:
+                                           {?systemName:
+                                              {?deviceName : {'id'     : ?id,
+                                                              'status' : ?status}}}}}
+                                 }
+                         )
+                 )"
+                {"owners"
+                 {"owner1" {"system1" {"device1" {"id" 100, "status" "Ok"},
+                                       "device2" {"id" 200, "status" "Ok"}},
+                            "system2" {"device5" {"id" 500, "status" "Ok"},
+                                       "device6" {"id" 600, "status" "Ok"}}},
+                  "owner2" {"system1" {"device3" {"id" 300, "status" "Ok"},
+                                       "device4" {"id" 400, "status" "Ok"}},
+                            "system2" {"device7" {"id" 700, "status" "Ok"},
+                                       "device8" {"id" 800, "status" "Ok"}}}}}))))

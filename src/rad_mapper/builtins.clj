@@ -1456,15 +1456,11 @@
   ([coll func] ($reduce coll func nil))
   ([coll func init]
    (let [met (meta func)]
-     (cond (:bi/enforce-template? met)                          (throw (ex-info "Reducing called on template fn." {})),
-           (empty? met)                                         (throw (ex-info "No meta on reduce function!" {})), ; ToDo: remove.
-           (and (not (core/<= 2 (-> met :bi/params count) 4))
-                (-> met :bi/enforce? not))                      (throw (ex-info "Reduce function must take 2 to 4 args." {}))
-           (and (:bi/enforce? met) (-> met :asKeys not-empty))  (reduce-enforce coll func init),
-           (:bi/enforce? met)                                   (reduce-typical coll func), ; <=========================
+     (cond (:bi/enforce-template? met)                          (throw (ex-info "Reducing called on enforce template fn." {})),
+           (:bi/enforce? met)                                   (reduce-enforce coll func init (-> met :bi/options)),
+           (not (core/<= 2 (-> met :bi/params count) 4))        (throw (ex-info "Reduce function must take 2 to 4 args." {}))
            (not init)                                           (reduce-typical coll func)
            :else                                                (reduce-typical (into (vector init) coll) func)))))
-
 
 ;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
 ;;;       My doc-string below doesn't say.
@@ -1619,7 +1615,7 @@
   [qmap]
   `[:find ~@(:vars qmap)
     :keys ~@(:keys qmap)
-    :in ~@(into '[$] (:in qmap))
+    :in ~@(into '[$] (:in qmap)) ; ToDo: do we really want the :in like this?
     :where ~@(:where qmap)])
 
 (defn query-fn-aux
@@ -1627,20 +1623,20 @@
    Note that it attaches meta for the DB and body."
   [db-atm body param-subs]
   (let [qmap (substitute-in-form body param-subs)]
-    (-> (->> (d/q (-> qmap rewrite-qform)  @db-atm) ; This is possible because body is data to d/q.
+    (-> (->> (d/q (-> qmap rewrite-qform) @db-atm) ; This is possible because body is data to d/q.
              ;; Remove binding sets that involve a schema entity.
              (remove (fn [bset] (some (fn [bval]
                                         (and (keyword? bval)
                                              (core/= "db" (namespace bval))))
                                       (vals bset))))
-             vec)
-        (with-meta {:bi/b-set? true :bi/db-atm db-atm :bi/query-map qmap}))))
+             vec) ; ToDo: The commented metadata might become useful?
+        (with-meta {:bi/b-set? true #_#_#_#_:bi/db-atm db-atm :bi/query-map qmap}))))
 
 (defn immediate-query-fn
-    "Return a function that can be used immediately to make the query defined in body."
+  "Return a function that can be used immediately to make the query defined in body."
   [body]
   (fn [data|db] ; ToDo: Could I make this use $ if no data supplied?
-    (let [db-atm (if (util/db? data|db)
+    (let [db-atm (if (util/db-atm? data|db)
                    data|db
                    (-> data|db keywordize-keys qu/db-for!))]
       (query-fn-aux db-atm body {}))))
@@ -1652,7 +1648,7 @@
   (fn [& args]
     (let [param-subs (zipmap params args)] ; the closure.
       (fn [data|db]
-        (let [db-atm (if (util/db? data|db)
+        (let [db-atm (if (util/db-atm? data|db)
                        data|db
                        (-> data|db keywordize-keys qu/db-for!))]
           (query-fn-aux db-atm body param-subs))))))
@@ -1695,7 +1691,8 @@
     ;; The immediate function.
     (-> (fn [b-set] (enforce-body body b-set))
         (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
-                          options {:bi/body body})))
+                          {:bi/options options}
+                          {:bi/body body})))
     ;; body has template params that must be replaced
     (-> (fn [& psubs]
           (let [new-body (substitute-in-form body (zipmap params psubs))]
@@ -1777,7 +1774,7 @@
 (defn base-body
   "Return the body replacing qvars with nil-sbinds."
   [form sample-bset]
-  (let [bset-atm (atom sample-bset #_(vals sample-bset))]
+  (let [bset-atm (atom sample-bset)]
     (letfn [(bb-aux [x]
               (cond (map? x)  (reduce-kv (fn [m k v] (assoc m (bb-aux k) (bb-aux v))) {} x)
                     (qvar? x) (let [use (some #(when (= x (:sym %)) %) @bset-atm)]
@@ -1835,13 +1832,14 @@
 
 (defn reduce-enforce
   "This function preforms $reduce on an enforce function"
-  [b-sets body-fn _init]
+  [b-sets body-fn _init & {:keys [separate]}]
   (let [body (-> body-fn meta :bi/body)
         b-sets (make-bset-sbinds b-sets body)
-        bbody (base-body body (first b-sets)) ; body with sbind- substitutions, could use any b-set.
-        assoc-in-map (doall (reduce (fn [r bset] (merge r (bset-kv-maps bbody bset))) {} b-sets))]
-    ;; This is the end of it, what the user gets.
-    (reduce-kv (fn [m k v] (assoc-in m k v)) {} (sort-by key assoc-in-map))))
+        bbody (base-body body (first b-sets))] ; body with sbind- substitutions, could use any b-set.
+    (if (not separate) ; Then "join"
+      (let [assoc-in-map (doall (reduce (fn [r bset] (merge r (bset-kv-maps bbody bset))) {} b-sets))]
+        (reduce-kv (fn [m k v] (assoc-in m k v)) {} (sort-by key assoc-in-map)))
+      :nyi)))
 
 ;;;---- not enforce ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

@@ -78,7 +78,7 @@
               :debug-parse? debug-parse?)
       true (reset! diag)
       (not keep-meta?) remove-meta
-      false nicer-sym))) ; ToDo: temporarily removed
+      true nicer-sym)))
 
 (defn run-rew
   "Run, but with :rewrite? true."
