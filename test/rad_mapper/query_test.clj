@@ -206,6 +206,14 @@
 
 (def pefn (param-efn "MyType"))
 
+(deftest simple-enforce
+  (testing "the essential steps of a simple enforce"
+    (is (= (let [bbody (bi/sbind-body '{"instance-of" "FixedType" "content" ?class-iri})
+                 bset '{:?class-iri "MY-IRI"}
+                 ai-maps (apply merge {} (bi/body&bset-ai-maps bbody bset))]
+             (reduce-kv (fn [m k v] (assoc-in m k v)) {} ai-maps))
+           {"instance-of" "FixedType", "content" "MY-IRI"}))))
+
 (deftest enforce-basics
   (testing "Testing basic enforce"
     (testing "rewriting"
@@ -638,3 +646,50 @@
                                        "device4" {"id" 400, "status" "Ok"}},
                             "system2" {"device7" {"id" 700, "status" "Ok"},
                                        "device8" {"id" 800, "status" "Ok"}}}}}))))
+
+(defn diag-22 []
+  (run "($data := $readFile('data/testing/jsonata/sTPDRs--6.json');
+            $q := query(){ [?s ?systemName ?x]
+                           [($match(?systemName, /system\\d/))]
+                           [?x :owners ?y]
+                           [?y ?ownerName ?z]
+                           [($match(?ownerName, /owner\\d/))]
+                           [?z ?deviceName ?d]
+                           [($match(?deviceName, /device\\d/))]
+                           [?d :id ?id]
+                           [?d :status ?status] };
+          $bsets := $q($data);
+          $reduce($bsets,
+                  enforce() {  {'owners':
+                               {?ownerName:
+                                  {?systemName:
+                                     {?deviceName : {'id'     : ?id,
+                                                     'status' : ?status
+                                                     'again'  : ?ownerName}}}}}
+                             }
+                )
+        )"))
+
+(defn tryme []
+  (let [$data (bi/$readFile "data/testing/jsonata/sTPDRs--6.json")
+        $q (bi/query '[] '[[?s ?systemName ?x]
+                           [(bi/$match ?systemName #"system\d")]
+                           [?x :owners ?y]
+                           [?y ?ownerName ?z]
+                           [(bi/$match ?ownerName #"owner\d")]
+                           [?z ?deviceName ?d]
+                           [(bi/$match ?deviceName #"device\d")]
+                           [?d :id ?id]
+                           [?d :status ?status]])
+        $bsets  ($q $data)]
+    (bi/$reduce
+     $bsets
+     (bi/enforce
+      {:params '(),
+       :options 'nil,
+       :body
+       '{"owners"
+         {?ownerName
+          {?systemName
+           {?deviceName
+            {"id" ?id, "status" ?status, "again" ?ownerName}}}}}}))))

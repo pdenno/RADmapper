@@ -1459,7 +1459,7 @@
   ([coll func init]
    (let [met (meta func)]
      (cond (:bi/enforce-template? met)                          (throw (ex-info "Reducing called on enforce template fn." {})),
-           (:bi/enforce? met)                                   (reduce-enforce coll func init (-> met :bi/options)),
+           (:bi/enforce? met)                                   (reduce-enforce coll func init),
            (not (core/<= 2 (-> met :bi/params count) 4))        (throw (ex-info "Reduce function must take 2 to 4 args." {}))
            (not init)                                           (reduce-typical coll func)
            :else                                                (reduce-typical (into (vector init) coll) func)))))
@@ -1620,17 +1620,35 @@
     :in ~@(into '[$] (:in qmap)) ; ToDo: do we really want the :in like this?
     :where ~@(:where qmap)])
 
+;;; ToDo: This isn't working.
+#_(defn qvar? [obj]  (-> obj meta :qvar?))
+(defn qvar? [obj]  (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
+
+(defn entity-qvars
+  "Return the set of qvars in entity position of the argument body"
+  [body]
+  (->> body
+       (filter #(and (== 3 (count %)) (-> % first qvar?)))
+       (map first)
+       (map keyword)
+       set))
+
 (defn query-fn-aux
   "The function that returns a binding set.
    Note that it attaches meta for the DB and body."
   [db-atm body param-subs]
-  (let [qmap (substitute-in-form body param-subs)]
+  (let [e-qvar? (entity-qvars body)
+        qmap (substitute-in-form body param-subs)]
     (-> (->> (d/q (-> qmap rewrite-qform) @db-atm) ; This is possible because body is data to d/q.
              ;; Remove binding sets that involve a schema entity.
              (remove (fn [bset] (some (fn [bval]
                                         (and (keyword? bval)
                                              (core/= "db" (namespace bval))))
                                       (vals bset))))
+             ;; Remove qvars of db entity IDs.
+             ;; ToDo: Did this become necessary?!?!
+             ;; ToDo: Do I want to remove them or change them to {:db/id n}?
+             (mapv (fn [bset] (reduce-kv (fn [m k v] (if (e-qvar? k) m (assoc m k v))) {} bset)))
              vec) ; ToDo: The commented metadata might become useful?
         (with-meta {:bi/b-set? true #_#_#_#_:bi/db-atm db-atm :bi/query-map qmap}))))
 
@@ -1679,7 +1697,7 @@
     (higher-order-query-fn body params)))
 
 ;;;------------------ Enforce --------------------------------------------
-(declare enforce-body)
+(declare sbind-body body&bset-ai-maps)
 (defn enforce
   "Return an function that either
     (1) has no template variable and can be used directly with a binding set, or
@@ -1691,84 +1709,58 @@
   [& {:keys [params options body]}]
   (if (empty? params)
     ;; The immediate function.
-    (-> (fn [b-set] (enforce-body body b-set))
-        (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
-                          {:bi/options options}
-                          {:bi/body body})))
+    (let [bbody (sbind-body body)]
+      (-> (fn [bset]
+            (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
+              (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
+                  (with-meta {:bi/ai-map assoc-in-map}))))
+          (with-meta {:bi/params '[b-set], :bi/enforce? true, :bi/options options})))
     ;; body has template params that must be replaced
     (-> (fn [& psubs]
-          (let [new-body (substitute-in-form body (zipmap params psubs))]
-            (-> (fn [b-set] (enforce-body new-body b-set))
-                (with-meta (merge {:bi/params '[b-set] :bi/enforce? true}
-                                  options {:bi/body body})))))
+          (let [new-body (substitute-in-form body (zipmap params psubs))
+                bbody (sbind-body new-body)]
+            (-> (fn [bset]
+                  (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
+                    (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
+                        (with-meta {:bi/ai-map assoc-in-map}))))
+                (with-meta {:bi/params '[b-set], :bi/enforce? true, :bi/options options}))))
         (with-meta {:bi/enforce-template? true}))))
 
 (defn sbind? [obj] (-> obj meta :sbind?))
-(defn qvar? [obj] (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
 
-(defn body-sbinds
-  "Walk the form looking for qvar symbols, return sbind- maps (sbind sans :val)
-   in the order in which they occur in the form.
-   The same qvar can appear multiple times if it is so used, thus the :pos key."
-  [form]
-  (let [sbind-order (atom [])
-        cnt-order (atom 0)
-        k|v (atom nil)]
-    (letfn [(walk-q [x]
-                (cond (qvar? x)          (do (swap! cnt-order inc) ; They can occur multiply.
-                                             (swap! sbind-order conj (-> {:sym x :pos @cnt-order} (with-meta {:sbind? true})))
-                                             (-> @sbind-order last)),
-                      (map? x)            (doall (reduce-kv (fn [m k v] (assoc m (walk-q k) (walk-q v))) {} x)),
-                      (vector? x)         (doall (mapv walk-q x)),
-                      :else x))
-            (what? [x s]
-              (cond @k|v  nil
-                    (-> x meta :sbind?)   (reset! k|v :val) ; If vector.
-                    (map? x)              (or @k|v
-                                              (doseq [[k v] x]
-                                                (cond (and (-> k meta :sbind?) (= k s)) (reset! k|v :key)
-                                                      (and (-> v meta :sbind?) (= v s)) (reset! k|v :val)
-                                                      :else (what? v s))))
-                    (vector? x)           (doall (map #(what? % s) x))))]
-      (let [oform (walk-q form)]
-        (doall (reduce (fn [res sbind-]
-                         (reset! k|v nil)
-                         (what? oform sbind-)
-                         (conj res (assoc sbind- :binds @k|v)))
-                       []
-                       @sbind-order))))))
-
-(defn bset-sbind
-  "Return the b-sets as maps with meta {:sbind? true} having three keys:
-     - :sym         - the symbol from the query
-     - :val         - the value bound
-     - :pos         - the ordinal position of the symbol in the body.
-     - :binds-key?  - true if it binds a map key, rather than map value.
-   The returned vector of b-sets is sorted by a vector of :val.
-   The argument prim-bset is the vector of binding sets as returned from query; they are keyed by keywords."
-  [prim-bset body-sbinds]
-  (reduce (fn [r sbind] (conj r (assoc sbind :val (get prim-bset (-> sbind :sym keyword))))) [] body-sbinds))
-
-(defn base-body
-  "Return the body replacing qvars with nil-sbinds."
-  [form sample-bset]
-  (let [bset-atm (atom sample-bset)]
-    (letfn [(bb-aux [x]
-              (cond (map? x)  (reduce-kv (fn [m k v] (assoc m (bb-aux k) (bb-aux v))) {} x)
-                    (qvar? x) (let [use (some #(when (= x (:sym %)) %) @bset-atm)]
-                                   (swap! bset-atm (fn [sbinds] (remove #(= % use) sbinds)))
-                                   (dissoc  use :val))
-                    (vector? x) (mapv bb-aux x)
+(defn sbind-body
+  "Return a structure topologically identical to the argument body, but with sbinds replacing
+   all the simple elements except map keys (which remain as strings).
+   The sbind is a map with meta {:sbind true}. The map contains as least the key :pos an ordinal
+   indicating the position of the sbind in depth-first traveral. It may also include:
+     - :sym, the qvar if the sbind represents one.
+     - :constant, a string or number, if the sbind represents one.
+     - :binds, having value :key if the original element was a map key; ; :val if the it was a map value."
+  [body]
+  (let [order (atom 0)]
+    (letfn [(sbind [m] (with-meta m {:sbind? true}))
+            (bb-aux [x]
+              (cond (sbind? x) (assoc x :pos (swap! order inc)),
+                    (map? x)   (reduce-kv (fn [m k v]
+                                           (assoc m
+                                                  (if (qvar? k) (-> {:sym k :binds :key} sbind bb-aux)
+                                                      (bb-aux k))
+                                                  (cond (or (string? v) (number? v))
+                                                        (-> {:constant? v :binds :val} sbind bb-aux),
+                                                        (qvar? v) (-> {:sym v :binds :val} sbind bb-aux)
+                                                        :else (bb-aux v))))
+                                         {} x),
+                    (qvar? x)   (-> {:sym x} sbind bb-aux), ; From vector, I suppose.
+                    (vector? x) (mapv bb-aux x),
                     :else x))]
-      (bb-aux form))))
+      (bb-aux body))))
 
 (def path   "Atom tracking the path navigated in express body, shared only be sbind-path-to! and its caller." (atom []))
 (def found? "Atom required because recursively throwing out of sbind-path-to!." (atom nil))
 (defn sbind-eq
   "Return true if the two arguments are the same sbind, disregarding value."
   [x y]
-  (and (sbind? x) (sbind? y)
-       (= (:sym x) (:sym x)) (== (:pos x) (:pos y))))
+  (and (sbind? x) (sbind? y) (== (:pos x) (:pos y))))
 
 (defn sbind-path-to!
   "Navigate the body to the argument sbind, tracking the path in the path atom.
@@ -1785,50 +1777,53 @@
                  (catch Throwable _e nil)))]
     (path-to-aux vsb body)))
 
-(defn bset-kv-maps
-  "Process the bset and body together, returning each 'kv-maps' it defines.
-   A kv-map describes a :val that is to be assoc-in'd to a :key
-   The form of the  kv-map is:
+(defn body&bset-ai-maps
+  "Process the bset and body together, returning the assoc-in maps (ai-maps) it defines.
+   A ai-map describes a :val that is to be assoc-in'd to a :key
+   The form of the  ai-map is:
    {:key - some vector of keys constructed from the body and bset;
            the elements of the vector are either sbinds or strings.
     :val - the value associated with the bset's qvar at the end of this path.}
-   The body argument has sbinds wherever the user's enforce body has qvars."
+   The body argument has sbinds wherever the user's enforce body has a qvar or
+   a constant-valued map value.
+   (Map KEYS that are constants must be strings and are left unchanged.)"
   [body bset]
-  (let [val-sbinds (filter #(= (:binds %) :val) bset)
-        key-sbinds (filter #(= (:binds %) :key) bset)]
-          (doall (reduce
-            (fn [res vsb]
-              (reset! path []) (reset! found? nil)
-              (let [k ; @path has the nil-sbinds; we need the :val on the arg vsb.
-                    (doall (mapv (fn [kpart]
-                                   (if (sbind? kpart)
-                                     (some #(when (sbind-eq kpart %) (-> % :val name)) key-sbinds)
-                                     kpart))
-                                 (do (sbind-path-to! vsb body) @path)))]
-                (assoc res k (:val vsb))))
-            {} val-sbinds))))
-
-;;; GOAL: This should return a function that can be called with a bset and return a collection of assoc-in-maps.
-(defn enforce-body
-  "Return a form like the argument, but with qvars substituted with b-set values."
-  [body b-set]
-  (let [body-sbinds (body-sbinds body)                                                          ; close over
-        bset (bset-sbind b-set body-sbinds)                                                     ; close over
-        bbody (base-body body bset) ; body with sbind- substitutions; Can use any full bset.    ; close over
-        assoc-in-map (apply merge {} (bset-kv-maps bbody bset))]
-    (reduce-kv (fn [m k v] (assoc-in m k v)) {} (sort-by key assoc-in-map))))
+  (let [body-sbinds-atm (atom [])
+        bset (reduce-kv (fn [m k v] (assoc m (-> k name symbol) v)) {} bset)]
+    (letfn [(bsbinds! [x]
+              (cond  (sbind? x)   (swap! body-sbinds-atm conj x)
+                     (map? x)     (doseq [[k v] x] (bsbinds! k) (bsbinds! v))
+                     (vector? x)  (doseq [e x] (bsbinds! e))))]
+      (bsbinds! body)
+      (let [body-sbinds @body-sbinds-atm
+            val-sbinds (->> body-sbinds
+                            (filter #(= (:binds %) :val))
+                            (mapv #(assoc % :val
+                                          (or (:constant? %) (get bset (:sym %))))))]
+        ;;key-sbinds (filter #(= (:binds %) :key) body-sbinds)
+        (reduce
+         (fn [res vsb]
+           (reset! path []) (reset! found? nil)
+           (let [k ; @path has the nil-sbinds; we need the :val on the arg vsb.
+                 (mapv (fn [kpart]
+                         (if (sbind? kpart)
+                           (get bset (:sym kpart))
+                           kpart))
+                       (do (sbind-path-to! vsb body) @path))]
+             (assoc res k (:val vsb))))
+         {} val-sbinds)))))
 
 (defn reduce-enforce
-  "This function performs $reduce on an enforce function"
-  [prim-bsets body-fn _init & {:keys [separate]}]
-  (let [body (-> body-fn meta :bi/body)
-        body-sbinds (body-sbinds body)
-        b-sets (mapv #(bset-sbind % body-sbinds) prim-bsets)
-        bbody (base-body body (first b-sets))] ; body with sbind- substitutions, could use any b-set.
-    (if (not separate) ; Then "join"
-      (let [assoc-in-map (doall (reduce (fn [r bset] (merge r (bset-kv-maps bbody bset))) {} b-sets))]
-        (reduce-kv (fn [m k v] (assoc-in m k v)) {} (sort-by key assoc-in-map)))
-      :nyi)))
+  "This function performs $reduce on an enforce function.
+   The express function is entirely processable by the ordinary method of $reduce,
+   but we chose to sort the ai-map by keys for more legible output."
+  ([b-sets efn] (reduce-enforce b-sets efn {}))
+  ([b-sets efn init]
+   ;; The b-sets are executed for there meta! Crazy, huh?
+   (->> (map efn b-sets)
+        (mapcat #(-> % meta :bi/ai-map))
+        (sort-by first)
+        (reduce (fn [m [k v]] (assoc-in m k v)) init))))
 
 ;;;---- not enforce ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

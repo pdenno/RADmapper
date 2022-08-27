@@ -212,3 +212,12 @@
       (->> (split-by (-> units keys set) s-parts)
            (map translate)
            add))))
+
+;;; ToDo: Meta is lost. I don't actually use this anyway.
+#_(defn sort-map
+  "Deep sort a map where map keys are uniform arguments to compare at each level of nesting."
+  [m]
+  (cond (map? m)    (reduce-kv (fn [sm k v] (assoc sm k (sort-map v))) (sorted-map) m),
+        (vector? m) (mapv sort-map m),
+        (seq? m)    (map sort-map m),
+        :else       m))

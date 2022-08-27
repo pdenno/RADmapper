@@ -161,7 +161,7 @@
         :else `(~'bi/get-step  ~(:field-name m))))
 
 (defrewrite :JaQvar [m]
-  (-> m :qvar-name symbol))
+  (-> m :qvar-name symbol (with-meta {:qvar? true})))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
