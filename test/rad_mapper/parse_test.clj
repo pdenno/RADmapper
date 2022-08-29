@@ -267,9 +267,9 @@
       (is (parse-ok?  "{'a' : 1, 'b' : 2}.($x := 3)")))
 
     (testing "advancing context variable on apply-map."
-      (is (parse-ok? "( $:= $readFile('data/testing/jsonata/try.json');
+      (is (parse-ok? "( $:= $read('data/testing/jsonata/try.json');
                           Account.Order.Product.(Price*Quantity) )")))
 
     (testing "Like try.jsonata page."
-      (is (parse-ok? "( $:= $readFile('data/testing/jsonata/try.json');
+      (is (parse-ok? "( $:= $read('data/testing/jsonata/try.json');
                           $sum(Account.Order.Product.(Price*Quantity)) )")))))

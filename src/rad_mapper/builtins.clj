@@ -35,7 +35,7 @@
 ;;;  * Make sure meta isn't used where a closure would work.
 
 (def ^:dynamic $  "JSONata context variable" (atom nil))
-(def           $$ "JSONata root context."    (atom nil))
+(def           $$ "JSONata root context."    (atom :bi/unset))
 
 (declare aref)
 
@@ -944,7 +944,6 @@
                 RoundingMode/HALF_EVEN))]
      (if (pos? precision) (double rnum) (long rnum)))))
 
-;;; ToDo: This is bogus! Later: Why?
 ;;; $sum
 (defn $sum
   "Take one number of a vector of numbers; return the sum."
@@ -987,8 +986,7 @@
         (fn? arg)      false
         (nil? arg)     false
         (boolean? arg) arg
-        (keyword? arg) true ; query role.
-        :else (throw (ex-info "I missed a type!?!" {:arg arg})))) ; ToDo: Remove this, someday.
+        (keyword? arg) true)) ; query role.
 
 ;;; ToDo: I'll need more information than just the comment line here to understand what this
 ;;;       is suppose to do. It might require that I have better established how try/catch is handled.
@@ -1433,7 +1431,7 @@
                             {:vars (-> func meta :bi/params)})))))
 
 ;;; $reduce
-(declare reduce-typical reduce-enforce)
+(declare reduce-typical reduce-express)
 (defn $reduce
   "Signature: $reduce(array, function [, init])
 
@@ -1458,8 +1456,8 @@
   ([coll func] ($reduce coll func nil))
   ([coll func init]
    (let [met (meta func)]
-     (cond (:bi/enforce-template? met)                          (throw (ex-info "Reducing called on enforce template fn." {})),
-           (:bi/enforce? met)                                   (reduce-enforce coll func init),
+     (cond (:bi/express-template? met)                          (throw (ex-info "Reducing called on express template fn." {})),
+           (:bi/express? met)                                   (reduce-express coll func init),
            (not (core/<= 2 (-> met :bi/params count) 4))        (throw (ex-info "Reduce function must take 2 to 4 args." {}))
            (not init)                                           (reduce-typical coll func)
            :else                                                (reduce-typical (into (vector init) coll) func)))))
@@ -1522,15 +1520,16 @@
 
 ;;;==========================================================================
 ;;;=================== Non-JSONata functions ================================
-(defn $readFile
+(defn $read
   "Read a file of JSON or XML, creating a map."
-  ([fname] ($readFile fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
+  ([fname] ($read fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([fname opts]
    (let [type (-> (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname) second)]
-     (reset! $$ (case (or (get opts "type") type "xml")
-                  "json" (-> fname slurp json/read-str)
-                  "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-                  "edn"  (-> fname slurp read-string qu/json-like)))))) ; Great for testing!
+     (-> (case (or (get opts "type") type "xml")
+           "json" (-> fname slurp json/read-str)
+           "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
+           "edn"  (-> fname slurp read-string qu/json-like))
+         set-context!))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -1563,6 +1562,7 @@
        (reduce-kv (fn [res k v] (assoc res (-> (str/replace k #"[\s+,\.+]" "_") keyword) v))
                   {})))
 
+;;; ToDo: make this part of $read.
 ;;; $readSpreadsheet
 (defn $readSpreadsheet
   "Read the .xlsx and make a clojure map for each row. No fancy names, just :A,:B,:C,...!"
@@ -1581,12 +1581,12 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw)))))))
 
-;;;============================= Mapping Context, query, enforce ======================
+;;;============================= Mapping Context, query, express ======================
 
 ;;; Thoughts on schema
 ;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
 ;;;   - What is provided as argument overrides what is learned in $query.
-;;;   - $enforce could be with an argument schema.
+;;;   - $express could be with an argument schema.
 (defn $schemaFor
   "Study the argument data and heuristically suggest the types and multiplicity of data.
    Note that this function does not make a guess at what the keys (db/key) are."
@@ -1645,9 +1645,7 @@
                                         (and (keyword? bval)
                                              (core/= "db" (namespace bval))))
                                       (vals bset))))
-             ;; Remove qvars of db entity IDs.
-             ;; ToDo: Did this become necessary?!?!
-             ;; ToDo: Do I want to remove them or change them to {:db/id n}?
+             ;; ToDo: Add an option to query keepDBids. This should be the default, however.
              (mapv (fn [bset] (reduce-kv (fn [m k v] (if (e-qvar? k) m (assoc m k v))) {} bset)))
              vec) ; ToDo: The commented metadata might become useful?
         (with-meta {:bi/b-set? true #_#_#_#_:bi/db-atm db-atm :bi/query-map qmap}))))
@@ -1685,7 +1683,7 @@
 
    Example usage (of the second sort):
 
-  ( $data := $newContext() ~> $addSource($readFile('data/testing/owl-example.edn'));
+  ( $data := $newContext() ~> $addSource($read('data/testing/owl-example.edn'));
     $q := query($type){[?class :rdf/type            $type]
                        [?class :resource/iri        ?class-iri]
                        [?class :resource/namespace  ?class-ns]
@@ -1696,42 +1694,52 @@
     (immediate-query-fn body)
     (higher-order-query-fn body params)))
 
-;;;------------------ Enforce --------------------------------------------
-(declare sbind-body body&bset-ai-maps)
-(defn enforce
+;;;------------------ Express --------------------------------------------
+(declare sbind-body body&bset-ai-maps express-sub)
+(defn express
   "Return an function that either
     (1) has no template variable and can be used directly with a binding set, or
     (2) has template variables and returns a parameterized version of (1) that
         can be called with parameter values to get the a function like (1) to
         be used with binding sets.
-     The function returned has meta {enforce? true} so that, for example, $reduce
+     The function returned has meta {express? true} so that, for example, $reduce
      knows that there should be a database involved."
   [& {:keys [params options body]}]
   (if (empty? params)
-    ;; The immediate function.
+    ;; The immediate function:
     (let [bbody (sbind-body body)]
       (-> (fn [bset]
             (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
               (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
-                  (with-meta {:bi/ai-map assoc-in-map}))))
-          (with-meta {:bi/params '[b-set], :bi/enforce? true, :bi/options options})))
-    ;; body has template params that must be replaced
+                  (with-meta {:bi/ai-map assoc-in-map})))) ; used by $reduce
+          (with-meta {:bi/params '[b-set], :bi/express? true, :bi/options options})))
+    ;; body has template params that must be replaced; new-body.
     (-> (fn [& psubs]
-          (let [new-body (substitute-in-form body (zipmap params psubs))
+          (let [new-body (express-sub body (zipmap params psubs))
                 bbody (sbind-body new-body)]
             (-> (fn [bset]
                   (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
                     (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
-                        (with-meta {:bi/ai-map assoc-in-map}))))
-                (with-meta {:bi/params '[b-set], :bi/enforce? true, :bi/options options}))))
-        (with-meta {:bi/enforce-template? true}))))
+                        (with-meta {:bi/ai-map assoc-in-map})))) ; used by $reduce
+                (with-meta {:bi/params '[b-set], :bi/express? true, :bi/options options}))))
+        (with-meta {:bi/express-template? true}))))
+
+(defn express-sub
+  "Walk through form replacing template parameters in sub-map with their values."
+  [form sub-map]
+  (letfn [(es-aux [x]
+            (cond (map? x)    (reduce-kv (fn [m k v] (assoc m (es-aux k) (es-aux v))) {} x)
+                  (vector? x) (mapv es-aux x)
+                  (symbol? x) (or (get sub-map x) x)
+                  :else x))]
+    (es-aux form)))
 
 (defn sbind? [obj] (-> obj meta :sbind?))
 
 (defn sbind-body
   "Return a structure topologically identical to the argument body, but with sbinds replacing
-   all the simple elements except map keys (which remain as strings).
-   The sbind is a map with meta {:sbind true}. The map contains as least the key :pos an ordinal
+   all the simple elements except map keys (which remain as strings or numbers).
+   The sbind is a map with meta {:sbind true}. The map contains as least the key :pos, an ordinal
    indicating the position of the sbind in depth-first traveral. It may also include:
      - :sym, the qvar if the sbind represents one.
      - :constant, a string or number, if the sbind represents one.
@@ -1784,9 +1792,9 @@
    {:key - some vector of keys constructed from the body and bset;
            the elements of the vector are either sbinds or strings.
     :val - the value associated with the bset's qvar at the end of this path.}
-   The body argument has sbinds wherever the user's enforce body has a qvar or
+   The body argument has sbinds wherever the user's express body has a qvar or
    a constant-valued map value.
-   (Map KEYS that are constants must be strings and are left unchanged.)"
+   (Map KEYS that are constants must be strings or numbers and are left unchanged.)"
   [body bset]
   (let [body-sbinds-atm (atom [])
         bset (reduce-kv (fn [m k v] (assoc m (-> k name symbol) v)) {} bset)]
@@ -1800,71 +1808,40 @@
                             (filter #(= (:binds %) :val))
                             (mapv #(assoc % :val
                                           (or (:constant? %) (get bset (:sym %))))))]
-        ;;key-sbinds (filter #(= (:binds %) :key) body-sbinds)
         (reduce
          (fn [res vsb]
            (reset! path []) (reset! found? nil)
-           (let [k ; @path has the nil-sbinds; we need the :val on the arg vsb.
-                 (mapv (fn [kpart]
-                         (if (sbind? kpart)
-                           (get bset (:sym kpart))
-                           kpart))
-                       (do (sbind-path-to! vsb body) @path))]
+           (let [k ; @path has the nil-sbinds; we need the :val on the arg bset.
+                 (->> (mapv (fn [kpart]
+                              (cond (sbind? kpart)        (get bset (:sym kpart))
+                                    ;;(or (string? kpart)
+                                    ;;(number? kpart))  (some #(when (= % kpart) (:val %)) val-sbinds),
+                                    :else                 kpart))
+                            (do (sbind-path-to! vsb body) @path))
+                      (mapv #(if (keyword? %) (name %) %)))]
              (assoc res k (:val vsb))))
          {} val-sbinds)))))
 
-(defn reduce-enforce
-  "This function performs $reduce on an enforce function.
+(defn reduce-express
+  "This function performs $reduce on an express function.
    The express function is entirely processable by the ordinary method of $reduce,
-   but we chose to sort the ai-map by keys for more legible output."
-  ([b-sets efn] (reduce-enforce b-sets efn {}))
+   but here it is used for the assoc-in-map that it creates and attaches to the
+   result when it is executed. It is the assoc-in-map that makes threading each
+   bset into the $reduce result possible."
+  ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn init]
-   ;; The b-sets are executed for there meta! Crazy, huh?
-   (->> (map efn b-sets)
+   (->> (map efn b-sets) ; The b-sets are executed for there meta! Crazy, huh?
         (mapcat #(-> % meta :bi/ai-map))
         (sort-by first)
         (reduce (fn [m [k v]] (assoc-in m k v)) init))))
 
-;;;---- not enforce ------------
+;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
 (defn update-db
   "DB is a DH database. Create a new one based on the existing one's content and the new data.
    This entails updating the schema."
   [db data]
   (d/transact db data))
-
-;;; ToDo: Theses are always an atom, right?
-(defn $newContext
-  "Create a new modeling context object."
-  []
-  (atom {:schemas {} :sources {} :targets {}}))
-
-(defn $addSource
-  "Add source data to the argument modeling context.
-   If no name is provided for the source, a new one is created.
-   Default names follow in the series 'source-data-1', 'source-data-2'...
-   If the source already exists, the data is added, possibly updating the schema."
-  ([mc data] ($addSource mc data (str "source-data-" (-> mc deref :sources count inc))))
-  ([mc data src-name]
-   (if (-> mc deref :sources (contains? src-name))
-     (swap! mc #(update-in % [:sources src-name] (update-db (-> mc deref :sources (get src-name)) data)))
-     (swap! mc #(assoc-in  % [:sources src-name] (qu/db-for! data))))))
-
-;;; ToDo: Currently this just does what $MDaddSource does.
-(defn $addTarget
-  "Add target data to the argument modeling context.
-   This is used, for example, for in-place updating.
-   If no name is provided for the target, a new one is created.
-   Default names used when not provided follow in the series 'target-data-1', 'target-data-2'...
-   If the target already exists, the data is added, possibly updating the schema."
-  ([mc data] ($addTarget mc data (->> mc :targets keys (util/default-name "data-targets-"))))
-  ([mc data src-name]
-   (if (-> mc :targets (contains? src-name))
-     (update-in mc [:targets src-name] #(update-db % data))
-     (assoc-in  mc [:targets src-name] (qu/db-for! data)))))
-
-(defn $getSource [mc name] (-> mc :sources (get name)))
-(defn $getTarget [mc name] (-> mc :targets (get name)))
 
 (defn $addSchema
   "Add knowledge of schema to an existing DB.

@@ -29,7 +29,7 @@
 
 ;;; ============ Tokenizer ===============================================================
 (def keywords
-  #{"alias" "and" "else" "elseif" "endif" "false" "for" "function" "enforce" "if" "in" "int" "library" "list" "metadata"
+  #{"alias" "and" "else" "elseif" "endif" "false" "for" "function" "express" "if" "in" "int" "library" "list" "metadata"
     "of" "or" "query" "return" "source" "string" "target" "then" "transform" "true" "where"})
 
 ;;; http://docs.jsonata.org/string-functions
@@ -53,8 +53,8 @@
 (def datetime-fns '{"$fromMillis" bi/$fromMillis, "$millis" bi/$millis, "$now" bi/$now, "$toMillis" bi/$toMillis})
 (def higher-fns   '{"$filter" bi/$filter, "$map" bi/$map, "$reduce" bi/$reduce, "$sift" bi/$sift, "$single" bi/$single})
 
-;;; Non-JSONata functions
-(def file-fns '{"$readFile" bi/$readFile, "$readSpreadsheet" bi/$readSpreadsheet})
+;;; Non-JSONata functions -- MOST of these are temporary!
+(def file-fns '{"$read" bi/$read, "$readSpreadsheet" bi/$readSpreadsheet})
 (def mc-fns   '{"$addSchema" bi/$addSchema, "$addSource" bi/$addSource, "$addTarget" bi/$addTarget,
                 "$getSource" bi/$getSource, "$getTarget" bi/$getTarget, "$newContext" $newContext})
 
@@ -616,7 +616,7 @@
         tkn2 (-> ps :look (get 1))]
     (cond (#{\{ \[ \(} tkn)                   (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
           (builtin-un-op tkn)                 (parse :ptag/unary-op-exp ps)  ; <unary-op-exp>
-          (#{:function :query :enforce} tkn)  (parse :ptag/construct-def ps) ; <construct-def>
+          (#{:function :query :express} tkn)  (parse :ptag/construct-def ps) ; <construct-def>
           (and (= \( tkn2)
                (or (builtin-fns tkn)
                    (jvar? tkn)))              (parse :ptag/fn-call ps)       ; <fn-call>
@@ -691,20 +691,20 @@
     (assoc ?ps :result (:head ?ps))
     (eat-token ?ps jvar?)))
 
-(def ^:dynamic in-enforce?
-  "When true, any :ptag/obj expression encountered will create a JaEnforceMap, not JaObjExp."
+(def ^:dynamic in-express?
+  "When true, any :ptag/obj expression encountered will create a JaExpressMap, not JaObjExp."
   nil)
 ;;; ToDo: Verify that no distinction in syntax between reduce and obj construction.
 ;;;       Keep the distinction in structures created, however!
 (defrecord JaObjExp    [operand kv-pairs])
 (defrecord JaReduceExp [operand kv-pairs])
-(defrecord JaEnforceMap [kv-pairs])
+(defrecord JaExpressMap [kv-pairs])
 (defparse :ptag/obj-exp
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
-    (if in-enforce?
-      (assoc ?ps :result (->JaEnforceMap (:result ?ps)))
+    (if in-express?
+      (assoc ?ps :result (->JaExpressMap (:result ?ps)))
       (assoc ?ps :result (map->JaObjExp {:exp (:result ?ps)})))))
 
 ;;; <reduce-exp> ::= '{' <obj-kv-pair>* '}'
@@ -714,10 +714,10 @@
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
     (assoc ?ps :result (map->JaReduceExp {:exp (:result ?ps)}))))
 
-;;; ToDo: Perhaps for enforce body, key could be any expression?
+;;; ToDo: Perhaps for express body, key could be any expression?
 ;;; <map-pair> ::=  ( <string> | <qvar> ) ":" <exp>
 (defrecord JaKVPair [key val])
-(defrecord JaEnforceKVPair [key val])
+(defrecord JaExpressKVPair [key val])
 (defparse :ptag/obj-kv-pair
   [pstate]
   (as-> pstate ?ps
@@ -730,7 +730,7 @@
         (store ?ps1 :key)))
     (eat-token ?ps \:)
     (parse :ptag/exp ?ps)
-    (assoc ?ps :result ((if in-enforce? ->JaEnforceKVPair ->JaKVPair)
+    (assoc ?ps :result ((if in-express? ->JaExpressKVPair ->JaKVPair)
                         (recall ?ps :key)
                         (:result ?ps)))))
 
@@ -948,29 +948,29 @@
     (parse :ptag/options-map ps)))
 
 ;;; ToDo: These aren't jvars, probably want some sort of optional parameter syntax.
-;;; <enforce-def> ::= 'enforce' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
-(defrecord JaEnforceDef [params body])
-(defparse :ptag/enforce-def
+;;; <express-def> ::= 'express' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
+(defrecord JaExpressDef [params body])
+(defparse :ptag/express-def
   [ps]
-  (binding [in-enforce? true]
+  (binding [in-express? true]
     (as-> ps ?ps
-      (eat-token ?ps :enforce)
+      (eat-token ?ps :express)
       (parse-list ?ps \( \) \, :ptag/jvar|options)
       (store ?ps :params)
       (eat-token ?ps \{)
       (parse :ptag/obj-exp ?ps)
       (store ?ps :body)
       (eat-token ?ps \})
-      (assoc ?ps :result (->JaEnforceDef (recall ?ps :params) (recall ?ps :body))))))
+      (assoc ?ps :result (->JaExpressDef (recall ?ps :params) (recall ?ps :body))))))
 
 (defrecord JaImmediateUse [def args])
-;;; <construct-def> ::= ( <fn-def> | <query-def> | <enforce-def> )( '(' <exp>* ')' )?
+;;; <construct-def> ::= ( <fn-def> | <query-def> | <express-def> )( '(' <exp>* ')' )?
 (defparse :ptag/construct-def
   [ps]
   (let [ps (case (:head ps)
              :function  (parse :ptag/fn-def ps),         ; <fn-def>
              :query     (parse :ptag/query-def ps),      ; <query-def>
-             :enforce   (parse :ptag/enforce-def ps))]   ; <enforce-def>
+             :express   (parse :ptag/express-def ps))]   ; <express-def>
     (if (and (= \( (:head ps)) (#{JaFnDef JaQueryDef} (-> ps :result type)))
       ;; This part to wrap it in a JaImmediateUse
       (as-> ps ?ps
@@ -981,7 +981,7 @@
       ;; This if it is just a definition (which will be assigned to a $id).
       ps)))
 
-;;; The next four 'options' rules are just for query and enforce keyword parameters (so far).
+;;; The next four 'options' rules are just for query and express keyword parameters (so far).
 (defrecord JaOptionsMap [kv-pairs])
 ;;; <options-struct> '{' <options-kv-pair>* '}'
 (defparse :ptag/options-map

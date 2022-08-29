@@ -1,5 +1,5 @@
 (ns rad-mapper.query
-  "supporting code for $query and $enforce"
+  "supporting code for query and express"
   (:require
    [datahike.api                  :as d]
    [taoensso.timbre               :as log]))
@@ -87,7 +87,7 @@
 ;;; BTW, I can make a trivial DB on my laptop using this in 6 milliseconds.
 (defn db-for!
   "Create a database for the argument data and return a connection to it.
-   Called by builtins for query and enforce, for example.
+   Called by builtins for query and express, for example.
    The argument known-schema takes a map indexed by db/ident (not a vector).
    NOTE: The db attributes (map keys) have to be keyword; you can't use strings etc."
   [data & {:keys [known-schema db-name] :or {known-schema {} db-name "temp"}}]

@@ -192,19 +192,19 @@
       (re-pattern (cl-format nil "~A" body))
       (re-pattern (cl-format nil "(?~A)~A" flag-str body)))))
 
-(defrewrite :JaEnforceDef [m]
+(defrewrite :JaExpressDef [m]
   (let [p (-> m :params rewrite)]
-    `(~'bi/enforce {:params   '~(remove map? p)
+    `(~'bi/express {:params   '~(remove map? p)
                     :options  ' ~(some #(when (map? %) %) p)
                     :body '~(-> m :body rewrite)})))
 
-;;; JaEnforceBody is like an JaObjExp (map) but not rewritten as one.
+;;; JaExpressBody is like an JaObjExp (map) but not rewritten as one.
 ;;; Below they are interleaved.
 (defrewrite :JaObjExp [m]
   `(-> {}
        ~@(map rewrite (:exp m))))
 
-(defrewrite :JaEnforceMap [m]
+(defrewrite :JaExpressMap [m]
   (reduce (fn [res kv-pair]
             (assoc res (-> kv-pair :key rewrite) (-> kv-pair :val rewrite)))
           {}
@@ -213,7 +213,7 @@
 (defrewrite :JaKVPair [m]
   `(assoc ~(rewrite (:key m)) ~(rewrite (:val m))))
 
-(defrewrite :JaEnforceKVPair [m]
+(defrewrite :JaExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))
 
 (def ^:dynamic in-regex-fn?

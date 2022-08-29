@@ -247,19 +247,19 @@
       (run-test  "{'a' : 1, 'b' : 2}.($x := 3)" 3))
 
     (testing "advancing context variable on apply-map."
-      (run-test "( $:= $readFile('data/testing/jsonata/try.json');
+      (run-test "( $:= $read('data/testing/jsonata/try.json');
                    Account.Order.Product.(Price*Quantity) )"
                 [68.9, 21.67, 137.8, 107.99]))
 
     (testing "like the try.jsonata page"
-      (run-test "( $:= $readFile('data/testing/jsonata/try.json');
+      (run-test "( $:= $read('data/testing/jsonata/try.json');
                    $sum(Account.Order.Product.(Price*Quantity)) )"
                 336.36))))
 
 #_(deftest nyi
   (testing "NYI:"
     (testing "reduce using delimiters;  ToDo: the backquote thing."
-      (run-test "(  $:= $readFile('data/testing/jsonata/try.json');
+      (run-test "(  $:= $read('data/testing/jsonata/try.json');
                       Account.Order.Product{`Product Name` : $.(Price*Quantity)} )"
                 {"Bowler Hat" [68.9, 137.8], "Trilby hat" 21.67, "Cloak" 107.99}))))
 
