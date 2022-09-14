@@ -28,9 +28,7 @@
 (def block-size "Number of lines to tokenize together. Light testing suggests 5 is about fastest." 5)
 
 ;;; ============ Tokenizer ===============================================================
-(def keywords
-  #{"alias" "and" "else" "elseif" "endif" "false" "for" "function" "express" "if" "in" "int" "library" "list" "metadata"
-    "of" "or" "query" "return" "source" "string" "target" "then" "transform" "true" "where"})
+(def keywords #{"false" "function" "express" "query" "true"})
 
 ;;; http://docs.jsonata.org/string-functions
 (def string-fns
@@ -55,10 +53,8 @@
 
 ;;; Non-JSONata functions -- MOST of these are temporary!
 (def file-fns '{"$read" bi/$read, "$readSpreadsheet" bi/$readSpreadsheet})
-(def mc-fns   '{"$addSchema" bi/$addSchema, "$addSource" bi/$addSource, "$addTarget" bi/$addTarget,
-                "$getSource" bi/$getSource, "$getTarget" bi/$getTarget, "$newContext" $newContext})
 
-(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns mc-fns))
+(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" "$"]) set))
 (def builtin-un-op #{\+, \- :not})
 

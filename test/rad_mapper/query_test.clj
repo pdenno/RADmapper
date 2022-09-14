@@ -126,20 +126,18 @@
 
   (testing "rewriting a query using a mapping context with the default name 'source-data-1'"
     (run-test-rew
-     "( $mc := $newContext() ~> $addSource([{'person/fname' : 'Bob', 'person/lname' : 'Clark'}]);
-         $q := query(){[?person :person/fname ?fname]
-                       [?person :person/lname ?lname]};
-         $q($getSource('source-data-1')) )"
+     "( $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
+           $q := query(){[?person :person/fname ?fname]
+                         [?person :person/lname ?lname]};
+         $q($data)
+      )"
      '(bi/primary
-       (let [$mc (bi/thread (bi/$newContext)
-                            (fn [_x1] (bi/$addSource
-                                       _x1
-                                       (with-meta [(-> {}
-                                                       (assoc "person/fname" "Bob")
-                                                       (assoc "person/lname" "Clark"))]
-                                         #:bi{:json-array? true}))))
+       (let [$data (with-meta [(-> {}
+                                   (assoc "person/fname" "Bob")
+                                   (assoc "person/lname" "Clark"))]
+                     #:bi{:json-array? true})
              $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
-         ($q (bi/$getSource "source-data-1"))))))
+         ($q $data)))))
 
   (testing "execution of a query using a mapping context with the default name 'source-data-1'."
     (run-test
@@ -603,18 +601,19 @@
                           express()
                                  {  {'owners':
                                         {?ownerName:
-                                           {?systemName:
-                                              {?deviceName : {'id'     : ?id,
-                                                              'status' : ?status}}}}}
+                                          {'systems':
+                                             {?systemName:
+                                                {?deviceName : {'id'     : ?id,
+                                                                'status' : ?status}}}}}}
                                  }
                          )
                  )"
                 {"owners"
-                 {"owner1" {"system1" {"device1" {"id" 100, "status" "Ok"},
-                                       "device2" {"id" 200, "status" "Ok"}},
-                            "system2" {"device5" {"id" 500, "status" "Ok"},
-                                       "device6" {"id" 600, "status" "Ok"}}},
-                  "owner2" {"system1" {"device3" {"id" 300, "status" "Ok"},
-                                       "device4" {"id" 400, "status" "Ok"}},
-                            "system2" {"device7" {"id" 700, "status" "Ok"},
-                                       "device8" {"id" 800, "status" "Ok"}}}}}))))
+                 {"owner1" {"systems" {"system1" {"device1" {"id" 100, "status" "Ok"},
+                                                  "device2" {"id" 200, "status" "Ok"}},
+                                       "system2" {"device5" {"id" 500, "status" "Ok"},
+                                                  "device6" {"id" 600, "status" "Ok"}}}},
+                  "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
+                                                  "device4" {"id" 400, "status" "Ok"}},
+                                       "system2" {"device7" {"id" 700, "status" "Ok"},
+                                                  "device8" {"id" 800, "status" "Ok"}}}}}}))))
