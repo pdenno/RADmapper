@@ -585,7 +585,7 @@
                  {:?device-name :device6, :?system-name :system2, :?id 600, :?status "Ok", :?owner-name :owner1}
                  {:?device-name :device1, :?system-name :system1, :?id 100, :?status "Ok", :?owner-name :owner1}}
                result))))
-    (testing "full example"
+    (testing "full sTPDRs--6 rearrange example"
       (run-test "($data := $read('data/testing/jsonata/sTPDRs--6.json');
                      $q := query(){ [?s ?systemName ?x]
                                     [($match(?systemName, /system\\d/))]
