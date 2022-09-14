@@ -2,6 +2,7 @@
   "supporting code for query and express"
   (:require
    [datahike.api                  :as d]
+   [failjure.core                 :as fj]   
    [taoensso.timbre               :as log]))
 
 ;;; ToDo: Get some more types in here, and in implementation generally.
@@ -23,7 +24,7 @@
                (repeatedly sample-size #(nth vec (rand-int len))))
         result (-> (map dh-type-of vec) set)]
     (if (> (count result) 1)
-      (throw (ex-info  "Heterogeneous types:" {:types result :attribute k :vector vec}))
+      (fj/fail "Heterogeneous types: %s" {:types result :attribute k :vector vec})
       (first result))))
 
 ;;; ToDo: It should be possible to learn schema from binding sets and query combined.

@@ -9,7 +9,8 @@
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]))
+   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]
+   [failjure.core :as fj]))
 
 (defmacro run-test-rew
   "Use this to expand devl/run-test with :rewrite? true."
@@ -617,3 +618,30 @@
                                                   "device4" {"id" 400, "status" "Ok"}},
                                        "system2" {"device7" {"id" 700, "status" "Ok"},
                                                   "device8" {"id" 800, "status" "Ok"}}}}}}))))
+
+
+;;; Scratch area for testing failjure
+(defn validate-email [email]
+    (if (re-matches #".+@.+\..+" email)
+      email
+      (fj/fail "Please enter a valid email address (got %s)" email)))
+
+(defn validate-not-empty [s]
+  (if (empty? s)
+    (fj/fail "Please enter a value")
+    s))
+
+;; Use attempt-all to handle failures
+(defn validate-data [data]
+  (fj/attempt-all [email (validate-email (:email data))
+                         username (validate-not-empty (:username data))
+                         id (fj/try* (Integer/parseInt (:id data)))]
+        {:email email
+         :id id
+         :username username}
+    (fj/when-failed [e] (println (fj/message e)))))
+
+
+
+
+

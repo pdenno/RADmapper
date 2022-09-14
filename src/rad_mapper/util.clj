@@ -6,6 +6,7 @@
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
    [clojure.walk                 :as walk]
+   [failjure.core                :as fj]
    [taoensso.timbre              :as log]))
 
 (defn no-host&time-output-fn
@@ -109,7 +110,7 @@
                      (first obj)
                      (mapv detagify obj))
         (string? obj) obj ; It looks like nothing will be number? Need schema to fix things.
-        :else (throw (ex-info "Unknown type in detagify" {:obj obj}))))
+        :else (fj/fail "Unknown type in detagify: %s" obj)))
 
 (defn read-xml
   "Return a map of the XML file read."

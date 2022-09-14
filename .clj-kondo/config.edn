@@ -6,6 +6,13 @@
            rad-mapper.parse/defparse      clojure.core/defn
            rad-mapper.rewrite/defrewrite  clojure.core/defn
 
+           failjure.core/attempt-all      clojure.core/let
+           failjure.core/if-let-okay?     clojure.core/if-let
+           failjure.core/if-let-failed?   clojure.core/if-let
+           failjure.core/when-let-okay?   clojure.core/when-let
+           failjure.core/when-let-failed? clojure.core/when-let
+           failjure.core/when-failed      clojure.core/fn
+
            com.wsscode.pathom3.connect.operation/defmutation clojure.core/defn
            com.wsscode.pathom3.connect.operation/defresolver clojure.core/defn
            com.wsscode.pathom3.plugin/defplugin              clojure.core/def

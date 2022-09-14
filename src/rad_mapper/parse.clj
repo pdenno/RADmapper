@@ -5,6 +5,7 @@
    [clojure.string :as str :refer [index-of]]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
+   [failjure.core      :as fj]
    [rad-mapper.util :as util]))
 
 ;;; The 'defparse' parsing functions pass around complete state.
@@ -126,7 +127,7 @@
   (loop [chars (rest s)
          raw "'"
          res ""]
-    (cond (empty? chars) (throw (ex-info "unbalanced single-quoted string:" {:input s}))
+    (cond (empty? chars) (fj/fail "unbalanced single-quoted string: %" s)
           (= \' (first chars)) {:raw (str raw \') :tkn res}
           (and (= \\ (first chars)) (= \' (second chars)))
           (recur (-> chars rest rest)
@@ -141,7 +142,7 @@
   (let [s (-> st str/split-lines first)]
     (if-let [[_ matched] (re-matches #"(\?[a-z,A-Z][a-zA-Z0-9\-\_]*).*" s)]
       {:raw matched :tkn (->JaQvar matched)}
-      (throw (ex-info "String does not start a legal query variable:" {:string s})))))
+      (fj/fail  "String does not start a legal query variable: %s" s))))
 
 (defn read-triple-role
   "read a triple role"
@@ -151,9 +152,9 @@
     (if-let [[_ matched] (re-matches #"(\:[a-zA-Z][a-zA-Z0-9/\-\_]*).*" s)]
       (if (or (> (-> (for [x matched :when (= x  \/)] x) count) 1)
               (= \/ (nth matched (-> matched count dec))))
-        (throw (ex-info "String does not start a legal triple role:" {:string s}))
+        (fj/fail "String does not start a legal triple role: %s" s)
         {:raw matched :tkn (->JaTripleRole (read-string matched))})
-      (throw (ex-info "String does not start a legal triple role:" {:string st})))))
+      (fj/fail "String does not start a legal triple role: %s" st))))
 
 ;;; ToDo multi-line comment (e.g. /* ... */ would go in here, sort of.
 (defn read-long-syntactic
@@ -242,7 +243,7 @@
                     {:ws ws :raw id :tkn (map->JaJvar {:jvar-name id :special? true})})
                   (when-let [[_ id] (re-matches #"^(:[a-zA-Z][a-zA-Z0-9\-\_]*).*" word)]   ; triple role
                     {:ws ws :raw id :tkn (->JaTripleRole id)})))
-               (throw (ex-info "Char starts no known token: " {:raw c :line line}))))]
+               (fj/fail "Char starts no known token: %s" {:raw c :line line})))]
     (when *debugging-tokenizer?*
       (cl-format *out* "~%***result = ~S string strg = ~S" result string-block))
     result))
@@ -476,7 +477,7 @@
   ([tag str]
    (let [pstate (->> str tokenize make-pstate (parse tag))]
      (if (not= (:head pstate) ::eof)
-       (throw (ex-info "Tokens remain" {:pstate pstate}))
+       (fj/fail "Tokens remain: %s." (:tokens pstate))
         #_(do (when *debugging?*
              (log/error (cl-format nil "~2%*** Tokens remain. pstate=~A ~%" pstate)))
            pstate)

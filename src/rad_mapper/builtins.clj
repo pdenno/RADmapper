@@ -16,8 +16,10 @@
    [clojure.walk                 :as walk :refer [keywordize-keys]]
    [dk.ative.docjure.spreadsheet :as ss]
    [datahike.api                 :as d]
+   [failjure.core                :as fj]
    [rad-mapper.query             :as qu]
-   [rad-mapper.util              :as util])
+   [rad-mapper.util              :as util]
+   [taoensso.timbre              :as log])
   (:import java.text.DecimalFormat
            java.text.DecimalFormatSymbols
            java.math.BigDecimal
@@ -68,6 +70,12 @@
 (s/def ::radix (s/and number? #(core/<= 2 % 36)))
 (s/def ::fn fn?)
 (s/def ::sbind #(-> % meta :sbind?))
+
+(defn handle-builtin
+  "Generic handling of errors for built-ins"
+  [e]
+  (log/error (:message e))
+  e)
 
 (defn reset-env
   "Clean things up just prior to running user code."
@@ -232,8 +240,7 @@
          (let [yarg# ~y]
            (if (fn? yarg#)
              (yarg# xarg#)
-             (throw (ex-info "The RHS argument to the threading operator is not a function."
-                             {:rhs-operator yarg#})))))))
+             (fj/fail  "The RHS argument to the threading operator is not a function %s." yarg#))))))
 
 ;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
@@ -262,7 +269,7 @@
                              :bi/value-step  (sfn res)     ; When res is map it containerizes.
                              :bi/primary     (if (vector? res) (cmap sfn (containerize? res)) (sfn res))
                              :bi/map-step    (cmap #(binding [$ (atom %)] (sfn %)) (containerize? res))
-                             (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
+                             (fj/fail "Huh? Meta = %s" (-> sfn meta :bi/step-type))))]
               (recur new-res (rest steps))))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
@@ -280,7 +287,7 @@
         will be queried for selection. [This rule has nothing to do with filtering!]"
   [pred|ix-fn]
   (-> (fn filter-step [obj prior-step]
-        (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
+        (let [prix (fj/try* (pred|ix-fn @$))
               call-type (:bi/call-type prior-step)
               ob (if (core/= :bi/get-step call-type)
                    (let [k (:bi/attr prior-step)] ; non-compositional semantics
@@ -453,14 +460,12 @@
    (let [rewrite (ns-resolve 'rad-mapper.rewrite 'rewrite*)
          form (rewrite :ptag/exp s :rewrite? true)]
      (binding [*ns* (find-ns 'user)]
-       (try
+       (fj/try*
          (reset-env context)
          (let [res (eval form)]
            (if (and (fn? res) (core/= :bi/primary (-> res meta :bi/step-type)))
              (jflatten (res))
-             (jflatten res)))
-         (catch Exception e
-           (throw (ex-info "Error evaluating form:" {:error e :form form}))))))))
+             (jflatten res))))))))
 
 ;;; $join
 (defn $join
@@ -504,9 +509,9 @@
   ([pattern] ($match @$ pattern :unlimited))
   ([p1 p2] (if (util/regex? p1) ($match @$ p1 p2) ($match p1 p2 :unlimited)))
   ([s pattern limit]
-   (s/assert (s/or ::string keyword?) s)
-   (s/assert ::regex pattern)
-   (s/assert ::pos-limit limit)
+   ;(s/assert (s/or ::string keyword?) s)
+   ;(s/assert ::regex pattern)
+   ;(s/assert ::pos-limit limit)
    (let [s (if (keyword? s) ; query-roles are allowed.
              (if (namespace s) (str (namespace s) "/" (name s)) (name s))
              s)
@@ -624,14 +629,13 @@
                      (if (core/= :unlimited lim) (-> s count range) (range lim)))),
            (fn? replacement)
            (reduce (fn [res _i]
-                     (try (let [repl (-> ($match res pattern) replacement)]
+                      (try (let [repl (-> ($match res pattern) replacement)]
                             (str/replace-first res pattern repl))
                           ;; ToDo: Need a better way! See last test of $replace in builtins_test.clj
                           (catch Exception _e res)))
                    s
                    (if (core/= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
-           :else (throw (ex-info "Replacement pattern must be a string or function."
-                                 {:replacement replacement}))))))
+           :else (fj/fail "Replacement pattern must be a string or function: %s" replacement)))))
 
 ;;; $split
 (defn $split
@@ -875,9 +879,9 @@
         (string? v_) (let [n (read-string v_)]
                       (if (number? n)
                         n
-                        (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
+                        (fj/fail "Cannot be cast to a number: %s" v_)))
         (boolean? v_) (if v_ 1 0)
-        :else (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
+        :else (fj/fail "Cannot be cast to a number: %s" v_)))
 
 ;;; $max
 (defn $max
@@ -1114,7 +1118,7 @@
   "Deliberately throws an error with an optional message"
   [msg]
   (s/assert ::string msg)
-  (throw (ex-info msg {})))
+  (fj/fail msg))
 
 ;;; $keys
 (defn $keys
@@ -1124,7 +1128,7 @@
   [obj] ; ToDo (use s/assert?)
   (cond (map? obj) (-> obj keys vec)
         (vector? obj) (->> obj (map keys) distinct)
-        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj}))))
+        :else (fj/fail "The argument to $keys must be an object or array: %s." obj)))
 
 ;;; $lookup
 (defn $lookup
@@ -1134,7 +1138,7 @@
   [obj k]
   (cond (map? obj) (get obj k)
         (vector? obj) (mapv #(get % k) obj)
-        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj}))))
+        :else (fj/fail "The argument to $keys must be an object or array." :arg obj)))
 
 ;;; $merge
 (defn $merge
@@ -1165,8 +1169,7 @@
      (cond (== nargs 1) (reduce-kv (fn [m k v] (if (func v      ) (assoc m k v) m)) {} obj)
            (== nargs 2) (reduce-kv (fn [m k v] (if (func v k    ) (assoc m k v) m)) {} obj)
            (== nargs 3) (reduce-kv (fn [m k v] (if (func v k obj) (assoc m k v) m)) {} obj)
-           :else (throw (ex-info "The function provided to $sift must specify 1 to 3 arguments."
-                                 {:arg-count nargs}))))))
+           :else (fj/fail "The function provided to $sift must specify 1 to 3 arguments: nargs= %." nargs)))))
 
 ;;; $spread
 (defn $spread
@@ -1177,8 +1180,7 @@
   [obj]
   (when-not (or (map? obj)
                 (and (vector? obj) (every? map? obj)))
-    (throw (ex-info "The argument to $spread must be an object or array of objects."
-                              {:arg obj})))
+    (fj/fail "The argument to $spread must be an object or array of objects: %s." obj))
   (if (map? obj)
                                 (reduce-kv (fn [r k v] (conj r {k v})) [] obj)
       (reduce (fn [r o] (into r (reduce-kv (fn [r k v] (conj r {k v})) []  o)))
@@ -1394,8 +1396,7 @@
                     r
                     (let [val (when (func (first c)) (first c))]
                       (recur (rest c) (if val (conj r val) r)))))
-                :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
-                                      {:vars (-> func meta :bi/params)})))))
+                :else (fj/fail "$filter expects a function of 1 to 3 parameters: %s" (-> func meta :bi/params)))))
 
 ;;; $map
 (defn $map
@@ -1427,8 +1428,7 @@
         (if (empty? c)
           r
           (recur (rest c) (conj r (func (first c))))))
-      :else (throw (ex-info "$map expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :bi/params)})))))
+      :else (fj/fail "$map expects a function of 1 to 3 parameters:" (-> func meta :bi/params)))))
 
 ;;; $reduce
 (declare reduce-typical reduce-express)
@@ -1456,9 +1456,9 @@
   ([coll func] ($reduce coll func nil))
   ([coll func init]
    (let [met (meta func)]
-     (cond (:bi/express-template? met)                          (throw (ex-info "Reducing called on express template fn." {})),
+     (cond (:bi/express-template? met)                          (fj/fail "Reducing called on express template fn." ),
            (:bi/express? met)                                   (reduce-express coll func init),
-           (not (core/<= 2 (-> met :bi/params count) 4))        (throw (ex-info "Reduce function must take 2 to 4 args." {}))
+           (not (core/<= 2 (-> met :bi/params count) 4))        (fj/fail "Reduce function must take 2 to 4 args.")
            (not init)                                           (reduce-typical coll func)
            :else                                                (reduce-typical (into (vector init) coll) func)))))
 
@@ -1515,8 +1515,7 @@
         (cond r r
               (empty? c) false
               :else (recur (rest c) (func (first c))))),
-      :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :bi/params)})))))
+      :else (fj/fail "$single expects a function of 1 to 3 parameters: %s" (-> func meta :bi/params)))))
 
 ;;;==========================================================================
 ;;;=================== Non-JSONata functions ================================
@@ -1780,9 +1779,9 @@
             (try (cond @found?               (throw (Throwable.)) ; unwind.
                        (sbind-eq vsb bod)    (do (reset! found? true) (throw (Throwable.)))
                        (map? bod)            (doseq [[k v] bod]
-                                                 (ppush! k) (path-to-aux vsb v) (ppop!)),
+                                               (ppush! k) (path-to-aux vsb v) (ppop!)),
                        (vector? bod)         (doseq [elem bod] (path-to-aux vsb elem)))
-                 (catch Throwable _e nil)))]
+                 (catch Throwable _e nil)))]            
     (path-to-aux vsb body)))
 
 (defn body&bset-ai-maps
@@ -1849,5 +1848,5 @@
   [mc schema-data db-name]
   (let [type (cond (-> mc :sources (contains? db-name)) :sources
                    (-> mc :targets (contains? db-name)) :targets
-                   :else (throw (ex-info "No such database:" {:db-name db-name})))]
+                   :else (fj/fail  "No such database: %s" db-name))]
     (update-in mc [type db-name] #(update-db % schema-data))))

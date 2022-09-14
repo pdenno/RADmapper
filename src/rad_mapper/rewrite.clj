@@ -6,6 +6,7 @@
    [clojure.pprint      :refer [cl-format pprint]]
    [clojure.set         :as set]
    [clojure.spec.alpha  :as s]
+   [failjure.core       :as fj]   
    [rad-mapper.builtins :as bi]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
@@ -43,7 +44,7 @@
               ?r)
             (if execute? (ev/user-eval ?r :verbose? verbose?) ?r)
             (if (:rewrite-error? ?r)
-              (throw (ex-info "Error in rewriting" {:result (with-out-str (pprint ?r))}))
+              (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
               ?r))
           (case (:parse-status ps)
             :premature-end (log/error "Parse ended prematurely")))))))
@@ -113,7 +114,7 @@
         (nil? obj)                  obj                    ; for optional things like (-> m :where rewrite)
         #_#_(= java.util.regex.Pattern (type obj)) obj
         :else
-        (throw (ex-info (str "Don't know how to rewrite obj: " obj) {:obj obj}))))
+        (fj/fail "Don't know how to rewrite obj: %s" obj)))
 
 (defrewrite :toplevel [m] (->> m :top rewrite))
 
@@ -180,8 +181,8 @@
    Thus it is like #'.*(pattern).*'."
   [base flags]
   (when (or (:sticky? flags) (:global? flags))
-    (throw (ex-info "Regex currently does not support sticky or global flags."
-                    {:base base :flags flags})))
+    (fj/fail "Regex currently does not support sticky or global flags: %s" 
+             {:base base :flags flags}))
   (let [body (subs base 1 (-> base count dec)) ; /pattern/ -> pattern
         flag-str (cond-> ""
                    (:ignore-case? flags)   (str "i")
