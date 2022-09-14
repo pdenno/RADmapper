@@ -3,9 +3,13 @@
    [clojure.pprint         :refer [pprint]]
    [clojure.test           :refer  [deftest is testing]]
    [clojure.walk]
-   [datahike.api           :as d]
-   [datahike.pull-api      :as dp]
-   [owl-db-tools.resolvers :refer [pull-resource]]
+   #?(:clj
+      [datahike.api           :as d]
+      [datahike.pull-api      :as dp]
+      [owl-db-tools.resolvers :refer [pull-resource]])
+   #?(:cljs
+      [datascript.api :as d]
+      [datascript.pull-api :as dp])
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
@@ -41,6 +45,7 @@
        read-string
        (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass))))
 
+#?(:clj
 (deftest db-for-tests-1
   (testing "Testing that basic db-for! (and its schema-making) work"
     (let [conn @(qu/db-for! dolce-test-data)
@@ -58,6 +63,7 @@
                            conn)]
       (is (== 70 (count binding-set)))
       (is (== 33 (->> binding-set (filter #(= :dol/particular (:class-iri %))) count))))))
+)
 
 (deftest db-for-tests-2
   (testing "Testing that basic db-for! (and its schema-making) work"
@@ -277,6 +283,8 @@
 ;;;====================================================================
 ;;; I'm using here the OWL DB that I also use for owl-db-tools.
 ;;; To make this DB see data/testing/make-data/make_data.clj.
+
+#?(:clj
 (def db-cfg
   {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
    :keep-history? false
@@ -294,6 +302,7 @@
                           (contains? ?o :rdfs/subClassOf) (update :rdfs/subClassOf first)))))
           []
           [:dol/endurant :dol/participant :dol/participant-in]))
+) ; :clj conditional
 
 (comment
 (defn write-pretty-file
@@ -640,8 +649,3 @@
          :id id
          :username username}
     (fj/when-failed [e] (println (fj/message e)))))
-
-
-
-
-
