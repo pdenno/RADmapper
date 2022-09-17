@@ -6,7 +6,8 @@
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
    [failjure.core      :as fj]
-   [rad-mapper.util :as util]))
+   [rad-mapper.util :as util])
+  #?(:cljs (:require-macros [rad-mapper.parse :refer [defparse defparse-auto continue-mac]])))
 
 ;;; The 'defparse' parsing functions pass around complete state.
 ;;; The 'parse state' (AKA pstate) is a map with keys:
@@ -436,6 +437,7 @@
      (-> pstate#
          (assoc :result (:head pstate#))
          (eat-token pstate# ~test))))
+
 
 (defn store
   "This and recall are used to keep parsed content tucked away on the parse state object."

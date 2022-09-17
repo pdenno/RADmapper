@@ -8,29 +8,32 @@
   (:require
    [cemerick.url                 :as url]
    [clojure.core                 :as core]
-   [clojure.data.json            :as json]
-   [clojure.data.codec.base64    :as b64]
+   #?(:clj [clojure.data.json         :as json])
+   #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha           :as s]
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str :refer [index-of]]
    [clojure.walk                 :as walk :refer [keywordize-keys]]
-   [dk.ative.docjure.spreadsheet :as ss]
-   [datahike.api                 :as d]
+   #?(:clj  [dk.ative.docjure.spreadsheet :as ss])
+   #?(:clj  [datahike.api                 :as d]
+      :cljs [datascript.core              :as d])
    [failjure.core                :as fj]
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util]
    [taoensso.timbre              :as log])
-  (:import java.text.DecimalFormat
-           java.text.DecimalFormatSymbols
-           java.math.BigDecimal
-           java.math.MathContext
-           java.math.RoundingMode
-           java.time.format.DateTimeFormatter
-           java.time.Instant
-           java.time.LocalDateTime
-           java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
-           java.time.ZoneId
-           java.time.ZoneOffset))
+  #?(:clj
+     (:import java.text.DecimalFormat
+              java.text.DecimalFormatSymbols
+              java.math.BigDecimal
+              java.math.MathContext
+              java.math.RoundingMode
+              java.time.format.DateTimeFormatter
+              java.time.Instant
+              java.time.LocalDateTime
+              java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
+              java.time.ZoneId
+              java.time.ZoneOffset))
+  #?(:cljs (:require-macros [rad-mapper.builtins :refer [defn* defn$ thread value-step primary init-step map-step]])))
 
 ;;; ToDo:
 ;;;  * Consider Small Clojure Interpreter (SCI) for Clojure version.
@@ -240,7 +243,8 @@
          (let [yarg# ~y]
            (if (fn? yarg#)
              (yarg# xarg#)
-             (fj/fail  "The RHS argument to the threading operator is not a function %s." yarg#))))))
+             (throw (ex-info "The RHS argument to the threading operator is not a function."
+                             {:rhs-operator yarg#})))))))
 
 ;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
@@ -322,7 +326,6 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-;;; ToDo: Currently this really only gets called for [] syntax. Is there more I just haven't seen?
 (defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
@@ -397,12 +400,14 @@
 
 ;;;------------- String --------------
 ;;; $base64decode
+#?(:clj
 (defn $base64decode
   "Converts base 64 encoded bytes to a string, using a UTF-8 Unicode codepage."
   [c]
-  (-> c .getBytes b64/decode String.))
+  (-> c .getBytes b64/decode String.)))
 
 ;;; $base64encode
+#?(:clj
 (defn $base64encode
   "Converts an ASCII string to a base 64 representation.
    Each each character in the string is treated as a byte of binary data.
@@ -410,7 +415,7 @@
    which includes all characters in URI encoded strings.
    Unicode characters outside of that range are not supported."
   [s]
-  (-> s .getBytes b64/encode String.))
+  (-> s .getBytes b64/encode String.)))
 
 ;;; $contains
 (defn$ $contains
@@ -920,11 +925,13 @@
     (Math/pow x y)))
 
 ;;; $random
-(defn $random []
+(defn $random
   "Returns a pseudo random number greater than or equal to zero and less than one (0 ≤ n < 1)"
+  []
   (rand))
 
 ;;; $round
+#?(:clj
 (defn $round
   "Returns the value of the number parameter rounded to the number of decimal places specified by the optional precision parameter.
    The precision parameter (which must be an integer) species the number of decimal places to be present in the rounded number.
@@ -946,7 +953,7 @@
                   (count left)
                   (core/+ (count left) precision))
                 RoundingMode/HALF_EVEN))]
-     (if (pos? precision) (double rnum) (long rnum)))))
+     (if (pos? precision) (double rnum) (long rnum))))))
 
 ;;; $sum
 (defn $sum
@@ -1304,7 +1311,7 @@
          (mapv translate-part))]
     (apply str (into (-> parts first :front vector)
                      (mapv #(str (:java %) (:back %)) parts)))))
-
+#?(:clj
 (defn format-time
   "Format a timestamp according to a picture specified by XPath (converted to
    a java DateTimeFormatter/ofPattern  ."
@@ -1313,9 +1320,10 @@
     (let [fmt-string (date-fmt-xpath2java pic)
           dtf (DateTimeFormatter/ofPattern fmt-string)]
       (str (.format dtf java-tstamp)))
-    (str java-tstamp)))
+    (str java-tstamp))))
 
 ;;; $fromMillis
+#?(:clj
 (defn $fromMillis
   "Convert the number representing milliseconds since the Unix Epoch (1 January, 1970 UTC) to a formatted
    string representation of the timestamp as specified by the picture string.
@@ -1334,19 +1342,21 @@
   ([millis pic tzone]
    (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)
          java-tstamp (ZonedDateTime/ofInstant (Instant/ofEpochMilli (long millis)) zone-offset)]
-     (format-time java-tstamp pic))))
+     (format-time java-tstamp pic)))))
 
 ;;; ToDo: What does this mean?:
 ;;;   "All invocations of $millis() within an evaluation of an expression will all return the same timestamp value."
 ;;;    It says the same thing on $now().
 ;;; $millis
+#?(:clj
 (defn $millis
   "Returns the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
    All invocations of $millis() within an evaluation of an expression will all return the same value."
   []
-  (.toEpochMilli (.toInstant (ZonedDateTime/now)))) ; Local doesn't work here.
+  (.toEpochMilli (.toInstant (ZonedDateTime/now))))) ; Local doesn't work here.
 
 ;;; $now
+#?(:clj
 (defn $now
   "Generates a UTC timestamp in ISO 8601 compatible format and returns it as a string.
    All invocations of $now() within an evaluation of an expression will all return the same timestamp value.
@@ -1356,9 +1366,10 @@
   ([pic] ($now pic nil))
   ([pic tzone]
    (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)]
-     (format-time (ZonedDateTime/now zone-offset) pic))))
+     (format-time (ZonedDateTime/now zone-offset) pic)))))
 
 ;;; $toMillis
+#?(:clj
 (defn $toMillis
   "Signature: $toMillis(timestamp [, picture])
    Convert a timestamp string to the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
@@ -1369,7 +1380,7 @@
   ([str] ($toMillis str nil))
   ([str _pic] ; ToDo: implement pic
    (s/assert ::string str)
-   (LocalDateTime/parse str))) ; ZonedDateTime will not work.
+   (LocalDateTime/parse str)))) ; ZonedDateTime will not work.
 
 ;;;-------------- Higher (the higher not yet defined)
 ;;; $filter
@@ -1519,16 +1530,17 @@
 
 ;;;==========================================================================
 ;;;=================== Non-JSONata functions ================================
+#?(:clj
 (defn $read
   "Read a file of JSON or XML, creating a map."
   ([fname] ($read fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([fname opts]
    (let [type (-> (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname) second)]
      (-> (case (or (get opts "type") type "xml")
-           "json" (-> fname slurp json/read-str)
+           #?(:clj "json") #?(:clj (-> fname slurp json/read-str))
            "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
            "edn"  (-> fname slurp read-string qu/json-like))
-         set-context!))))
+         set-context!)))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -1563,6 +1575,7 @@
 
 ;;; ToDo: make this part of $read.
 ;;; $readSpreadsheet
+#?(:clj
 (defn $readSpreadsheet
   "Read the .xlsx and make a clojure map for each row. No fancy names, just :A,:B,:C,...!"
   ([filename sheet-name] ($readSpreadsheet filename sheet-name false))
@@ -1578,7 +1591,7 @@
                  (if invert?
                    (transpose-sheet raw)
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
-                   (rewrite-sheet-for-mapper raw)))))))
+                   (rewrite-sheet-for-mapper raw))))))))
 
 ;;;============================= Mapping Context, query, express ======================
 
@@ -1781,7 +1794,7 @@
                        (map? bod)            (doseq [[k v] bod]
                                                (ppush! k) (path-to-aux vsb v) (ppop!)),
                        (vector? bod)         (doseq [elem bod] (path-to-aux vsb elem)))
-                 (catch Throwable _e nil)))]            
+                 (catch Throwable _e nil)))]
     (path-to-aux vsb body)))
 
 (defn body&bset-ai-maps

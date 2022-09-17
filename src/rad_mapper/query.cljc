@@ -1,8 +1,9 @@
 (ns rad-mapper.query
   "supporting code for query and express"
   (:require
-   [datahike.api                  :as d]
-   [failjure.core                 :as fj]   
+   #?(:clj  [datahike.api         :as d]
+      :cljs [datascript.core      :as d])
+   [failjure.core                 :as fj]
    [taoensso.timbre               :as log]))
 
 ;;; ToDo: Get some more types in here, and in implementation generally.
@@ -94,7 +95,7 @@
   [data & {:keys [known-schema db-name] :or {known-schema {} db-name "temp"}}]
   (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}
         data (-> (if (vector? data) data (vector data)) clj-like)]
-    (when (d/database-exists? db-cfg) (d/delete-database db-cfg))
+    #?(:clj (when (d/database-exists? db-cfg) (d/delete-database db-cfg))) ; ToDo: FIX!
     (d/create-database db-cfg)
     (let [conn-atm (d/connect db-cfg)]
       (d/transact conn-atm (learn-schema data :known-schema known-schema))

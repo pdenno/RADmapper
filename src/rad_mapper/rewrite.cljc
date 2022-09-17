@@ -2,16 +2,16 @@
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    rewrite* is a top-level function for this."
   (:require
-   [clojure.java.io     :as io]
    [clojure.pprint      :refer [cl-format pprint]]
    [clojure.set         :as set]
    [clojure.spec.alpha  :as s]
-   [failjure.core       :as fj]   
+   [failjure.core       :as fj]
    [rad-mapper.builtins :as bi]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
    [rad-mapper.parse    :as par]
-   [taoensso.timbre     :as log]))
+   [taoensso.timbre     :as log])
+  #?(:cljs (:require-macros [rad-mapper.rewrite :refer [defrewrite]])))
 
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
@@ -31,7 +31,8 @@
     (binding [*debugging?* debug?
               par/*debugging?* debug-parse?]
       (if (or *debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
-      (let [ps (with-open [rdr (io/reader (if file? str (char-array str)))]
+      (let [ps (with-open [rdr #?(:clj  (clojure.java.io/reader (if file? str (char-array str)))
+                                  :cljs str)] ; ToDo: Needs work
                  (as-> (par/make-pstate rdr) ?ps
                    (par/parse tag ?ps)
                    (dissoc ?ps :line-seq) ; dissoc so you can print it.
@@ -58,16 +59,22 @@
      (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
      (swap! tags #(conj % ~tag))
      (swap! locals #(into [{}] %))
-     (let [result# (try (let [res# (do ~@body)] (if (seq? res#) (doall res#) res#)) ; See note above.
-                        ;; I don't think that I would typically want to catch these!
-                        #_(catch Exception e#
-                          (log/error "Error rewriting:" e#)
-                          (ex-message (.getMessage e#))
-                          {:obj ~obj :rewrite-error? true}))]
-     (swap! tags #(-> % rest vec))
+     (let [res# (do ~@body)
+           result# (if (seq? res#) (doall res#) res#)] ; See note above.
+     (swap! tags   #(-> % rest vec))
      (swap! locals #(-> % rest vec))
-     (do (when *debugging?* (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
+     (do (when *debugging?*
+           (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
          result#))))
+
+(defn processRad
+  "For calls from javascript"
+  [& args] (apply rewrite* args))
+
+(defn success
+  "To demonstrate debugging with browser"
+  []
+  "<h1>Success!</h1>")
 
 (defn type? [obj type]
   (cond (keyword? type) (= (:_type obj) type)
@@ -181,7 +188,7 @@
    Thus it is like #'.*(pattern).*'."
   [base flags]
   (when (or (:sticky? flags) (:global? flags))
-    (fj/fail "Regex currently does not support sticky or global flags: %s" 
+    (fj/fail "Regex currently does not support sticky or global flags: %s"
              {:base base :flags flags}))
   (let [body (subs base 1 (-> base count dec)) ; /pattern/ -> pattern
         flag-str (cond-> ""

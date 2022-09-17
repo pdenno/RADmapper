@@ -2,7 +2,6 @@
   (:require
    [cemerick.url                 :as url]
    [clojure.data.xml             :as x]
-   [clojure.java.io              :as io]
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
    [clojure.walk                 :as walk]
@@ -21,6 +20,7 @@
    (-> log/*config*
        (assoc :output-fn #'no-host&time-output-fn)
        (assoc :min-level [[#{"datahike.*"} :error]
+                          [#{"datascript.*"} :error]
                           [#{"*"} level]]))))
 
 ;;; ToDo: Refactor: This stuff belongs in the "messaging plug-in".
@@ -112,13 +112,14 @@
         (string? obj) obj ; It looks like nothing will be number? Need schema to fix things.
         :else (fj/fail "Unknown type in detagify: %s" obj)))
 
+#?(:clj
 (defn read-xml
   "Return a map of the XML file read."
   [pathname]
-  (let [xml (-> pathname io/reader x/parse)]
+  (let [xml (-> pathname clojure.java.io/reader x/parse)]
      {:xml/ns-info (explicit-root-ns (x/element-nss xml))
       :xml/content (-> xml alienate-xml clean-whitespace detagify vector)
-      :schema/pathname pathname}))
+      :schema/pathname pathname})))
 
 (defn trans-tag [tag]
   (if-let [ns (namespace tag)]
@@ -188,7 +189,7 @@
 
 (defn db-atm? [o]
   (and (= clojure.lang.Atom (type o))
-       (= datahike.db.DB (type @o))))
+       #?(:clj (= datahike.db.DB (type @o))))) ; ToDo: FIX THIS!
 
 (def ^:private num-word (-> num-map keys set))
 

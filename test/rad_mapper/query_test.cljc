@@ -8,7 +8,7 @@
       [datahike.pull-api      :as dp]
       [owl-db-tools.resolvers :refer [pull-resource]])
    #?(:cljs
-      [datascript.api :as d]
+      [datascript.core :as d]
       [datascript.pull-api :as dp])
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
