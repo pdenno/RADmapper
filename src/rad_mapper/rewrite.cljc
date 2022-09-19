@@ -70,7 +70,7 @@
            (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
          result#))))
 
-(defn success
+(defn success ; ToDo: This should be temporary.
   "To demonstrate debugging with browser"
   []
   "<h1>Success!</h1>")

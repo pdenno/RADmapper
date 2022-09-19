@@ -100,7 +100,9 @@
                                   (str/starts-with? in "/")
                                   (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))]
     (when (and base (not (index-of base new-line)))
-      (let [flags (or (-> (re-matches #"(?sm)([i,m,u,g,s,y]{1,6}).*" (subs st (count base))) second) "")
+      (let [flags (or (-> (re-matches #?(:clj  #"(?s)([i,m,u,g,s,y]{1,6}).*" ; was (?sm) Does that make sense?
+                                         :cljs #"([i,m,u,g,s,y]{1,6}).*")
+                                      (subs st (count base))) second) "")
             flag-map (cond-> {}
                        (index-of flags \i) (assoc :ignore-case? true)
                        (index-of flags \m) (assoc :multi-line? true)
@@ -194,7 +196,9 @@
 (defn whitesp
   "Evaluates to whitespace at head of string or empty string if none."
   [s] ; https://stackoverflow.com/questions/15020669/clojure-multiline-regular-expression
-  (if s (or (nth (re-matches #"(?s)(\s+).*$" s) 1) "") ""))
+  (if s (or (nth (re-matches #?(:clj  #"(?s)(\s+).*$"
+                                :cljs #"(\s+).*$")
+                             s) 1) "") ""))
 
 ;;; ToDo: See split-at.
 (defn get-more
@@ -218,14 +222,22 @@
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
           (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})                   ; EOF
-               (when-let [[_ cm] (re-matches  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*" s)]           ; comment
+               (when-let [[_ cm] (re-matches  #?(:clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
+                                                 :cljs #"(\/\*(\*(?!\/)|[^*])*\*\/).*")
+                                              s)]           ; comment
                  {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
                (and (long-syntactic c) (read-long-syntactic s ws))         ; /regex-pattern/ ++, <=, == etc.
-               (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]
+               (when-let [[_ num] (re-matches #?(:clj  #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*"
+                                                 :cljs #"(\d+(\.\d+(e[+-]?\d+)?)?).*")
+                                                 s)]
                  {:ws ws :raw num :tkn (util/read-str num)}),                   ; number
-               (when-let [[_ st] (re-matches #"(?s)(\"[^\"]*\").*" s)]        ; string literal
+               (when-let [[_ st] (re-matches #?(:clj  #"(?s)(\"[^\"]*\").*"
+                                                :cljs #"(\"[^\"]*\").*")
+                                             s)]        ; string literal
                  {:ws ws :raw st :tkn (util/read-str st)})
-               (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)]        ; backquoted field
+               (when-let [[_ st] (re-matches #?(:clj  #"(?s)(\`[^\`]*\`).*"
+                                                :cljs #"(\`[^\`]*\`).*")
+                                                s)]        ; backquoted field
                  {:ws ws :raw st :tkn {:typ :Field :field-name st}})
                (and (syntactic c) {:ws ws :raw (str c) :tkn c})               ; literal syntactic char.
                (let [pos (position-break s)

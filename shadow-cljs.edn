@@ -4,11 +4,11 @@
  :builds
  {:lib-dev {:target :browser
             :output-dir "resources/public/js"
-            :asset-path "/js"
+            #_#_:asset-path "/js"
             :compiler-options {:externs ["datascript/externs.js"]}
-            :modules  {:app {:entries [rad-mapper.rewrite] ; creates app.js owing to key :app.
-                             :init-fn rad-mapper.rewrite/success}}
-            :devtools {:after-load rad-mapper.rewrite/success}}
+            :modules  {:app {:init-fn rad-mapper.rewrite/success}
+                             #_#_:entries [rad-mapper.rewrite]}
+            #_#_:devtools {:after-load rad-mapper.rewrite/success}}
 
   :lib     {:target :node-library
             :output-to "lib.js"
