@@ -1,13 +1,33 @@
 (ns rad-mapper.util
   (:require
    [cemerick.url                 :as url]
-   [clojure.data.xml             :as x]
-   [clojure.java.io              :as io]
+   #?(:clj  [clojure.data.xml    :as x]) ; ToDo: Investigate. Not cljs version?
+   #?(:cljs [cljs.reader]) ; ToDo: Investigate. Not cljs version?
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
-   [clojure.walk                 :as walk]
+   [clojure.walk                 :as walk :refer [postwalk]]
+   [failjure.core                :as fj]
    [taoensso.timbre              :as log]))
 
+;;; ================== CLJ/CLJS Interop =========================
+(defn regex? [o]
+  #?(:clj  (instance? java.util.regex.Pattern o)
+     :cljs (instance? js/RegExp o)))
+
+(defn read-str [s]
+  #?(:clj  (read-string s)
+     :cljs (cljs.reader/read-string s)))
+
+#?(
+:clj
+   (defn db-atm? [o]
+     (and (instance? clojure.lang.Atom o)
+          (instance? datahike.db.DB @o)))
+:cljs
+   (defn db-atm? [_o] true) ; ToDo: Implement this.
+)
+
+;;; ================== Ordinary Utils =========================
 (defn no-host&time-output-fn
   "I don't want :hostname_ and :timestamp_ in the log output."
   ([data]       (taoensso.timbre/default-output-fn nil  (dissoc data :hostname_ :timestamp_)))
@@ -20,6 +40,7 @@
    (-> log/*config*
        (assoc :output-fn #'no-host&time-output-fn)
        (assoc :min-level [[#{"datahike.*"} :error]
+                          [#{"datascript.*"} :error]
                           [#{"*"} level]]))))
 
 ;;; ToDo: Refactor: This stuff belongs in the "messaging plug-in".
@@ -59,6 +80,7 @@
         (assoc-in ?ns1 [:u->ps "http://www.w3.org/2001/XMLSchema"] ["xsd"]))
       ?ns)))
 
+#?(:clj
 (defn alienate-xml
   "Replace namespaced xml map keywords with their aliases."
   [xml]
@@ -71,17 +93,17 @@
                       (keyword alias-name  local-name)
                       (keyword ns-name     local-name)))
                   tag)))]
-      (walk/postwalk
+      (postwalk
        (fn [obj]
          (if (and (map? obj) (contains? obj :tag))
            (update obj :tag equivalent-tag)
            obj))
-       xml))))
+       xml)))))
 
 (defn clean-whitespace
   "Remove whitespace in element :content."
   [xml]
-  (walk/postwalk
+  (postwalk
    (fn [obj]
      (if (and (map? obj) (contains? obj :content))
        (if (= 1 (count (:content obj))) ;; ToDo Maybe don't remove it if is the only content?
@@ -109,15 +131,16 @@
                      (first obj)
                      (mapv detagify obj))
         (string? obj) obj ; It looks like nothing will be number? Need schema to fix things.
-        :else (throw (ex-info "Unknown type in detagify" {:obj obj}))))
+        :else (fj/fail "Unknown type in detagify: %s" obj)))
 
+#?(:clj
 (defn read-xml
   "Return a map of the XML file read."
   [pathname]
-  (let [xml (-> pathname io/reader x/parse)]
+  (let [xml (-> pathname clojure.java.io/reader x/parse)]
      {:xml/ns-info (explicit-root-ns (x/element-nss xml))
       :xml/content (-> xml alienate-xml clean-whitespace detagify vector)
-      :schema/pathname pathname}))
+      :schema/pathname pathname})))
 
 (defn trans-tag [tag]
   (if-let [ns (namespace tag)]
@@ -135,7 +158,7 @@
   [obj]
   (cond
     (not (or (map? obj) (vector? obj)))
-    (if (number-str? obj) (read-string obj) obj)
+    (if (number-str? obj) (read-str obj) obj)
     (vector? obj) (mapv simplify-xml obj)
     (map? obj) (as-> {} ?r
                  (assoc ?r (trans-tag (:xml/tag obj)) (simplify-xml (:xml/content obj)))
@@ -178,16 +201,9 @@
   [obj]
   (->> obj type str (re-matches #"^.+\.(.*)$") second keyword))
 
-;;; Preparing for .cljc
-(defn regex? [o] (= java.util.regex.Pattern (type o)))
-
 (def ^:private num-map "A map indexed by strings with values being the number the string represents."
   (let [nvec (into (range 1 20) (map #(* 10 %) (range 2 10)))]
     (zipmap (map #(cl-format nil "~r" %) nvec) nvec)))
-
-(defn db-atm? [o]
-  (and (= clojure.lang.Atom (type o))
-       (= datahike.db.DB (type @o))))
 
 (def ^:private num-word (-> num-map keys set))
 
@@ -221,3 +237,11 @@
         (vector? m) (mapv sort-map m),
         (seq? m)    (map sort-map m),
         :else       m))
+
+(defn ln-seq
+  "Implement line-seq interoperable for JS-hosted use.
+   Pass-through to clojure.core/line-seq for Java-hosted."
+  [arg]
+  #?(:cljs
+    (seq (clojure.string/split-lines arg))
+    :clj (line-seq arg)))

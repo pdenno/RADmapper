@@ -1,13 +1,14 @@
 (ns rad-mapper.parse-test
   "Test parsing"
   (:require
-   [clojure.java.io :as io]
+   #?(:clj [clojure.java.io :as io])
    [clojure.spec.alpha  :as s]
    [clojure.test :refer  [deftest is testing]]
-   [rad-mapper.devl.devl-util :as dev]
+   [rad-mapper.devl.devl-util :refer [remove-meta]]
    [rad-mapper.parse    :as par]
    [rad-mapper.rewrite  :as rew]))
 
+#?(:clj ; ToDo: Need CLJS version.
 (defn test-tokenize
   "Run the tokenizer on the argument string."
   [s]
@@ -16,12 +17,12 @@
         (assoc :string-block s)
         par/tokens-from-string
         par/tokenize
-        :tokens)))
+        :tokens))))
 
 (deftest parsing-ToDos
   (testing "Things that don't quite sit right!"
     ;; See notes about the qvar/conditional expression dilemma.
-    (is true #_(= (try (par/tokenize "?") (catch Exception e_ :fix-me)) :fix-me))))
+    (is true #_(= (try (par/tokenize "?") (catch #?(:clj Exception :cljs :default) e_ :fix-me)) :fix-me))))
 
 (deftest tokenizer
   (testing "Tokenizer:"
@@ -31,7 +32,7 @@
              (test-tokenize "'This is a string.'")))
       (is (= [{:tkn "hello's world", :line 1, :col 1}           {:tkn ::par/eof}]
              (test-tokenize "'hello\\'s world'")))
-      (is (= [{:tkn (par/->JaField "`foo ?`"), :line 1, :col 1} {:tkn ::par/eof}]
+      (is (= [{:tkn {:typ :Field, :field-name "`foo ?`"}, :line 1, :col 1} {:tkn ::par/eof}]
              (test-tokenize "`foo ?`")))
       ;; ToDo: Looks fine.
       #_(is (= [{:tkn {:base "/wo/", :flags {:ignore-case? true}}, :line 1, :col 1}
@@ -48,9 +49,9 @@
     (testing "token stream"
       (is (= [{:tkn :true, :line 1, :col 1}
               {:tkn \?, :line 1, :col 5}
-              {:tkn (par/map->JaTripleRole {:role-name :foo/bar}), :line 1, :col 6}
+              {:tkn {:typ :TripleRole :role-name :foo/bar}, :line 1, :col 6}
               {:tkn \:, :line 1, :col 14}
-              {:tkn (par/map->JaTripleRole {:role-name :foo/bat}), :line 1, :col 15}
+              {:tkn {:typ :TripleRole :role-name :foo/bat}, :line 1, :col 15}
               {:tkn ::par/eof}]
              (test-tokenize "true?:foo/bar::foo/bat"))))
 
@@ -66,45 +67,31 @@
     (testing "triple roles are tokens"
       (is (= [{:tkn :true, :line 1, :col 1}
               {:tkn \?, :line 1, :col 5}
-              {:tkn {:role-name :foo/bar}, :line 1, :col 6}
+              {:tkn {:typ :TripleRole, :role-name :foo/bar}, :line 1, :col 6}
               {:tkn \:, :line 1, :col 14}
-              {:tkn {:role-name :foo/bat}, :line 1, :col 15}
+              {:tkn {:typ :TripleRole, :role-name :foo/bat}, :line 1, :col 15}
               {:tkn :rad-mapper.parse/eof}]
-             (-> (test-tokenize "true?:foo/bar::foo/bat")
-                 dev/remove-meta))))))
+             (test-tokenize "true?:foo/bar::foo/bat"))))))
 
 (deftest regexp
   (testing "Testing translation of regular expression"
-    (is (= {:raw "/^abc\\d+$/", :tkn {:base "/^abc\\d+$/", :flags {}}}
-           (-> (par/regex-from-string "/^abc\\d+$/")
-               dev/remove-meta)))))
-
-;;; Fix for BufferedReader
-#_(deftest continuable
-  (testing "Testing whether par/continuable works as expected."
-    (is (= {:next-tkns [\. \(], :operand-tag :ptag/field}
-           (-> "a.(P * Q)" par/tokenize par/make-pstate par/operand-exp?)))
-    ;; Another -nil +nil !
-    (is (= [[:next-tkns [\[ {:_type :JaField, :field-name "x"}]] [:operand-tag :ptag/field]]
-           (-> "a[x < 5]" par/tokenize par/make-pstate par/operand-exp? rew/map-simplify)))
-    (is (= {:next-tkns [\. \{], :operand-tag :ptag/field}
-           (-> "a.{'foo' : 5}" par/tokenize par/make-pstate par/operand-exp?)))))
+    (is (= {:raw "/^abc\\d+$/", :tkn {:typ :RegExp, :base "/^abc\\d+$/", :flags {}}}
+           (par/regex-from-string "/^abc\\d+$/")))))
 
 (deftest parse-structures
   (testing "Testing that parsing does the right things"
-    ;; I can't see the problem in the following! (get -nil +nil)
-    (is (= {:_type :JaBinOpSeq,
+    (is (= {:typ :BinOpSeq,
             :seq
-            '[{:_type :JaField, :field-name "a"}
+            '[{:typ :Field, :field-name "a"}
               bi/get-step
-              {:_type :JaField, :field-name "b"}
+              {:typ :Field, :field-name "b"}
               bi/get-step
-              {:_type :JaField, :field-name "c"}
+              {:typ :Field, :field-name "c"}
               bi/get-step
-              {:_type :JaField, :field-name "d"}
+              {:typ :Field, :field-name "d"}
               bi/get-step
-              {:_type :JaField, :field-name "e"}]}
-           (rew/rewrite* :ptag/exp "a.b.c.d.e" :simplify? true)))))
+              {:typ :Field, :field-name "e"}]}
+           (rew/processRM :ptag/exp "a.b.c.d.e")))))
 
 (def q1
 "query(){[?class :rdf/type            'owl/Class']
@@ -122,63 +109,65 @@
 
 (deftest query-tests
   (testing "Testing that queries parse okay."
-    (is (= {:_type :JaQueryTriple,
-            :ent {:_type :JaQvar, :qvar-name "?x"},
-            :rel {:_type :JaTripleRole, :role-name :rdf/type},
+    (is (= {:typ :QueryTriple,
+            :ent {:typ :Qvar, :qvar-name "?x"},
+            :rel {:typ :TripleRole, :role-name :rdf/type},
             :val-exp "owl/Class"}
-           (rew/rewrite* :ptag/q-pattern "[?x :rdf/type 'owl/Class']" :simplify? true)))
-    (is (= [{:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?x"},
-             :rel {:_type :JaTripleRole, :role-name :a}, :val-exp "one"}
-            {:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?y"},
-             :rel {:_type :JaTripleRole, :role-name :b}, :val-exp "two"}]
-           (rew/rewrite* :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']" :simplify? true)))
-    (is (= {:_type :JaQueryDef,
+           (rew/processRM :ptag/q-pattern "[?x :rdf/type 'owl/Class']")))
+    (is (= [{:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?x"},
+             :rel {:typ :TripleRole, :role-name :a}, :val-exp "one"}
+            {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?y"},
+             :rel {:typ :TripleRole, :role-name :b}, :val-exp "two"}]
+           (rew/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
+    (is (= {:typ :QueryDef,
             :params [],
             :triples
-            [{:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
-              :rel {:_type :JaTripleRole, :role-name :rdf/type}, :val-exp "owl/Class"}
-             {:_type :JaQueryTriple, :ent {:_type :JaQvar, :qvar-name "?class"},
-              :rel {:_type :JaTripleRole, :role-name :resource/iri},
-              :val-exp {:_type :JaQvar, :qvar-name "?class-iri"}}]}
-           (rew/rewrite* :ptag/exp q1 :simplify? true)))))
+            [{:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?class"},
+              :rel {:typ :TripleRole, :role-name :rdf/type}, :val-exp "owl/Class"}
+             {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?class"},
+              :rel {:typ :TripleRole, :role-name :resource/iri},
+              :val-exp {:typ :Qvar, :qvar-name "?class-iri"}}]}
+           (rew/processRM :ptag/exp q1)))))
 
 (deftest immediate-use
   (testing "Testing expressions that start by defining an in-line, anonymous function or query."
 
     ;; This tests parsing function as an immediate-use expression.
-    (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :simplify? true)
-    (is (=  '{:_type :JaImmediateUse,
-              :def {:_type :JaFnDef,
-                    :vars [{:_type :JaJvar, :jvar-name "$x"}],
-                    :body {:_type :JaBinOpSeq,
-                           :seq [{:_type :JaJvar,
+    (rew/processRM :ptag/exp "function($x){$x+1}(3)")
+    (is (=  '{:typ :ImmediateUse,
+              :def {:typ :FnDef,
+                    :vars [{:typ :Jvar, :jvar-name "$x"}],
+                    :body {:typ :BinOpSeq,
+                           :seq [{:typ :Jvar,
                                   :jvar-name "$x"}
                                  bi/+ 1]}},
               :args [3]}
-           (rew/rewrite* :ptag/exp "function($x){$x+1}(3)" :simplify? true)))
+           (rew/processRM :ptag/exp "function($x){$x+1}(3)")))
 
     ;; This tests parsing query as an immediate-use expression.
-    (is (= '{:_type :JaImmediateUse,
-             :def {:_type :JaQueryDef,
-                   :params [{:_type :JaJvar, :jvar-name "$name"}],
-                   :triples [{:_type :JaQueryTriple,
-                              :ent {:_type :JaQvar, :qvar-name "?e"},
-                              :rel {:_type :JaTripleRole, :role-name :name},
-                              :val-exp {:_type :JaJvar, :jvar-name "$name"}}]},
-             :args [{:_type :JaArray,
-                     :exprs [{:_type :JaObjExp,
-                              :exp [{:_type :JaKVPair,
-                                     :key "name", :val "Bob"}]}]} "Bob"]}
-           (rew/rewrite* :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')" :simplify? true)))))
+    (is (= '{:typ :ImmediateUse,
+             :def {:typ :QueryDef,
+                   :params [{:typ :Jvar, :jvar-name "$name"}],
+                   :triples [{:typ :QueryTriple,
+                              :ent {:typ :Qvar, :qvar-name "?e"},
+                              :rel {:typ :TripleRole, :role-name :name},
+                              :val-exp {:typ :Jvar, :jvar-name "$name"}}]},
+             :args [{:typ :Array,
+                     :exprs [{:typ :ObjExp, :kv-pairs [{:typ :KVPair,
+                                                        :key "name",
+                                                        :val "Bob"}]}]} "Bob"]}
+           (->
+            (rew/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")
+            remove-meta)))))
 
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
-(s/def ::simplified-parse-structure (s/or :typical (s/keys :req-un [::_type])
+(s/def ::simplified-parse-structure (s/or :typical (s/keys :req-un [::typ])
                                           :string string?
                                           :number number?
                                           :keyword keyword?))
 
 (defn parse-ok? [exp]
-  (try (let [res (rew/rewrite* :ptag/exp exp :simplify? true)]
+  (try (let [res (rew/processRM :ptag/exp exp)]
          (s/valid? ::simplified-parse-structure res))
        (catch Exception _e false)))
 
@@ -257,7 +246,7 @@
     (testing "binary precedence and non-advancing context variable (2)."
       (is (parse-ok? "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)")))
 
-    (testing "'code-block' is just an expression" ; <========================== This one next.
+    (testing "'code-block' is just an expression"
       (is (parse-ok? "{'a' : 1, 'b' : 22}.($x := 2; $y:= 4; b)")))
 
     (testing "code-blocks allow closures"

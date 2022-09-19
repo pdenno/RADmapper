@@ -1,6 +1,7 @@
 (ns rad-mapper.ast
   "Define syntax trees for interoperable exchange of mappings, among other purposes."
   (:require
+   [failjure.core          :as fj]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]))
 
@@ -124,13 +125,14 @@
   [obj]
   (cond (map? obj)            (assoc obj :table/toplevel-exp? true)
         (vector? obj)  (mapv #(assoc %   :table/toplevel-exp? true) obj)
-        :else (throw (ex-info "Toplevel is a primitive type?" {:obj obj}))))
+        :else (fj/fail "Toplevel is a primitive type?: %s" obj)))
 
-(def scott-result (rew/rewrite*
-                   :ptag/exp "data/testing/map-examples/scott/shipped-item-instance-clean.json"
-                   :file? true
-                   :simplify? true))
+#?(:clj
+(def scott-result (rew/processRM
+                   :ptag/exp
+                   (slurp "data/testing/map-examples/scott/shipped-item-instance-clean.json"))))
 
+#?(:clj
 (defn tryme-again
   []
   (-> scott-result
@@ -138,8 +140,9 @@
       mark-toplevel
       adjust-exp
       set-indexes
-      qu/db-for!))
+      qu/db-for!)))
 
+#(:clj
 (defn tryme-2
   []
   (-> scott-result
@@ -148,4 +151,4 @@
       adjust-exp
       set-indexes
       qu/learn-schema
-      #_qu/db-for!))
+      #_qu/db-for!)))

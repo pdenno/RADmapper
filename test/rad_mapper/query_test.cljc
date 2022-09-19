@@ -3,13 +3,17 @@
    [clojure.pprint         :refer [pprint]]
    [clojure.test           :refer  [deftest is testing]]
    [clojure.walk]
-   [datahike.api           :as d]
-   [datahike.pull-api      :as dp]
-   [owl-db-tools.resolvers :refer [pull-resource]]
+   #?(:clj [datahike.api           :as d])
+   #?(:clj [datahike.pull-api      :as dp])
+   #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
+   #?(:cljs [datascript.core :as d])
+   #?(:cljs [datascript.pull-api :as dp])
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]))
+   [rad-mapper.util        :as util]
+   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]
+   [failjure.core :as fj]))
 
 (defmacro run-test-rew
   "Use this to expand devl/run-test with :rewrite? true."
@@ -33,13 +37,15 @@
 
 ;;; ToDo: Dissoc is temporary; boxing.
 ;;; dolce-1.edn is both :owl/Class and :owl/ObjectProperty.
+#?(:clj
 (def dolce-test-data
   "Get maps of everything in the DOLCE (dol) namespace. "
   (->> "data/testing/dolce-1.edn"
        slurp
-       read-string
-       (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass))))
+       util/read-str
+       (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass)))))
 
+#?(:clj
 (deftest db-for-tests-1
   (testing "Testing that basic db-for! (and its schema-making) work"
     (let [conn @(qu/db-for! dolce-test-data)
@@ -57,6 +63,7 @@
                            conn)]
       (is (== 70 (count binding-set)))
       (is (== 33 (->> binding-set (filter #(= :dol/particular (:class-iri %))) count))))))
+)
 
 (deftest db-for-tests-2
   (testing "Testing that basic db-for! (and its schema-making) work"
@@ -170,7 +177,7 @@
   (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
            :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
            :dol/feature :dol/time-interval}
-         (->> (rew/rewrite* :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
+         (->> (rew/processRM :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
                             "( $read('data/testing/dolce-2.edn');
                                $q := query(){[?class :rdf/type     'owl/Class']
                                              [?class :resource/iri  ?class-iri]};
@@ -276,13 +283,17 @@
 ;;;====================================================================
 ;;; I'm using here the OWL DB that I also use for owl-db-tools.
 ;;; To make this DB see data/testing/make-data/make_data.clj.
+
+#?(:clj
 (def db-cfg
   {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
    :keep-history? false
-   :schema-flexibility :write})
+   :schema-flexibility :write}))
 
-(def conn (-> db-cfg d/connect deref))
+#?(:clj
+(def conn (-> db-cfg d/connect deref)))
 
+#?(:clj
 (def owl-test-data "the simplified objects used in the Draft OAGi Interoperable Mapping Specification example"
   (reduce (fn [res obj]
             (conj res (as-> (pull-resource obj conn) ?o
@@ -292,7 +303,7 @@
                           (contains? ?o :rdfs/range)      (update :rdfs/range first)
                           (contains? ?o :rdfs/subClassOf) (update :rdfs/subClassOf first)))))
           []
-          [:dol/endurant :dol/participant :dol/participant-in]))
+          [:dol/endurant :dol/participant :dol/participant-in])))
 
 (comment
 (defn write-pretty-file
@@ -428,7 +439,7 @@
     ;; This tests making a new data source and use of a special.
     ;; I just check the type because the actual DB can't be tested for equality.
     (is (= datahike.db.DB
-           (do (rew/rewrite* :ptag/exp
+           (do (rew/processRM :ptag/exp
                              "($ := $newContext() ~> $addSource($read('data/testing/owl-example.edn'), 'owl-data');)"
                              :execute? true)
                (-> @bi/$ :sources (get "owl-data") type))))
@@ -460,6 +471,7 @@
 
 ;;;================================================================================================================
 ;;; "owl-db-tools is used only in development (See deps.edn.)  It is here mostly to ensure it has needed functionality."
+#?(:clj
 (deftest use-of-owl-db-tools-query
   (testing "owl-db-tools/pull-resource"
     (is (=
@@ -479,8 +491,8 @@
          (-> (pull-resource :dol/perdurant conn)
              (dissoc :rdfs/comment)
              str
-             read-string
-             (update :rdfs/subClassOf set))))))
+             util/read-str
+             (update :rdfs/subClassOf set)))))))
 
 (def owl-full-express-extra
   "In this one, which is what I think should be in the spec, I'm not bothering with MCs."
@@ -617,3 +629,25 @@
                                                   "device4" {"id" 400, "status" "Ok"}},
                                        "system2" {"device7" {"id" 700, "status" "Ok"},
                                                   "device8" {"id" 800, "status" "Ok"}}}}}}))))
+
+
+;;; Scratch area for testing failjure
+(defn validate-email [email]
+    (if (re-matches #".+@.+\..+" email)
+      email
+      (fj/fail "Please enter a valid email address (got %s)" email)))
+
+(defn validate-not-empty [s]
+  (if (empty? s)
+    (fj/fail "Please enter a value")
+    s))
+
+;; Use attempt-all to handle failures
+(defn validate-data [data]
+  (fj/attempt-all [email (validate-email (:email data))
+                         username (validate-not-empty (:username data))
+                         id (fj/try* (Integer/parseInt (:id data)))]
+        {:email email
+         :id id
+         :username username}
+    (fj/when-failed [e] (println (fj/message e)))))

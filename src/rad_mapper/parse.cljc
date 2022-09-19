@@ -5,7 +5,9 @@
    [clojure.string :as str :refer [index-of]]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
-   [rad-mapper.util :as util]))
+   [failjure.core      :as fj]
+   [rad-mapper.util :as util])
+  #?(:cljs (:require-macros [rad-mapper.parse :refer [defparse defparse-auto]])))
 
 ;;; The 'defparse' parsing functions pass around complete state.
 ;;; The 'parse state' (AKA pstate) is a map with keys:
@@ -20,7 +22,7 @@
 ;;;              on exit, it pops it. Macros store and recall push onto the top map of the stack.
 ;;;              For example use, see :ptag/MapSpec and parse-list.
 
-;;; ToDo: Replace all the records with speced maps with :_type.
+;;; ToDo: Rethink the lexer/parser dichotomy. See Lezer, for example. The continue-tag stuff and regex is pretty bad!
 
 (def ^:dynamic *debugging?* false)
 (util/config-log (if *debugging?* :debug :info))
@@ -28,31 +30,28 @@
 (def block-size "Number of lines to tokenize together. Light testing suggests 5 is about fastest." 5)
 
 ;;; ============ Tokenizer ===============================================================
-(def keywords #{"false" "function" "express" "query" "true"})
+(def keywords #{"express" "false" "function" "query" "true"})
+
+(defn fn-maps [strs] (reduce (fn [r s] (assoc r s (symbol "bi" s))) {} strs))
 
 ;;; http://docs.jsonata.org/string-functions
 (def string-fns
-  '{"$trim" bi/$trim, "$uppercase" bi/$uppercase, "$length" bi/$length, "$substringAfter" bi/$substringAfter,  "$substring" bi/$substring,
-    "$base64encode" bi/$base64encode, "$encodeUrl" bi/$encodeUrl, "$eval" bi/$eval, "$string" bi/$string, "$encodeUrlComponent" bi/$encodeUrlComponent,
-    "$contains" bi/$contains, "$match" bi/$match, "$join" bi/$join, "$substringBefore" bi/$substringBefore, "$base64decode" bi/$base64decode,
-    "$split" bi/$split, "$pad" bi/$pad, "$replace" bi/$replace, "$lowercase" bi/$lowercase, "$decodeUrl" bi/$decodeUrl,
-    "$decodeUrlComponent" bi/$decodeUrlComponent})
+  (fn-maps ["$base64decode" "$base64encode" "$contains" "$decodeUrl" "$decodeUrlComponent" "$encodeUrl" "$encodeUrlComponent"
+            "$eval" "$join" "$length" "$lowercase" "$match" "$pad" "$replace" "$split" "$string" "$substring" "$substringAfter"
+            "$substringBefore" "$trim" "$uppercase"]))
 
 (def numeric-fns
-  '{"$sqrt" bi/$sqrt, "$abs" bi/$abs, "$floor" bi/$floor, "$parseInteger" bi/$parseInteger, "$number" bi/$number, "$formatInteger" bi/$formatInteger,
-    "$round" bi/$round, "$formatBase" bi/$formatBase, "$formatNumber" bi/$formatNumber, "$ceil" bi/$ceil, "$random" bi/$random, "$power" bi/$power})
+  (fn-maps ["$abs" "$ceil" "$floor" "$formatBase" "$formatInteger" "$formatNumber" "$number" "$parseInteger" "$power"
+            "$random" "$round" "$sqrt"]))
 
-(def agg-fns      '{"$average" bi/$average, "$max" bi/$max, "$min" bi/$min, "$sum" bi/$sum})
-(def boolean-fns  '{"$boolean" bi/$boolean, "$exists" bi/$exists, "$not" bi/$not})
-(def array-fns    '{"$append" bi/$append, "$count" bi/$count, "$distinct" bi/$distinct, "$reverse" bi/$reverse,
-                    "$shuffle" bi/$shuffle, "$sort" bi/$sort, "$zip" bi/$zip})
-(def object-fns   '{"$type" bi/$type, "$lookup" bi/$lookup, "$merge" bi/$merge, "$assert" bi/$assert, "$sift" bi/$sift, "$error" bi/$error,
-                    "$each" bi/$each, "$keys" bi/$keys, "$spread" bi/$spread})
-(def datetime-fns '{"$fromMillis" bi/$fromMillis, "$millis" bi/$millis, "$now" bi/$now, "$toMillis" bi/$toMillis})
-(def higher-fns   '{"$filter" bi/$filter, "$map" bi/$map, "$reduce" bi/$reduce, "$sift" bi/$sift, "$single" bi/$single})
-
-;;; Non-JSONata functions -- MOST of these are temporary!
-(def file-fns '{"$read" bi/$read, "$readSpreadsheet" bi/$readSpreadsheet})
+(def agg-fns      (fn-maps ["$average" "$max" "$min" "$sum"]))
+(def boolean-fns  (fn-maps ["$boolean" "$exists" "$not"]))
+(def array-fns    (fn-maps ["$append" "$count" "$distinct" "$reverse" "$shuffle" "$sort" "$zip"]))
+(def object-fns   (fn-maps ["$assert" "$each" "$error" "$keys" "$lookup" "$merge" "$sift" "$spread" "$type"]))
+(def datetime-fns (fn-maps ["$fromMillis" "$millis" "$now" "$toMillis"]))
+(def higher-fns   (fn-maps ["$filter" "$map" "$reduce" "$sift" "$single"]))
+;;; Non-JSONata functions
+(def file-fns     (fn-maps ["$read" "$readSpreadsheet"]))
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" "$"]) set))
@@ -65,7 +64,7 @@
 (def string-operators     '{\& str})
 (def other-operators      '{\. bi/get-step :apply-filter bi/filter-step :apply-reduce bi/reduce-step
                             :thread bi/thread })
-;;; ToDo Re: binary-op? see also http://docs.jsonata.org/other-operators; I'm not doing everything yet.
+
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
 (def ^:private syntactic ; chars that are valid tokens in themselves.
@@ -74,16 +73,16 @@
 (def ^:private long-syntactic ; chars that COULD start a multi-character syntactic elements.
   #{\<, \>, \=, \., \:, \/, \', \?, \~, \!}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
-(defrecord JaJvar [jvar-name special?])
-(defrecord JaQvar [qvar-name])
-(defrecord JaField [field-name]) ; Used for fields (e.g. the a in $.a, and function params
-(defrecord JaTripleRole [role-name])
-(defrecord JaComment [text])
-(defrecord JaRegExp [base flags])
+(s/def ::Jvar (s/keys :req-un [::jvar-name ::special?]))
+(s/def ::Qvar (s/keys :req-un [::qvar-name]))
+(s/def ::Field (s/keys :req-un [::field-name])) ; Used for fields (e.g. the a in $.a, and function params
+(s/def ::TripleRole (s/keys :req-un [::role-name]))
+(s/def ::Comment (s/keys :req-un [::text]))
+(s/def ::RegExp (s/keys :req-un [::base ::flags]))
 (def new-line "Platform's newline as a string" (with-out-str (newline)))
 
 (defn regex-from-string
-  "Returns a map for :raw and :tkn, where :tkn is a JaRegExp if it is possible to parse
+  "Returns a map for :raw and :tkn, where :tkn is a RegExp if it is possible to parse
    the string as starting a regular expression. Otherwise returns nil.
    Uses heuristics."
   [st]
@@ -101,7 +100,9 @@
                                   (str/starts-with? in "/")
                                   (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))]
     (when (and base (not (index-of base new-line)))
-      (let [flags (or (-> (re-matches #"(?sm)([i,m,u,g,s,y]{1,6}).*" (subs st (count base))) second) "")
+      (let [flags (or (-> (re-matches #?(:clj  #"(?s)([i,m,u,g,s,y]{1,6}).*" ; was (?sm) Does that make sense?
+                                         :cljs #"([i,m,u,g,s,y]{1,6}).*")
+                                      (subs st (count base))) second) "")
             flag-map (cond-> {}
                        (index-of flags \i) (assoc :ignore-case? true)
                        (index-of flags \m) (assoc :multi-line? true)
@@ -110,10 +111,10 @@
                        (index-of flags \s) (assoc :dot-all? true)
                        (index-of flags \y) (assoc :sticky? true))]
         {:raw (str base flags)
-         :tkn (->JaRegExp base flag-map)}))))
+         :tkn {:typ :RegExp :base base :flags flag-map}}))))
 
 (defn regex-or-divide
-  "Return as :tkn either an JaRegExp or a /.
+  "Return as :tkn either an RegExp or a /.
    Uses heuristics to guess whether it is a regex."
   [st]
   (or (regex-from-string st)
@@ -126,7 +127,7 @@
   (loop [chars (rest s)
          raw "'"
          res ""]
-    (cond (empty? chars) (throw (ex-info "unbalanced single-quoted string:" {:input s}))
+    (cond (empty? chars) (fj/fail "unbalanced single-quoted string: %" s)
           (= \' (first chars)) {:raw (str raw \') :tkn res}
           (and (= \\ (first chars)) (= \' (second chars)))
           (recur (-> chars rest rest)
@@ -140,8 +141,8 @@
   [st]
   (let [s (-> st str/split-lines first)]
     (if-let [[_ matched] (re-matches #"(\?[a-z,A-Z][a-zA-Z0-9\-\_]*).*" s)]
-      {:raw matched :tkn (->JaQvar matched)}
-      (throw (ex-info "String does not start a legal query variable:" {:string s})))))
+      {:raw matched :tkn {:typ :Qvar :qvar-name matched}}
+      (fj/fail  "String does not start a legal query variable: %s" s))))
 
 (defn read-triple-role
   "read a triple role"
@@ -151,11 +152,10 @@
     (if-let [[_ matched] (re-matches #"(\:[a-zA-Z][a-zA-Z0-9/\-\_]*).*" s)]
       (if (or (> (-> (for [x matched :when (= x  \/)] x) count) 1)
               (= \/ (nth matched (-> matched count dec))))
-        (throw (ex-info "String does not start a legal triple role:" {:string s}))
-        {:raw matched :tkn (->JaTripleRole (read-string matched))})
-      (throw (ex-info "String does not start a legal triple role:" {:string st})))))
+        (fj/fail "String does not start a legal triple role: %s" s)
+        {:raw matched :tkn {:typ :TripleRole :role-name (util/read-str matched)}})
+      (fj/fail "String does not start a legal triple role: %s" st))))
 
-;;; ToDo multi-line comment (e.g. /* ... */ would go in here, sort of.
 (defn read-long-syntactic
   "Return a map containing a :tkn and :raw string for 'long syntactic' lexemes,
    which include arbitray query vars and roles too."
@@ -196,7 +196,9 @@
 (defn whitesp
   "Evaluates to whitespace at head of string or empty string if none."
   [s] ; https://stackoverflow.com/questions/15020669/clojure-multiline-regular-expression
-  (if s (or (nth (re-matches #"(?s)(\s+).*$" s) 1) "") ""))
+  (if s (or (nth (re-matches #?(:clj  #"(?s)(\s+).*$"
+                                :cljs #"(\s+).*$")
+                             s) 1) "") ""))
 
 ;;; ToDo: See split-at.
 (defn get-more
@@ -220,29 +222,37 @@
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
           (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})                   ; EOF
-               (when-let [[_ cm] (re-matches  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*" s)]           ; comment
-                 {:ws ws :raw cm :tkn (->JaComment cm)})
+               (when-let [[_ cm] (re-matches  #?(:clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
+                                                 :cljs #"(\/\*(\*(?!\/)|[^*])*\*\/).*")
+                                              s)]           ; comment
+                 {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
                (and (long-syntactic c) (read-long-syntactic s ws))         ; /regex-pattern/ ++, <=, == etc.
-               (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]
-                 {:ws ws :raw num :tkn (read-string num)}),                   ; number
-               (when-let [[_ st] (re-matches #"(?s)(\"[^\"]*\").*" s)]        ; string literal
-                 {:ws ws :raw st :tkn (read-string st)})
-               (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)]        ; backquoted field
-                 {:ws ws :raw st :tkn (->JaField st)})
+               (when-let [[_ num] (re-matches #?(:clj  #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*"
+                                                 :cljs #"(\d+(\.\d+(e[+-]?\d+)?)?).*")
+                                                 s)]
+                 {:ws ws :raw num :tkn (util/read-str num)}),                   ; number
+               (when-let [[_ st] (re-matches #?(:clj  #"(?s)(\"[^\"]*\").*"
+                                                :cljs #"(\"[^\"]*\").*")
+                                             s)]        ; string literal
+                 {:ws ws :raw st :tkn (util/read-str st)})
+               (when-let [[_ st] (re-matches #?(:clj  #"(?s)(\`[^\`]*\`).*"
+                                                :cljs #"(\`[^\`]*\`).*")
+                                                s)]        ; backquoted field
+                 {:ws ws :raw st :tkn {:typ :Field :field-name st}})
                (and (syntactic c) {:ws ws :raw (str c) :tkn c})               ; literal syntactic char.
                (let [pos (position-break s)
                      word (subs s 0 (or pos (count s)))]
                  (or ; We don't check for "builtin-fns"; as tokens they are just jvars.
                   (and (keywords word)    {:ws ws :raw word :tkn (keyword word)})
                   (when-let [[_ id] (re-matches #"^([a-zA-Z0-9\_]+).*" word)]              ; field or symbol in params map
-                    {:ws ws :raw id :tkn (read-string id)})
+                    {:ws ws :raw id :tkn (util/read-str id)})
                   (when-let [[_ id] (re-matches #"^(\$[a-zA-Z][A-Za-z0-9\_]*).*" word)]    ; jvar
-                    {:ws ws :raw id :tkn (map->JaJvar {:jvar-name id})})
+                    {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id}})
                   (when-let [[_ id] (re-matches #"^(\${1,3}).*" word)]                     ; $, $$, $$$.
-                    {:ws ws :raw id :tkn (map->JaJvar {:jvar-name id :special? true})})
+                    {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id :special? true}})
                   (when-let [[_ id] (re-matches #"^(:[a-zA-Z][a-zA-Z0-9\-\_]*).*" word)]   ; triple role
-                    {:ws ws :raw id :tkn (->JaTripleRole id)})))
-               (throw (ex-info "Char starts no known token: " {:raw c :line line}))))]
+                    {:ws ws :raw id :tkn {:typ :TripleRole :role-name id}})))
+               (fj/fail "Char starts no known token: %s" {:raw c :line line})))]
     (when *debugging-tokenizer?*
       (cl-format *out* "~%***result = ~S string strg = ~S" result string-block))
     result))
@@ -265,7 +275,7 @@
         (if (= ::end-of-block (:tkn lex))
           ?ps
           (recur
-           (if (instance? JaComment (:tkn lex))
+           (if (= (-> lex :tkn :typ) :Comment)
              (update ?ps :comments conj tkn)
              (update ?ps :tokens   conj tkn))
            (+ (-> lex :raw count) col)))))))
@@ -324,8 +334,8 @@
   "A special s/assert that does ps-throw on an error."
   [ps]
   (try (s/assert ::ps ps)
-       (catch Exception e
-         (ps-throw ps (str "pstate is invalid: " (.getMessage e))
+       (catch #?(:clj Exception :cljs :default) e
+         (ps-throw ps (str "pstate is invalid: " #?(:clj (.getMessage e) :cljs e))
                    {:tags (:tags ps)
                     :head (:head ps)
                     :tokens (:tokens ps)}))))
@@ -334,15 +344,14 @@
   "Return true if token matches test, which is a string, character, fn or regex."
   [pstate test]
   (let [head (:head pstate)]
-    (cond (= test ::pass) true
-          (= test head) true
-          (map? test) (test head)
-          (set? test) (test head)
-          (fn? test) (test head)
-          (instance? java.util.regex.Pattern test) (re-matches test head)
-          :else
-          (ps-throw pstate (cl-format nil "Expected a ~A token." test)
-                    {:test test :got head :tags (:tags pstate)}))))
+    (cond (= test ::pass) true,
+          (= test head) true,
+          (map? test)        (test head),
+          (set? test)        (test head),
+          (fn? test)         (test head),
+          (util/regex? test) (re-matches test head),
+          :else              (ps-throw pstate (cl-format nil "Expected a ~A token." test)
+                                       {:test test :got head :tags (:tags pstate)}))))
 
 (defn eat-token
   "Move head of :tokens to :head ('consuming' the old :head) With 2 args, test :head first."
@@ -357,8 +366,6 @@
    (let [ps1 (if (-> pstate :tokens empty?) (refresh-tokens pstate) pstate) ; 3 of 3, refreshing tokens.
          next-up (-> ps1 :tokens first)]
      #_(cl-format *out* "~%Eating ~A, next-up = ~A" (:head ps1) (:tkn next-up))
-     #_(when (and (= (:head ps1) \.) (= (:tkn next-up) \.))
-       (ps-throw ps1 "HERE! (eat-token)" {:head (:head ps1) :next-up next-up :tags (:tags ps1) :tokens (:tokens ps1)}))
      (as-> ps1 ?ps
        (assoc ?ps :head (if next-up (:tkn next-up) ::eof)) ; One of two places :head is set; the other is make-pstate.
        (assoc ?ps :tokens (-> ?ps :tokens rest vec))       ; 2 of 3, setting :tokens.
@@ -434,7 +441,7 @@
      [pstate#]
      (-> pstate#
          (assoc :result (:head pstate#))
-         (eat-token pstate# ~test))))
+         (eat-token ~test))))
 
 (defn store
   "This and recall are used to keep parsed content tucked away on the parse state object."
@@ -452,14 +459,15 @@
 
 (defn make-pstate
   "Make a parse state map and start tokenizing."
-  [reader]
+  [reader-or-str]
   (as-> {:head nil ; In this order for easy debugging.
          :tags []
          :local []
          :look {}
          :tokens []
-         :reader reader
-         :line-seq (line-seq reader)
+         :string-block ""
+         :reader       #?(:clj reader-or-str :cljs nil)
+         :line-seq     (util/ln-seq reader-or-str)
          :call-count 0
          :cursor 1 ; what line you are on; used in tokenizing.
          :comments []} ?ps
@@ -476,7 +484,7 @@
   ([tag str]
    (let [pstate (->> str tokenize make-pstate (parse tag))]
      (if (not= (:head pstate) ::eof)
-       (throw (ex-info "Tokens remain" {:pstate pstate}))
+       (fj/fail "Tokens remain: %s." (:tokens pstate))
         #_(do (when *debugging?*
              (log/error (cl-format nil "~2%*** Tokens remain. pstate=~A ~%" pstate)))
            pstate)
@@ -495,11 +503,11 @@
          (if (str/starts-with? input "\\")
            (str output "\\")
            (str output (subs input 0 1)))))))
-
+#?(:clj
 (defn parse-file
   "Parse a whole file given a filename string."
   [filename]
-  (parse-string :ptag/primary (-> filename slurp esc-esc)))
+  (parse-string :ptag/primary (-> filename slurp esc-esc))))
 
 (defn parse-list
   "Does parse parametrically for <open-char> ( <item> ( <char-sep> <item>)? )? <close-char>"
@@ -550,26 +558,25 @@
 (defparse-auto :ptag/builtin-op builtin-op)
 (defparse-auto :ptag/builtin-fn builtin-fns)
 
-(defn jvar? [x] (instance? JaJvar x))
-(defn qvar? [x] (instance? JaQvar x))
-(defn triple-role? [x] (instance? JaTripleRole x))
-(defn field? [x] (instance? JaField x))
-(defn regexp? [x] (instance? JaRegExp x))
+(defn jvar? [x]        (= (:typ x) :Jvar))
+(defn qvar? [x]        (= (:typ x) :Qvar))
+(defn triple-role? [x] (= (:typ x) :TripleRole))
+(defn field? [x]       (= (:typ x) :Field))
+(defn regex? [x]       (= (:typ x) :RegExp))
 (defn literal? [tkn]
   (or (string? tkn)
       (number? tkn)
       (#{:true :false} tkn)
-      (regexp? tkn)))
+      (regex? tkn)))
 
 (s/def ::ps  (s/keys :req-un [::tokens ::head]))
 (s/def ::tokens (s/and vector? (s/coll-of ::token)))
 (s/def ::token  (s/and map? #(contains? % :tkn) #(-> % :tkn nil? not)))
 (s/def ::head #(not (nil? %)))
-(declare operand-exp?)
 
 (def bin-op-plus? (merge binary-op? '{\[ bi/filter-step \{ bi/reduce-step}))
 
-(defrecord JaBinOpSeq [seq])
+(s/def ::BinOpSeq (s/keys :req-un [::seq]))
 ;;;=============================== Grammar ===============================
 ;;; <exp> ::= <base-exp> (  <bin-op-continuation>  | '?' <conditional-tail> ) ?
 (defparse :ptag/exp
@@ -581,18 +588,19 @@
           (-> base-ps :head bin-op-plus?)
           (as-> base-ps ?ps
             (parse :ptag/bin-op-continuation ?ps)
-            (assoc ?ps :result (->JaBinOpSeq (into (vector (recall ?ps :operand-1))
-                                                   (-> ?ps :result :op-operand-seq)))))
+            (assoc ?ps :result {:typ :BinOpSeq
+                                :seq (into (vector (recall ?ps :operand-1))
+                                           (-> ?ps :result :op-operand-seq))}))
           :else base-ps)))
 
-(defrecord JaOpOperandSeq [op-operand-seq])
+(s/def ::OpOperandSeq (s/keys :req-un [::op-operand-seq]))
 (defparse :ptag/bin-op-continuation
   [ps]
   (loop [ps ps
          oseq []]
     (let [bin-op (-> ps :head bin-op-plus?)]
     (if (not bin-op)
-      (assoc ps :result (->JaOpOperandSeq oseq))
+      (assoc ps :result {:typ :OpOperandSeq :op-operand-seq oseq})
       (let [p (if (#{\[ \}} (:head ps))
                 (as-> ps ?ps
                   (store ?ps :operator (-> ?ps :head bin-op-plus?))
@@ -624,7 +632,7 @@
                                                 (assoc ?ps :result tkn)
                                                 (eat-token ?ps))
           (symbol? tkn)                       (as-> ps ?ps                   ; <field> (not part of param-struct)
-                                                (assoc ?ps :result (->JaField (name tkn)))
+                                                (assoc ?ps :result {:typ :Field :field-name (name tkn)})
                                                 (eat-token ?ps)),
           :else
           (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
@@ -652,29 +660,27 @@
         \[  (parse :ptag/range|array-exp ps)
         \{  (parse :ptag/obj-exp ps)))))
 
-(defmacro continue-mac
-  "Abbreviation of tedious code."
-  [ps tags]
-  `(or ~@(map (fn [tag]
-                `(try (let [ps-done# (-> (parse ~tag ~ps) (look 1))]
-                        {:operand-tag ~tag
-                         :next-tkns [(:head ps-done#) (-> ps-done# :look (get 1))]})
-                      (catch Exception _e# nil)))
-              tags)))
+(defn operand-exp? ; ToDo: :next-tkns is not used.
+  "Return a map with keys :operand-tag and :next-tkns if it is possible to parse from the current state
+   to one of #{:ptag/field :ptag/jvar :ptag/literal :ptag/fn-call :ptag/unary-op-exp}.
+   :operand-tag is then set to one of those tags, and
+   :next-tnks is a vector of the first two tokens that would be have been consumed when that expression is parsed.
 
-(defn operand-exp?
-  "Return one of [:ptag/field :ptag/jvar :ptag/literal :ptag/fn-call :ptag/delimited] if the front
-   of the token stack is something that could be continued as a binary expression followed by a binary operator.
    This is called by the <exp> grammar rule, so you can't use it to anticipate something that starts with an
    expression such as '<exp> ? <exp> : <exp>'; that would result in a non-consuming loop."
   [ps]
   (binding [*debugging?* false] ; I don't think we need to see this!
-    (continue-mac ps [:ptag/field :ptag/jvar :ptag/literal :ptag/fn-call :ptag/unary-op-exp])))
+    (letfn [(try-tag [tag] (try (-> (parse tag ps) (look 1))
+                                (catch #?(:clj Exception :cljs :default) _e nil)))]
+      (some #(when-let [ps (try-tag %)]
+               {:operand-tag %
+                :next-tkns [(:head ps) (-> ps :look (get 1))]})
+            [:ptag/field :ptag/jvar :ptag/literal :ptag/fn-call :ptag/unary-op-exp]))))
 
 (defparse :ptag/field
   [ps]
   (cond (-> ps :head symbol?)  (as-> ps ?ps
-                                 (assoc ?ps :result (->JaField (?ps :head name)))
+                                 (assoc ?ps :result {:typ :Field :field-name (?ps :head name)})
                                  (eat-token ?ps))
         (-> ps :head field?)   (as-> ps ?ps
                                  (assoc ?ps :result (:head ?ps))
@@ -688,32 +694,32 @@
     (eat-token ?ps jvar?)))
 
 (def ^:dynamic in-express?
-  "When true, any :ptag/obj expression encountered will create a JaExpressMap, not JaObjExp."
+  "When true, any :ptag/obj expression encountered will create a ExpressMap, not ObjExp."
   nil)
 ;;; ToDo: Verify that no distinction in syntax between reduce and obj construction.
 ;;;       Keep the distinction in structures created, however!
-(defrecord JaObjExp    [operand kv-pairs])
-(defrecord JaReduceExp [operand kv-pairs])
-(defrecord JaExpressMap [kv-pairs])
+(s/def ::ReduceExp  (s/keys :req-un [::operand ::kv-pairs]))
+(s/def ::ObjExp     (s/keys :req-un [::kv-pairs]))
+(s/def ::ExpressMap (s/keys :req-un [::kv-pairs]))
 (defparse :ptag/obj-exp
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
     (if in-express?
-      (assoc ?ps :result (->JaExpressMap (:result ?ps)))
-      (assoc ?ps :result (map->JaObjExp {:exp (:result ?ps)})))))
+      (assoc ?ps :result {:typ :ExpressMap :kv-pairs (:result ?ps)})
+      (assoc ?ps :result {:typ :ObjExp     :kv-pairs (:result ?ps)}))))
 
 ;;; <reduce-exp> ::= '{' <obj-kv-pair>* '}'
 (defparse :ptag/reduce-exp
   [ps]
   (as-> ps ?ps
-    (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
-    (assoc ?ps :result (map->JaReduceExp {:exp (:result ?ps)}))))
+    (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand will be added in :ptag/delimited-exp
+    (assoc ?ps :result {:typ :ReduceExp :kv-pairs (:result ?ps)})))
 
 ;;; ToDo: Perhaps for express body, key could be any expression?
 ;;; <map-pair> ::=  ( <string> | <qvar> ) ":" <exp>
-(defrecord JaKVPair [key val])
-(defrecord JaExpressKVPair [key val])
+(s/def ::KVPair (s/keys :req-un [::key ::val]))
+(s/def ::ExpressKVPair (s/keys :req-un [::key ::val]))
 (defparse :ptag/obj-kv-pair
   [pstate]
   (as-> pstate ?ps
@@ -726,11 +732,11 @@
         (store ?ps1 :key)))
     (eat-token ?ps \:)
     (parse :ptag/exp ?ps)
-    (assoc ?ps :result ((if in-express? ->JaExpressKVPair ->JaKVPair)
-                        (recall ?ps :key)
-                        (:result ?ps)))))
+    (assoc ?ps :result {:typ (if in-express? :ExpressKVPair :KVPair)
+                        :key (recall ?ps :key)
+                        :val (:result ?ps)})))
 
-(defrecord JaRangeExp [start stop])
+(s/def ::RangeExp (s/keys :req-un [::start ::stop]))
 ;;; <range|array-exp> ::=  <range-exp> | <array>
 (defparse :ptag/range|array-exp
   [ps]
@@ -746,11 +752,13 @@
         (parse :ptag/exp ?ps)
         (store ?ps :stop)
         (eat-token ?ps \])
-        (assoc ?ps :result (->JaRangeExp (recall ?ps :start) (recall ?ps :stop))))
+        (assoc ?ps :result {:typ :RangeExp
+                            :start (recall ?ps :start)
+                            :stop (recall ?ps :stop)}))
       (parse :ptag/array ps))))
 
 ;;; <conditional-tail> ::=  <exp> ':' <exp>
-(defrecord JaConditionalExp [predicate exp1 exp2])
+(s/def ::ConditionalExp (s/keys :req-un [::predicate ::exp1 ::exp2]))
 (defparse :ptag/conditional-tail
   [ps & {:keys [predicate]}]
   (as-> ps ?ps
@@ -759,31 +767,32 @@
     (store ?ps :then)
     (eat-token ?ps \:)
     (parse :ptag/exp ?ps)
-    (assoc ?ps :result (->JaConditionalExp predicate
-                                           (recall ?ps :then)
-                                           (:result ?ps)))))
+    (assoc ?ps :result {:typ :ConditionalExp
+                        :predicate predicate
+                        :exp1 (recall ?ps :then)
+                        :exp2 (:result ?ps)})))
 
 ;;; Note that JSONata allows a final ; before the closing paren; parse-list tolerates that too.
 ;;; <primary>    := '(' ( <exp> (';' <exp>)* )? ;? ')'
-(defrecord JaPrimary [exps])
+(s/def ::Primary (s/keys :req-un [::exps]))
 (defparse :ptag/primary
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \( \) \; :ptag/exp)
-    (assoc ?ps :result (->JaPrimary (:result ?ps)))))
+    (assoc ?ps :result {:typ :Primary :exps (:result ?ps)})))
 
 ;;; <filter-exp> := '[' <exp> ']'
-(defrecord JaApplyFilter [body]) ; This accommodates aref expressions too.
+(s/def ::ApplyFilter (s/keys :req-un [::body])) ; This accommodates aref expressions too.
 (defparse :ptag/filter-exp
   [ps]
   (as-> ps ?ps
     (eat-token ?ps \[)
     (parse :ptag/exp ?ps)
     (eat-token ?ps \])
-    (assoc ?ps :result (->JaApplyFilter (:result ?ps)))))
+    (assoc ?ps :result {:typ :ApplyFilter :body (:result ?ps)})))
 
 ;;; jvar-decl ::= <jvar> ':=' <exp>
-(defrecord JaJvarDecl [var init-val])
+(s/def ::JvarDecl (s/keys :req-un [::var ::init-val]))
 (defparse :ptag/jvar-decl
   [pstate]
   (as-> pstate ?ps
@@ -796,11 +805,12 @@
     (eat-token ?ps :binding)
     (parse :ptag/exp ?ps)
     (store ?ps :init-val)
-    (assoc ?ps :result (->JaJvarDecl (recall ?ps :jvar)
-                                     (recall ?ps :init-val)))))
+    (assoc ?ps :result {:typ :JvarDecl
+                        :var (recall ?ps :jvar)
+                        :init-val (recall ?ps :init-val)})))
 
 ;;; <unary-exp> ::= <unary-operator> <exp>
-(defrecord JaUniOpExp [uni-op exp])
+(s/def ::UniOpExp (s/keys :req-un [::uni-op ::exp]))
 (defparse :ptag/unary-op-exp
   [ps]
     (as-> ps ?ps
@@ -809,7 +819,9 @@
       (let [{:keys [operand-tag]} (operand-exp? ?ps)] ; ToDo was operand-exp-no-operator?
         (as-> ?ps ?ps1
         (parse operand-tag ?ps1)
-        (assoc ?ps1 :result (->JaUniOpExp (recall ?ps1 :op) (:result ?ps1)))))))
+        (assoc ?ps1 :result {:typ :UniOpExp
+                             :uni-op (recall ?ps1 :op)
+                             :exp (:result ?ps1)})))))
 
 ;;;----- 'atomic' expressions, these are useful for parse-list etc. -------
 (defparse :ptag/jvar
@@ -835,22 +847,24 @@
           :else (ps-throw ps "expected a literal string, number, 'true', 'false' regex, obj, range, or array."
                           {:got tkn}))))
 
-(defrecord JaArray [exprs])
+(s/def ::Array (s/keys :req-un [::exprs]))
 (defparse :ptag/array
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \[ \] \, :ptag/exp)
-    (assoc ?ps :result (->JaArray (:result ?ps)))))
+    (assoc ?ps :result {:typ :Array :exprs (:result ?ps)})))
 
 ;;; fn-call ::=  <jvar> '(' <exp>? (',' <exp>)* ')'
-(defrecord JaFnCall [fn-name args])
+(s/def ::FnCall (s/keys :req-un [::fn-name ::args]))
 (defparse :ptag/fn-call
   [ps]
     (as-> ps ?ps
       (store ?ps :fn-name (:head ?ps))
       (eat-token ?ps jvar?)
       (parse-list ?ps \( \) \, :ptag/exp)
-      (assoc ?ps :result (->JaFnCall (-> ?ps (recall :fn-name) :jvar-name) (:result ?ps)))))
+      (assoc ?ps :result {:typ :FnCall
+                          :fn-name (-> ?ps (recall :fn-name) :jvar-name)
+                          :args (:result ?ps)})))
 
 ;;; <query-patterns> ::= <q-pattern>+
 (defparse :ptag/query-patterns
@@ -874,7 +888,7 @@
       (parse :ptag/q-pattern-triple ps))))
 
 ;;; <q-pattern-pred> :: '[' '(' <query-predicate> ')' ']'
-(defrecord JaQueryPred[exp])
+(s/def ::QueryPred (s/keys :req-un [::exp]))
 (defparse :ptag/q-pattern-pred
   [ps]
   (as-> ps ?ps
@@ -883,10 +897,10 @@
     (parse :ptag/fn-call ?ps)
     (eat-token ?ps \))
     (eat-token ?ps \])
-    (assoc ?ps :result (->JaQueryPred (:result ?ps)))))
+    (assoc ?ps :result {:typ :QueryPred :exp (:result ?ps)})))
 
 ;;; <q-pattern-triple> :: '[' <QueryVar> <TripleRole> (<QueryVar> | <exp>) ']'
-(defrecord JaQueryTriple[ent rel val-exp])
+(s/def ::QueryTriple (s/keys :req-un [::ent ::rel ::val-exp]))
 (defparse :ptag/q-pattern-triple
   [ps]
   (as-> ps ?ps
@@ -903,10 +917,13 @@
           (parse :ptag/exp ?ps1)
           (store ?ps1 :third)))
     (eat-token ?ps \])
-    (assoc ?ps :result (->JaQueryTriple (recall ?ps :ent) (recall ?ps :role) (recall ?ps :third)))))
+    (assoc ?ps :result {:typ :QueryTriple
+                        :ent (recall ?ps :ent)
+                        :rel (recall ?ps :role)
+                        :val-exp (recall ?ps :third)})))
 
 ;;; <fn-def> ::= 'function' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
-(defrecord JaFnDef [vars body])
+(s/def ::FnDef (s/keys :req-un [::vars ::body]))
 (defparse :ptag/fn-def
   [ps]
   (as-> ps ?ps
@@ -917,10 +934,12 @@
     (parse :ptag/exp ?ps)
     (store ?ps :body)
     (eat-token ?ps \})
-    (assoc ?ps :result (->JaFnDef (recall ?ps :jvars) (recall ?ps :body)))))
+    (assoc ?ps :result {:typ :FnDef
+                        :vars (recall ?ps :jvars)
+                        :body (recall ?ps :body)})))
 
 ;;; <query-def> ::= 'query '(' <jvar>? [',' <jvar|options>]* ')' '{' <query-patterns> '}'
-(defrecord JaQueryDef  [params triples])
+(s/def ::QueryDef (s/keys :req-un [::params ::triples]))
 (defparse :ptag/query-def
   [ps]
   (as-> ps ?ps
@@ -930,7 +949,9 @@
     (eat-token ?ps \{)
     (parse :ptag/query-patterns ?ps)
     (eat-token ?ps \})
-    (assoc ?ps :result (->JaQueryDef (recall ?ps :params) (:result ?ps)))))
+    (assoc ?ps :result {:typ :QueryDef
+                        :params (recall ?ps :params)
+                        :triples (:result ?ps)})))
 
 ;;; ToDo: I don't care where you put the options.
 ;;;       I don't care whether there is more than one options map.
@@ -945,7 +966,7 @@
 
 ;;; ToDo: These aren't jvars, probably want some sort of optional parameter syntax.
 ;;; <express-def> ::= 'express' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
-(defrecord JaExpressDef [params body])
+(s/def ::ExpressDef (s/keys :req-un [::params ::body]))
 (defparse :ptag/express-def
   [ps]
   (binding [in-express? true]
@@ -957,9 +978,11 @@
       (parse :ptag/obj-exp ?ps)
       (store ?ps :body)
       (eat-token ?ps \})
-      (assoc ?ps :result (->JaExpressDef (recall ?ps :params) (recall ?ps :body))))))
+      (assoc ?ps :result {:typ :ExpressDef
+                          :params (recall ?ps :params)
+                          :body (recall ?ps :body)}))))
 
-(defrecord JaImmediateUse [def args])
+(s/def ::ImmediateUse (s/keys :req-un [::def ::args]))
 ;;; <construct-def> ::= ( <fn-def> | <query-def> | <express-def> )( '(' <exp>* ')' )?
 (defparse :ptag/construct-def
   [ps]
@@ -967,26 +990,28 @@
              :function  (parse :ptag/fn-def ps),         ; <fn-def>
              :query     (parse :ptag/query-def ps),      ; <query-def>
              :express   (parse :ptag/express-def ps))]   ; <express-def>
-    (if (and (= \( (:head ps)) (#{JaFnDef JaQueryDef} (-> ps :result type)))
-      ;; This part to wrap it in a JaImmediateUse
+    (if (and (= \( (:head ps)) (#{:FnDef :QueryDef} (-> ps :result :typ)))
+      ;; This part to wrap it in a ImmediateUse
       (as-> ps ?ps
         (store ?ps :def)
         (parse-list ?ps \( \) \, :ptag/exp)
         (store ?ps :args)
-        (assoc ?ps :result (->JaImmediateUse (recall ?ps :def) (recall ?ps :args))))
+        (assoc ?ps :result {:typ :ImmediateUse
+                            :def (recall ?ps :def)
+                            :args (recall ?ps :args)}))
       ;; This if it is just a definition (which will be assigned to a $id).
       ps)))
 
 ;;; The next four 'options' rules are just for query and express keyword parameters (so far).
-(defrecord JaOptionsMap [kv-pairs])
+(s/def ::OptionsMap (s/keys :req-un [::kv-pairs]))
 ;;; <options-struct> '{' <options-kv-pair>* '}'
 (defparse :ptag/options-map
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \{ \} \, :ptag/option-kv-pair)
-    (assoc ?ps :result (->JaOptionsMap (:result ?ps)))))
+    (assoc ?ps :result {:typ :OptionsMap :kv-pairs (:result ?ps)})))
 
-(defrecord JaOptionKeywordPair [key val])
+(s/def ::OptionKeywordPair (s/keys :req-un [::key ::val]))
 ;;; <options-kv-pair> ::= <symbol> ':' <option-val>
 (defparse :ptag/option-kv-pair
   [ps]
@@ -996,12 +1021,14 @@
     (eat-token ?ps \:)
     (parse :ptag/option-val ?ps)
     (store ?ps :val)
-    (assoc ?ps :result (->JaOptionKeywordPair (recall ?ps :key) (recall ?ps :val)))))
+    (assoc ?ps :result {:typ :OptionKeywordPair
+                        :key (recall ?ps :key)
+                        :val (recall ?ps :val)})))
 
 (defn oval? [obj]
   (or (symbol? obj) (qvar? obj) (#{:true :false} obj)))
 
-(defrecord JaOptionVal [exp])
+(s/def ::OptionVal (s/keys :req-un [::exp]))
 ;;; <option-val> ::= <option-val-atom> | '[' <option-val-atom> ( ',' <option-val-atom> )* ']'
 (defparse :ptag/option-val
   [ps]

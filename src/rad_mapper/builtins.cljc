@@ -8,27 +8,32 @@
   (:require
    [cemerick.url                 :as url]
    [clojure.core                 :as core]
-   [clojure.data.json            :as json]
-   [clojure.data.codec.base64    :as b64]
+   #?(:clj [clojure.data.json         :as json])
+   #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha           :as s]
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str :refer [index-of]]
    [clojure.walk                 :as walk :refer [keywordize-keys]]
-   [dk.ative.docjure.spreadsheet :as ss]
-   [datahike.api                 :as d]
+   #?(:clj  [dk.ative.docjure.spreadsheet :as ss])
+   #?(:clj  [datahike.api                 :as d]
+      :cljs [datascript.core              :as d])
+   [failjure.core                :as fj]
    [rad-mapper.query             :as qu]
-   [rad-mapper.util              :as util])
-  (:import java.text.DecimalFormat
-           java.text.DecimalFormatSymbols
-           java.math.BigDecimal
-           java.math.MathContext
-           java.math.RoundingMode
-           java.time.format.DateTimeFormatter
-           java.time.Instant
-           java.time.LocalDateTime
-           java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
-           java.time.ZoneId
-           java.time.ZoneOffset))
+   [rad-mapper.util              :as util]
+   [taoensso.timbre              :as log])
+  #?(:clj
+     (:import java.text.DecimalFormat
+              java.text.DecimalFormatSymbols
+              java.math.BigDecimal
+              java.math.MathContext
+              java.math.RoundingMode
+              java.time.format.DateTimeFormatter
+              java.time.Instant
+              java.time.LocalDateTime
+              java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
+              java.time.ZoneId
+              java.time.ZoneOffset))
+  #?(:cljs (:require-macros [rad-mapper.builtins :refer [defn* defn$ thread value-step primary init-step map-step]])))
 
 ;;; ToDo:
 ;;;  * Consider Small Clojure Interpreter (SCI) for Clojure version.
@@ -68,6 +73,12 @@
 (s/def ::radix (s/and number? #(core/<= 2 % 36)))
 (s/def ::fn fn?)
 (s/def ::sbind #(-> % meta :sbind?))
+
+(defn handle-builtin
+  "Generic handling of errors for built-ins"
+  [e]
+  (log/error (:message e))
+  e)
 
 (defn reset-env
   "Clean things up just prior to running user code."
@@ -262,7 +273,7 @@
                              :bi/value-step  (sfn res)     ; When res is map it containerizes.
                              :bi/primary     (if (vector? res) (cmap sfn (containerize? res)) (sfn res))
                              :bi/map-step    (cmap #(binding [$ (atom %)] (sfn %)) (containerize? res))
-                             (throw (ex-info "Huh?" {:meta (-> sfn meta :bi/step-type)}))))]
+                             (fj/fail "Huh? Meta = %s" (-> sfn meta :bi/step-type))))]
               (recur new-res (rest steps))))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
@@ -280,7 +291,7 @@
         will be queried for selection. [This rule has nothing to do with filtering!]"
   [pred|ix-fn]
   (-> (fn filter-step [obj prior-step]
-        (let [prix   (try (pred|ix-fn @$) (catch Exception _e nil))
+        (let [prix (fj/try* (pred|ix-fn @$))
               call-type (:bi/call-type prior-step)
               ob (if (core/= :bi/get-step call-type)
                    (let [k (:bi/attr prior-step)] ; non-compositional semantics
@@ -315,7 +326,6 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-;;; ToDo: Currently this really only gets called for [] syntax. Is there more I just haven't seen?
 (defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
@@ -390,12 +400,14 @@
 
 ;;;------------- String --------------
 ;;; $base64decode
+#?(:clj
 (defn $base64decode
   "Converts base 64 encoded bytes to a string, using a UTF-8 Unicode codepage."
   [c]
-  (-> c .getBytes b64/decode String.))
+  (-> c .getBytes b64/decode String.)))
 
 ;;; $base64encode
+#?(:clj
 (defn $base64encode
   "Converts an ASCII string to a base 64 representation.
    Each each character in the string is treated as a byte of binary data.
@@ -403,7 +415,7 @@
    which includes all characters in URI encoded strings.
    Unicode characters outside of that range are not supported."
   [s]
-  (-> s .getBytes b64/encode String.))
+  (-> s .getBytes b64/encode String.)))
 
 ;;; $contains
 (defn$ $contains
@@ -446,21 +458,20 @@
   (url/url-encode s))
 
 ;;; $eval
+#?(:clj ; ToDo: CLJS doesn't have ns-resolve.
 (defn $eval
   ([s] ($eval s @$))
   ([s context]
    (s/assert ::string s)
-   (let [rewrite (ns-resolve 'rad-mapper.rewrite 'rewrite*)
+   (let [rewrite (ns-resolve 'rad-mapper.rewrite 'processRM)
          form (rewrite :ptag/exp s :rewrite? true)]
      (binding [*ns* (find-ns 'user)]
-       (try
+       (fj/try*
          (reset-env context)
          (let [res (eval form)]
            (if (and (fn? res) (core/= :bi/primary (-> res meta :bi/step-type)))
              (jflatten (res))
-             (jflatten res)))
-         (catch Exception e
-           (throw (ex-info "Error evaluating form:" {:error e :form form}))))))))
+             (jflatten res)))))))))
 
 ;;; $join
 (defn $join
@@ -491,6 +502,10 @@
   ([s] (s/assert ::string s) (str/lower-case s)))
 
 ;;; $match
+#?(
+:cljs
+(defn $match [& args] false) ; ToDo: CLJS doesn't have re-matcher.
+:clj
 (defn $match
   "Applies the str string to the pattern regular expression and returns an array of objects,
    with each object containing information about each occurrence of a match withing str.
@@ -504,9 +519,9 @@
   ([pattern] ($match @$ pattern :unlimited))
   ([p1 p2] (if (util/regex? p1) ($match @$ p1 p2) ($match p1 p2 :unlimited)))
   ([s pattern limit]
-   (s/assert (s/or ::string keyword?) s)
-   (s/assert ::regex pattern)
-   (s/assert ::pos-limit limit)
+   ;(s/assert (s/or ::string keyword?) s)
+   ;(s/assert ::regex pattern)
+   ;(s/assert ::pos-limit limit)
    (let [s (if (keyword? s) ; query-roles are allowed.
              (if (namespace s) (str (namespace s) "/" (name s)) (name s))
              s)
@@ -530,7 +545,7 @@
      (cond
        (empty? result) nil,
        (and (vector? result) (== 1 (count result))) (first result),
-       :else result))))
+       :else result)))))
 
 ;;; JSONata looks like it uses a matcher:
 ;;;       "Product thing" ~> /^Product/
@@ -542,6 +557,10 @@
 ;;;               "next": "<native function>#0"} <===============
 ;;;
 ;;; So I'm going to do something similar.
+#?(
+:cljs
+   (defn match-regex [& args] :nyi) ; ToDo: re-matcher differs in CLJS
+:clj
 (defn match-regex
   "Return the match object (map with bi/regex-result? true) for
    This is similar to $match only in as far as they both do matching on a regular expressions;
@@ -559,7 +578,7 @@
               "end"   (core/+ ix (count match))
               "groups" groups
               "next" matcher}
-             (with-meta {:bi/regex-result? true})))))))
+             (with-meta {:bi/regex-result? true}))))))))
 
 ;;; $pad
 (defn $pad
@@ -624,14 +643,13 @@
                      (if (core/= :unlimited lim) (-> s count range) (range lim)))),
            (fn? replacement)
            (reduce (fn [res _i]
-                     (try (let [repl (-> ($match res pattern) replacement)]
+                      (try (let [repl (-> ($match res pattern) replacement)]
                             (str/replace-first res pattern repl))
                           ;; ToDo: Need a better way! See last test of $replace in builtins_test.clj
-                          (catch Exception _e res)))
+                          (catch #?(:clj Exception :cljs :default) _e res)))
                    s
                    (if (core/= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
-           :else (throw (ex-info "Replacement pattern must be a string or function."
-                                 {:replacement replacement}))))))
+           :else (fj/fail "Replacement pattern must be a string or function: %s" replacement)))))
 
 ;;; $split
 (defn $split
@@ -810,6 +828,7 @@
 ;;;  (3) For example, "'#'#" formats 123 to "#123". To create a single quote itself, use two in a row: "# o''clock".
 
 ;;; $formatNumber
+#?(:clj
 (defn $formatNumber
   "Casts the number to a string and formats it to a decimal representation as specified by the picture string.
 
@@ -835,11 +854,12 @@
         (case k ; ToDo: More of these.
           :per-mille (.setMultiplier df 1000)
           nil))
-    (.format df number))))
+    (.format df number)))))
 
 ;;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
 
 ;;; $formatInteger
+#?(:clj   ; ToDo: Calls $formatNumber, which is :clj-only so far.
 (defn $formatInteger
   "Casts the number to a string and formats it to an integer representation as specified by the picture string.
    The behaviour of this function is consistent with the two-argument version of the XPath/XQuery function
@@ -862,7 +882,7 @@
                  nil)]
     (cond (and simple (#{"A" "a" "i" "I"} pic) (neg? num)), (str "-" simple)
           simple  simple
-          :else ($formatNumber num pic))))
+          :else ($formatNumber num pic)))))
 
 ;;; $number
 (defn $number
@@ -872,12 +892,12 @@
     All other values cause an error to be thrown."
   [v_]
   (cond (number? v_) v_
-        (string? v_) (let [n (read-string v_)]
+        (string? v_) (let [n (util/read-str v_)]
                       (if (number? n)
                         n
-                        (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
+                        (fj/fail "Cannot be cast to a number: %s" v_)))
         (boolean? v_) (if v_ 1 0)
-        :else (throw (ex-info "Cannot be cast to a number:" {:value v_}))))
+        :else (fj/fail "Cannot be cast to a number: %s" v_)))
 
 ;;; $max
 (defn $max
@@ -916,11 +936,13 @@
     (Math/pow x y)))
 
 ;;; $random
-(defn $random []
+(defn $random
   "Returns a pseudo random number greater than or equal to zero and less than one (0 ≤ n < 1)"
+  []
   (rand))
 
 ;;; $round
+#?(:clj
 (defn $round
   "Returns the value of the number parameter rounded to the number of decimal places specified by the optional precision parameter.
    The precision parameter (which must be an integer) species the number of decimal places to be present in the rounded number.
@@ -942,7 +964,7 @@
                   (count left)
                   (core/+ (count left) precision))
                 RoundingMode/HALF_EVEN))]
-     (if (pos? precision) (double rnum) (long rnum)))))
+     (if (pos? precision) (double rnum) (long rnum))))))
 
 ;;; $sum
 (defn $sum
@@ -1114,7 +1136,7 @@
   "Deliberately throws an error with an optional message"
   [msg]
   (s/assert ::string msg)
-  (throw (ex-info msg {})))
+  (fj/fail msg))
 
 ;;; $keys
 (defn $keys
@@ -1124,7 +1146,7 @@
   [obj] ; ToDo (use s/assert?)
   (cond (map? obj) (-> obj keys vec)
         (vector? obj) (->> obj (map keys) distinct)
-        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj}))))
+        :else (fj/fail "The argument to $keys must be an object or array: %s." obj)))
 
 ;;; $lookup
 (defn $lookup
@@ -1134,7 +1156,7 @@
   [obj k]
   (cond (map? obj) (get obj k)
         (vector? obj) (mapv #(get % k) obj)
-        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj}))))
+        :else (fj/fail "The argument to $keys must be an object or array." :arg obj)))
 
 ;;; $merge
 (defn $merge
@@ -1165,8 +1187,7 @@
      (cond (== nargs 1) (reduce-kv (fn [m k v] (if (func v      ) (assoc m k v) m)) {} obj)
            (== nargs 2) (reduce-kv (fn [m k v] (if (func v k    ) (assoc m k v) m)) {} obj)
            (== nargs 3) (reduce-kv (fn [m k v] (if (func v k obj) (assoc m k v) m)) {} obj)
-           :else (throw (ex-info "The function provided to $sift must specify 1 to 3 arguments."
-                                 {:arg-count nargs}))))))
+           :else (fj/fail "The function provided to $sift must specify 1 to 3 arguments: nargs= %." nargs)))))
 
 ;;; $spread
 (defn $spread
@@ -1177,8 +1198,7 @@
   [obj]
   (when-not (or (map? obj)
                 (and (vector? obj) (every? map? obj)))
-    (throw (ex-info "The argument to $spread must be an object or array of objects."
-                              {:arg obj})))
+    (fj/fail "The argument to $spread must be an object or array of objects: %s." obj))
   (if (map? obj)
                                 (reduce-kv (fn [r k v] (conj r {k v})) [] obj)
       (reduce (fn [r o] (into r (reduce-kv (fn [r k v] (conj r {k v})) []  o)))
@@ -1302,7 +1322,7 @@
          (mapv translate-part))]
     (apply str (into (-> parts first :front vector)
                      (mapv #(str (:java %) (:back %)) parts)))))
-
+#?(:clj
 (defn format-time
   "Format a timestamp according to a picture specified by XPath (converted to
    a java DateTimeFormatter/ofPattern  ."
@@ -1311,9 +1331,10 @@
     (let [fmt-string (date-fmt-xpath2java pic)
           dtf (DateTimeFormatter/ofPattern fmt-string)]
       (str (.format dtf java-tstamp)))
-    (str java-tstamp)))
+    (str java-tstamp))))
 
 ;;; $fromMillis
+#?(:clj
 (defn $fromMillis
   "Convert the number representing milliseconds since the Unix Epoch (1 January, 1970 UTC) to a formatted
    string representation of the timestamp as specified by the picture string.
@@ -1332,19 +1353,21 @@
   ([millis pic tzone]
    (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)
          java-tstamp (ZonedDateTime/ofInstant (Instant/ofEpochMilli (long millis)) zone-offset)]
-     (format-time java-tstamp pic))))
+     (format-time java-tstamp pic)))))
 
 ;;; ToDo: What does this mean?:
 ;;;   "All invocations of $millis() within an evaluation of an expression will all return the same timestamp value."
 ;;;    It says the same thing on $now().
 ;;; $millis
+#?(:clj
 (defn $millis
   "Returns the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
    All invocations of $millis() within an evaluation of an expression will all return the same value."
   []
-  (.toEpochMilli (.toInstant (ZonedDateTime/now)))) ; Local doesn't work here.
+  (.toEpochMilli (.toInstant (ZonedDateTime/now))))) ; Local doesn't work here.
 
 ;;; $now
+#?(:clj
 (defn $now
   "Generates a UTC timestamp in ISO 8601 compatible format and returns it as a string.
    All invocations of $now() within an evaluation of an expression will all return the same timestamp value.
@@ -1354,9 +1377,10 @@
   ([pic] ($now pic nil))
   ([pic tzone]
    (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)]
-     (format-time (ZonedDateTime/now zone-offset) pic))))
+     (format-time (ZonedDateTime/now zone-offset) pic)))))
 
 ;;; $toMillis
+#?(:clj
 (defn $toMillis
   "Signature: $toMillis(timestamp [, picture])
    Convert a timestamp string to the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
@@ -1367,7 +1391,7 @@
   ([str] ($toMillis str nil))
   ([str _pic] ; ToDo: implement pic
    (s/assert ::string str)
-   (LocalDateTime/parse str))) ; ZonedDateTime will not work.
+   (LocalDateTime/parse str)))) ; ZonedDateTime will not work.
 
 ;;;-------------- Higher (the higher not yet defined)
 ;;; $filter
@@ -1394,8 +1418,7 @@
                     r
                     (let [val (when (func (first c)) (first c))]
                       (recur (rest c) (if val (conj r val) r)))))
-                :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
-                                      {:vars (-> func meta :bi/params)})))))
+                :else (fj/fail "$filter expects a function of 1 to 3 parameters: %s" (-> func meta :bi/params)))))
 
 ;;; $map
 (defn $map
@@ -1427,8 +1450,7 @@
         (if (empty? c)
           r
           (recur (rest c) (conj r (func (first c))))))
-      :else (throw (ex-info "$map expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :bi/params)})))))
+      :else (fj/fail "$map expects a function of 1 to 3 parameters:" (-> func meta :bi/params)))))
 
 ;;; $reduce
 (declare reduce-typical reduce-express)
@@ -1456,9 +1478,9 @@
   ([coll func] ($reduce coll func nil))
   ([coll func init]
    (let [met (meta func)]
-     (cond (:bi/express-template? met)                          (throw (ex-info "Reducing called on express template fn." {})),
+     (cond (:bi/express-template? met)                          (fj/fail "Reducing called on express template fn." ),
            (:bi/express? met)                                   (reduce-express coll func init),
-           (not (core/<= 2 (-> met :bi/params count) 4))        (throw (ex-info "Reduce function must take 2 to 4 args." {}))
+           (not (core/<= 2 (-> met :bi/params count) 4))        (fj/fail "Reduce function must take 2 to 4 args.")
            (not init)                                           (reduce-typical coll func)
            :else                                                (reduce-typical (into (vector init) coll) func)))))
 
@@ -1515,21 +1537,21 @@
         (cond r r
               (empty? c) false
               :else (recur (rest c) (func (first c))))),
-      :else (throw (ex-info "$single expects a function of 1 to 3 parameters:"
-                            {:vars (-> func meta :bi/params)})))))
+      :else (fj/fail "$single expects a function of 1 to 3 parameters: %s" (-> func meta :bi/params)))))
 
 ;;;==========================================================================
 ;;;=================== Non-JSONata functions ================================
+#?(:clj
 (defn $read
   "Read a file of JSON or XML, creating a map."
   ([fname] ($read fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([fname opts]
    (let [type (-> (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname) second)]
      (-> (case (or (get opts "type") type "xml")
-           "json" (-> fname slurp json/read-str)
+           #?(:clj "json") #?(:clj (-> fname slurp json/read-str))
            "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-           "edn"  (-> fname slurp read-string qu/json-like))
-         set-context!))))
+           "edn"  (-> fname slurp util/read-str qu/json-like))
+         set-context!)))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -1564,6 +1586,7 @@
 
 ;;; ToDo: make this part of $read.
 ;;; $readSpreadsheet
+#?(:clj
 (defn $readSpreadsheet
   "Read the .xlsx and make a clojure map for each row. No fancy names, just :A,:B,:C,...!"
   ([filename sheet-name] ($readSpreadsheet filename sheet-name false))
@@ -1579,7 +1602,7 @@
                  (if invert?
                    (transpose-sheet raw)
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
-                   (rewrite-sheet-for-mapper raw)))))))
+                   (rewrite-sheet-for-mapper raw))))))))
 
 ;;;============================= Mapping Context, query, express ======================
 
@@ -1777,12 +1800,12 @@
   (letfn [(ppop! []      (swap! path #(if @found? % (-> % butlast vec))))
           (ppush! [step] (swap! path #(if @found? %      (conj % step))))
           (path-to-aux [vsb bod]
-            (try (cond @found?               (throw (Throwable.)) ; unwind.
-                       (sbind-eq vsb bod)    (do (reset! found? true) (throw (Throwable.)))
+            (try (cond @found?               (throw #?(:clj (Throwable.) :cljs js/Error)) ; unwind.
+                       (sbind-eq vsb bod)    (do (reset! found? true) (throw #?(:clj (Throwable.) :cljs js/Error)))
                        (map? bod)            (doseq [[k v] bod]
-                                                 (ppush! k) (path-to-aux vsb v) (ppop!)),
+                                               (ppush! k) (path-to-aux vsb v) (ppop!)),
                        (vector? bod)         (doseq [elem bod] (path-to-aux vsb elem)))
-                 (catch Throwable _e nil)))]
+                 (catch #?(:clj Throwable :cljs :default) _e nil)))]
     (path-to-aux vsb body)))
 
 (defn body&bset-ai-maps
@@ -1849,5 +1872,5 @@
   [mc schema-data db-name]
   (let [type (cond (-> mc :sources (contains? db-name)) :sources
                    (-> mc :targets (contains? db-name)) :targets
-                   :else (throw (ex-info "No such database:" {:db-name db-name})))]
+                   :else (fj/fail  "No such database: %s" db-name))]
     (update-in mc [type db-name] #(update-db % schema-data))))
