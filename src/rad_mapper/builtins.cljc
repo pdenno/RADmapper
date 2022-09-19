@@ -463,7 +463,7 @@
   ([s] ($eval s @$))
   ([s context]
    (s/assert ::string s)
-   (let [rewrite (ns-resolve 'rad-mapper.rewrite 'rewrite*)
+   (let [rewrite (ns-resolve 'rad-mapper.rewrite 'processRM)
          form (rewrite :ptag/exp s :rewrite? true)]
      (binding [*ns* (find-ns 'user)]
        (fj/try*

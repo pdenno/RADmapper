@@ -1,6 +1,6 @@
 (ns rad-mapper.rewrite
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
-   rewrite* is a top-level function for this."
+   processRM is a top-level function for this."
   (:require
    #?(:clj [clojure.java.io])
    [clojure.pprint      :refer [cl-format pprint]]
@@ -20,7 +20,7 @@
 (declare rewrite)
 (def diag (atom nil))
 
-(defn rewrite*
+(defn processRM
   "A top-level function for all phases of translation.
    parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it parses without debug output."
@@ -69,10 +69,6 @@
      (do (when *debugging?*
            (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
          result#))))
-
-(defn processRad
-  "For calls from javascript"
-  [& args] (apply rewrite* args))
 
 (defn success
   "To demonstrate debugging with browser"
@@ -199,7 +195,7 @@
 ;;; Below they are interleaved.
 (defrewrite :ObjExp [m]
   `(-> {}
-       ~@(map rewrite (:exp m))))
+       ~@(map rewrite (:kv-pairs m))))
 
 (defrewrite :ExpressMap [m]
   (reduce (fn [res kv-pair]

@@ -128,7 +128,7 @@
         :else (fj/fail "Toplevel is a primitive type?: %s" obj)))
 
 #?(:clj
-(def scott-result (rew/rewrite*
+(def scott-result (rew/processRM
                    :ptag/exp
                    (slurp "data/testing/map-examples/scott/shipped-item-instance-clean.json"))))
 

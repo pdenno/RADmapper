@@ -32,7 +32,7 @@
 ;;; ============ Tokenizer ===============================================================
 (def keywords #{"express" "false" "function" "query" "true"})
 
-(defn fn-maps [strs] (reduce (fn [r s] (assoc r s (symbol "bi" s))) (sorted-map) strs))
+(defn fn-maps [strs] (reduce (fn [r s] (assoc r s (symbol "bi" s))) {} strs))
 
 ;;; http://docs.jsonata.org/string-functions
 (def string-fns
@@ -78,7 +78,7 @@
 (s/def ::Field (s/keys :req-un [::field-name])) ; Used for fields (e.g. the a in $.a, and function params
 (s/def ::TripleRole (s/keys :req-un [::role-name]))
 (s/def ::Comment (s/keys :req-un [::text]))
-(s/def ::RegEx (s/keys :req-un [::base ::flags]))
+(s/def ::RegExp (s/keys :req-un [::base ::flags]))
 (def new-line "Platform's newline as a string" (with-out-str (newline)))
 
 (defn regex-from-string
@@ -109,7 +109,7 @@
                        (index-of flags \s) (assoc :dot-all? true)
                        (index-of flags \y) (assoc :sticky? true))]
         {:raw (str base flags)
-         :tkn {:typ :RegEx :base base :flags flag-map}}))))
+         :tkn {:typ :RegExp :base base :flags flag-map}}))))
 
 (defn regex-or-divide
   "Return as :tkn either an RegExp or a /.
@@ -453,9 +453,9 @@
          :local []
          :look {}
          :tokens []
-         :string-block #?(:clj "" :cljs reader-or-str) ; ToDo: CLJS parser doesn't read buffered. Can it?
+         :string-block ""
          :reader       #?(:clj reader-or-str :cljs nil)
-         :line-seq     #?(:clj (line-seq reader-or-str) :cljs nil)
+         :line-seq     (util/ln-seq reader-or-str)
          :call-count 0
          :cursor 1 ; what line you are on; used in tokenizing.
          :comments []} ?ps
@@ -546,11 +546,11 @@
 (defparse-auto :ptag/builtin-op builtin-op)
 (defparse-auto :ptag/builtin-fn builtin-fns)
 
-(defn jvar? [x]        (= (:typ x) :JVar))
+(defn jvar? [x]        (= (:typ x) :Jvar))
 (defn qvar? [x]        (= (:typ x) :Qvar))
 (defn triple-role? [x] (= (:typ x) :TripleRole))
 (defn field? [x]       (= (:typ x) :Field))
-(defn regex? [x]       (= (:typ x) :RegEx))
+(defn regex? [x]       (= (:typ x) :RegExp))
 (defn literal? [tkn]
   (or (string? tkn)
       (number? tkn)
@@ -686,8 +686,8 @@
   nil)
 ;;; ToDo: Verify that no distinction in syntax between reduce and obj construction.
 ;;;       Keep the distinction in structures created, however!
-(s/def ::ObjExp (s/keys :req-un [::operand ::kv-pairs]))
-(s/def ::ReduceExp (s/keys :req-un [::operand ::kv-pairs]))
+(s/def ::ReduceExp  (s/keys :req-un [::operand ::kv-pairs]))
+(s/def ::ObjExp     (s/keys :req-un [::kv-pairs]))
 (s/def ::ExpressMap (s/keys :req-un [::kv-pairs]))
 (defparse :ptag/obj-exp
   [ps]
@@ -695,14 +695,14 @@
     (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
     (if in-express?
       (assoc ?ps :result {:typ :ExpressMap :kv-pairs (:result ?ps)})
-      (assoc ?ps :result {:typ :ObjExp :operand {:exp (:result ?ps)}}))))
+      (assoc ?ps :result {:typ :ObjExp     :kv-pairs (:result ?ps)}))))
 
 ;;; <reduce-exp> ::= '{' <obj-kv-pair>* '}'
 (defparse :ptag/reduce-exp
   [ps]
   (as-> ps ?ps
-    (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand added in :ptag/delimited-exp
-    (assoc ?ps :result {:typ :ReduceExp :operand (:result ?ps)})))
+    (parse-list ?ps \{ \} \, :ptag/obj-kv-pair) ; Operand will be added in :ptag/delimited-exp
+    (assoc ?ps :result {:typ :ReduceExp :kv-pairs (:result ?ps)})))
 
 ;;; ToDo: Perhaps for express body, key could be any expression?
 ;;; <map-pair> ::=  ( <string> | <qvar> ) ":" <exp>

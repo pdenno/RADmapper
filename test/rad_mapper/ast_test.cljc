@@ -1,12 +1,10 @@
 (ns rad-mapper.ast-test
   (:require
    [clojure.test           :refer  [deftest is testing]]
-   #?(:clj
-      [datahike.api           :as d]
-      [datahike.pull-api      :as dp])
-   #?(:cljs
-      [datascript.core           :as d]
-      [datascript.pull-api      :as dp])
+   #?(:clj  [datahike.api           :as d])
+   #?(:clj  [datahike.pull-api      :as dp])
+   #?(:cljs [datascript.core           :as d])
+   #?(:cljs [datascript.pull-api      :as dp])
    [owl-db-tools.resolvers :refer [pull-resource]]
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]

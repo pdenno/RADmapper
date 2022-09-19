@@ -237,3 +237,11 @@
         (vector? m) (mapv sort-map m),
         (seq? m)    (map sort-map m),
         :else       m))
+
+(defn ln-seq
+  "Implement line-seq interoperable for JS-hosted use.
+   Pass-through to clojure.core/line-seq for Java-hosted."
+  [arg]
+  #?(:cljs
+    (seq (clojure.string/split-lines arg))
+    :clj (line-seq arg)))

@@ -42,7 +42,7 @@
           pprint? pprint))
 
 (defn nicer-sym
-  "Forms coming back from rew/rewrite* have symbols prefixed by clojure.core
+  "Forms coming back from rew/processRM have symbols prefixed by clojure.core
    and other namespaces. On the quoted form in testing, I'd rather not see this.
    This takes away those namespace prefixes."
   [form]
@@ -57,10 +57,10 @@
         (seq? obj) (map remove-meta obj)
         :else obj))
 
-(defn rew-rewrite*
-  "Return rewrite/rewrite* function."
+(defn rew-processRM
+  "Return rewrite/processRM function."
   []
-  (-> (symbol "rad-mapper.rewrite" "rewrite*") resolve))
+  (-> (symbol "rad-mapper.rewrite" "processRM") resolve))
 
 (def diag (atom nil))
 
@@ -69,7 +69,7 @@
    removes any metadata from value returned and its substructure."
   [exp & {:keys [rewrite? debug? debug-parse? keep-meta?]}]
   (let [execute? (not rewrite?)]
-    (cond->> ((rew-rewrite*)
+    (cond->> ((rew-processRM)
               :ptag/exp exp
               :rewrite? rewrite?
               :execute? execute?
@@ -82,13 +82,13 @@
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> ((rew-rewrite*) :ptag/exp exp :rewrite? true) remove-meta nicer-sym))
+  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) remove-meta nicer-sym))
 
 (defn examine [exp]
-  (-> ((rew-rewrite*) :ptag/exp exp :rewrite? true) nicer))
+  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) nicer))
 
 (defn examine- [exp]
-  (-> ((rew-rewrite*) :ptag/exp exp :rewrite? true) nicer-))
+  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) nicer-))
 
 (defmacro run-test
   "Print the test form using testing, run the test."

@@ -4,6 +4,7 @@
    #?(:clj [clojure.java.io :as io])
    [clojure.spec.alpha  :as s]
    [clojure.test :refer  [deftest is testing]]
+   [rad-mapper.devl.devl-util :refer [remove-meta]]
    [rad-mapper.parse    :as par]
    [rad-mapper.rewrite  :as rew]))
 
@@ -74,7 +75,7 @@
 
 (deftest regexp
   (testing "Testing translation of regular expression"
-    (is (= {:raw "/^abc\\d+$/", :tkn {:typ :RegEx, :base "/^abc\\d+$/", :flags {}}}
+    (is (= {:raw "/^abc\\d+$/", :tkn {:typ :RegExp, :base "/^abc\\d+$/", :flags {}}}
            (par/regex-from-string "/^abc\\d+$/")))))
 
 (deftest parse-structures
@@ -90,7 +91,7 @@
               {:typ :Field, :field-name "d"}
               bi/get-step
               {:typ :Field, :field-name "e"}]}
-           (rew/rewrite* :ptag/exp "a.b.c.d.e")))))
+           (rew/processRM :ptag/exp "a.b.c.d.e")))))
 
 (def q1
 "query(){[?class :rdf/type            'owl/Class']
@@ -112,12 +113,12 @@
             :ent {:typ :Qvar, :qvar-name "?x"},
             :rel {:typ :TripleRole, :role-name :rdf/type},
             :val-exp "owl/Class"}
-           (rew/rewrite* :ptag/q-pattern "[?x :rdf/type 'owl/Class']")))
+           (rew/processRM :ptag/q-pattern "[?x :rdf/type 'owl/Class']")))
     (is (= [{:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?x"},
              :rel {:typ :TripleRole, :role-name :a}, :val-exp "one"}
             {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?y"},
              :rel {:typ :TripleRole, :role-name :b}, :val-exp "two"}]
-           (rew/rewrite* :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
+           (rew/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
     (is (= {:typ :QueryDef,
             :params [],
             :triples
@@ -126,13 +127,13 @@
              {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?class"},
               :rel {:typ :TripleRole, :role-name :resource/iri},
               :val-exp {:typ :Qvar, :qvar-name "?class-iri"}}]}
-           (rew/rewrite* :ptag/exp q1)))))
+           (rew/processRM :ptag/exp q1)))))
 
 (deftest immediate-use
   (testing "Testing expressions that start by defining an in-line, anonymous function or query."
 
     ;; This tests parsing function as an immediate-use expression.
-    (rew/rewrite* :ptag/exp "function($x){$x+1}(3)")
+    (rew/processRM :ptag/exp "function($x){$x+1}(3)")
     (is (=  '{:typ :ImmediateUse,
               :def {:typ :FnDef,
                     :vars [{:typ :Jvar, :jvar-name "$x"}],
@@ -141,7 +142,7 @@
                                   :jvar-name "$x"}
                                  bi/+ 1]}},
               :args [3]}
-           (rew/rewrite* :ptag/exp "function($x){$x+1}(3)")))
+           (rew/processRM :ptag/exp "function($x){$x+1}(3)")))
 
     ;; This tests parsing query as an immediate-use expression.
     (is (= '{:typ :ImmediateUse,
@@ -152,10 +153,12 @@
                               :rel {:typ :TripleRole, :role-name :name},
                               :val-exp {:typ :Jvar, :jvar-name "$name"}}]},
              :args [{:typ :Array,
-                     :exprs [{:typ :ObjExp,
-                              :exp [{:typ :KVPair,
-                                     :key "name", :val "Bob"}]}]} "Bob"]}
-           (rew/rewrite* :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")))))
+                     :exprs [{:typ :ObjExp, :kv-pairs [{:typ :KVPair,
+                                                        :key "name",
+                                                        :val "Bob"}]}]} "Bob"]}
+           (->
+            (rew/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")
+            remove-meta)))))
 
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
 (s/def ::simplified-parse-structure (s/or :typical (s/keys :req-un [::typ])
@@ -164,7 +167,7 @@
                                           :keyword keyword?))
 
 (defn parse-ok? [exp]
-  (try (let [res (rew/rewrite* :ptag/exp exp)]
+  (try (let [res (rew/processRM :ptag/exp exp)]
          (s/valid? ::simplified-parse-structure res))
        (catch Exception _e false)))
 
@@ -243,7 +246,7 @@
     (testing "binary precedence and non-advancing context variable (2)."
       (is (parse-ok? "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)")))
 
-    (testing "'code-block' is just an expression" ; <========================== This one next.
+    (testing "'code-block' is just an expression"
       (is (parse-ok? "{'a' : 1, 'b' : 22}.($x := 2; $y:= 4; b)")))
 
     (testing "code-blocks allow closures"

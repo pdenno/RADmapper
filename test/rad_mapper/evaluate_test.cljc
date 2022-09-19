@@ -2,7 +2,7 @@
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
    [clojure.test        :refer  [deftest is testing]]
-   [rad-mapper.devl.devl-util :refer [run-test examine run]]))
+   [rad-mapper.devl.devl-util :refer [run-test examine run] :as dev]))
 
 (deftest today
   (run-test "[[1,2,3], 4].$[1]" 2)

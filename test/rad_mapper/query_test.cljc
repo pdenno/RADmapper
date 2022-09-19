@@ -3,13 +3,11 @@
    [clojure.pprint         :refer [pprint]]
    [clojure.test           :refer  [deftest is testing]]
    [clojure.walk]
-   #?(:clj
-      [datahike.api           :as d]
-      [datahike.pull-api      :as dp]
-      [owl-db-tools.resolvers :refer [pull-resource]])
-   #?(:cljs
-      [datascript.core :as d]
-      [datascript.pull-api :as dp])
+   #?(:clj [datahike.api           :as d])
+   #?(:clj [datahike.pull-api      :as dp])
+   #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
+   #?(:cljs [datascript.core :as d])
+   #?(:cljs [datascript.pull-api :as dp])
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
@@ -179,7 +177,7 @@
   (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
            :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
            :dol/feature :dol/time-interval}
-         (->> (rew/rewrite* :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
+         (->> (rew/processRM :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
                             "( $read('data/testing/dolce-2.edn');
                                $q := query(){[?class :rdf/type     'owl/Class']
                                              [?class :resource/iri  ?class-iri]};
@@ -290,10 +288,12 @@
 (def db-cfg
   {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
    :keep-history? false
-   :schema-flexibility :write})
+   :schema-flexibility :write}))
 
-(def conn (-> db-cfg d/connect deref))
+#?(:clj
+(def conn (-> db-cfg d/connect deref)))
 
+#?(:clj
 (def owl-test-data "the simplified objects used in the Draft OAGi Interoperable Mapping Specification example"
   (reduce (fn [res obj]
             (conj res (as-> (pull-resource obj conn) ?o
@@ -303,8 +303,7 @@
                           (contains? ?o :rdfs/range)      (update :rdfs/range first)
                           (contains? ?o :rdfs/subClassOf) (update :rdfs/subClassOf first)))))
           []
-          [:dol/endurant :dol/participant :dol/participant-in]))
-) ; :clj conditional
+          [:dol/endurant :dol/participant :dol/participant-in])))
 
 (comment
 (defn write-pretty-file
@@ -440,7 +439,7 @@
     ;; This tests making a new data source and use of a special.
     ;; I just check the type because the actual DB can't be tested for equality.
     (is (= datahike.db.DB
-           (do (rew/rewrite* :ptag/exp
+           (do (rew/processRM :ptag/exp
                              "($ := $newContext() ~> $addSource($read('data/testing/owl-example.edn'), 'owl-data');)"
                              :execute? true)
                (-> @bi/$ :sources (get "owl-data") type))))
@@ -472,6 +471,7 @@
 
 ;;;================================================================================================================
 ;;; "owl-db-tools is used only in development (See deps.edn.)  It is here mostly to ensure it has needed functionality."
+#?(:clj
 (deftest use-of-owl-db-tools-query
   (testing "owl-db-tools/pull-resource"
     (is (=
@@ -492,7 +492,7 @@
              (dissoc :rdfs/comment)
              str
              util/read-str
-             (update :rdfs/subClassOf set))))))
+             (update :rdfs/subClassOf set)))))))
 
 (def owl-full-express-extra
   "In this one, which is what I think should be in the spec, I'm not bothering with MCs."
