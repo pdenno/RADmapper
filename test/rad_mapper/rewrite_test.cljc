@@ -1,5 +1,5 @@
 (ns rad-mapper.rewrite-test
-  "Test the rewrite of parse trees. rew/rewrite* is a toplevel function"
+  "Test the rewrite of parse trees. rew/processRM is a toplevel function"
   (:require
    [clojure.test       :refer  [deftest is testing]]
    [rad-mapper.devl.devl-util :as devl :refer [examine examine-]]
@@ -16,12 +16,12 @@
 
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[0] translate correctly."
-    (is (= '[{:_type :JaArray, :exprs ["a" "b" "c"]}
+    (is (= '[{:typ :Array, :exprs ["a" "b" "c"]}
              bi/value-step
-             {:_type :JaValueStep, :body 1}]
-           (rew/rewrite-value-step [{:_type :JaArray, :exprs ["a" "b" "c"]}
+             {:typ :ValueStep, :body 1}]
+           (rew/rewrite-value-step [{:typ :Array, :exprs ["a" "b" "c"]}
                                     'bi/get-step
-                                    {:_type :JaApplyFilter, :body 1}])))))
+                                    {:typ :ApplyFilter, :body 1}])))))
 
 ;;; (not= #"abc" #"abc") so don't bother testing things containing regular expressions.
 (deftest simple
@@ -178,6 +178,6 @@
 (deftest options-map
   (testing "rewriting an options map"
     (is (= '{:asKeys [?ownerName ?systemName], :otherStuff true}
-           (rew/rewrite* :ptag/options-map "{asKeys     : [?ownerName, ?systemName],
+           (rew/processRM :ptag/options-map "{asKeys     : [?ownerName, ?systemName],
                                              otherStuff : true}"
                          :rewrite? true)))))

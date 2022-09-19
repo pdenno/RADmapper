@@ -3,8 +3,8 @@
   (:require
    [clojure.pprint :refer [pprint]]
    [clojure.test :refer [is testing]]
-   [datahike.api           :as d]
-   [datahike.pull-api      :as dp]))
+   #?(:clj   [datahike.pull-api      :as dp]
+      :cljs  [datascript.pull-api    :as dp])))
 
 ;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])
 
@@ -42,7 +42,7 @@
           pprint? pprint))
 
 (defn nicer-sym
-  "Forms coming back from rew/rewrite* have symbols prefixed by clojure.core
+  "Forms coming back from rew/processRM have symbols prefixed by clojure.core
    and other namespaces. On the quoted form in testing, I'd rather not see this.
    This takes away those namespace prefixes."
   [form]
@@ -57,21 +57,20 @@
         (seq? obj) (map remove-meta obj)
         :else obj))
 
-(defn rew-rewrite*
-  "Return rewrite/rewrite* function."
+(defn rew-processRM
+  "Return rewrite/processRM function."
   []
-  (-> (symbol "rad-mapper.rewrite" "rewrite*") resolve))
+  (-> (symbol "rad-mapper.rewrite" "processRM") resolve))
 
 (def diag (atom nil))
 
 (defn run
   "Run the exp through whatever steps are specified; defaults to :execute and
    removes any metadata from value returned and its substructure."
-  [exp & {:keys [simplify? rewrite? debug? debug-parse? keep-meta?]}]
-  (let [execute? (not (or simplify? rewrite?))]
-    (cond->> ((rew-rewrite*)
+  [exp & {:keys [rewrite? debug? debug-parse? keep-meta?]}]
+  (let [execute? (not rewrite?)]
+    (cond->> ((rew-processRM)
               :ptag/exp exp
-              :simplify? simplify?
               :rewrite? rewrite?
               :execute? execute?
               :debug? debug?
@@ -83,20 +82,19 @@
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> ((rew-rewrite*) :ptag/exp exp :rewrite? true) remove-meta nicer-sym))
+  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) remove-meta nicer-sym))
 
 (defn examine [exp]
-  (-> ((rew-rewrite*) :ptag/exp exp :rewrite? true) nicer))
+  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) nicer))
 
 (defn examine- [exp]
-  (-> ((rew-rewrite*) :ptag/exp exp :rewrite? true) nicer-))
+  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) nicer-))
 
 (defmacro run-test
   "Print the test form using testing, run the test."
-  [form-string expect & {:keys [simplify? rewrite? keep-meta? _debug? _debug-parse?]}]
+  [form-string expect & {:keys [rewrite? keep-meta? _debug? _debug-parse?]}]
   `(testing ~(str "\n(run \"" form-string "\")")
      (is (= ~expect (run ~form-string
-                      :simplify? ~simplify?
                       :rewrite? ~rewrite?
                       :keep-meta? ~keep-meta?)))))
 

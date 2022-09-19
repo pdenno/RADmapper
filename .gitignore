@@ -18,6 +18,13 @@ resources/database
 target
 .cpcache
 .clj-kondo/.cache
+
+node_modules/
+.shadow-cljs/
+node_modules/
+package-lock.json
+resources/public/js/
+
 data/schema
 data/testing/old
 data/testing/messages

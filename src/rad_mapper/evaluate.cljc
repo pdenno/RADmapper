@@ -3,6 +3,7 @@
   (:require
    [clojure.spec.alpha  :as s]
    [rad-mapper.builtins :as bi]
+   [rad-mapper.util     :as util]
    [taoensso.timbre     :as log]))
 
 ;;; ToDo: Consider Small Clojure Interpreter (SCI) for Clojure version.
@@ -20,10 +21,13 @@
   (binding [*ns* (find-ns 'user)]
     (try
       (bi/reset-env)
-      (let [res #_(eval form) (-> form str read-string eval)] ; ToDo: Investigate
+      (let [res #_(eval form) (-> form str util/read-str eval)] ; ToDo: Investigate
          (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
            (bi/jflatten (res))
            (bi/jflatten res)))
-      (catch Exception e
+      (catch #?(:clj Exception :cljs :default) e
         (reset! diag {:e e :form form})
-        (log/error "\nError evaluating form:" (-> e .getMessage str) "\nform:" form)))))
+        (log/error "\nError evaluating form:"
+                   #?(:clj (-> e .getMessage str) :cljs e)
+                   "\nform:"
+                   form)))))
