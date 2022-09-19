@@ -127,11 +127,12 @@
         (vector? obj)  (mapv #(assoc %   :table/toplevel-exp? true) obj)
         :else (fj/fail "Toplevel is a primitive type?: %s" obj)))
 
+#?(:clj
 (def scott-result (rew/rewrite*
-                   :ptag/exp "data/testing/map-examples/scott/shipped-item-instance-clean.json"
-                   :file? true
-                   :simplify? true))
+                   :ptag/exp
+                   (slurp "data/testing/map-examples/scott/shipped-item-instance-clean.json"))))
 
+#?(:clj
 (defn tryme-again
   []
   (-> scott-result
@@ -139,8 +140,9 @@
       mark-toplevel
       adjust-exp
       set-indexes
-      qu/db-for!))
+      qu/db-for!)))
 
+#(:clj
 (defn tryme-2
   []
   (-> scott-result
@@ -149,4 +151,4 @@
       adjust-exp
       set-indexes
       qu/learn-schema
-      #_qu/db-for!))
+      #_qu/db-for!)))

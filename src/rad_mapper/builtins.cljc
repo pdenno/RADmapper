@@ -458,6 +458,7 @@
   (url/url-encode s))
 
 ;;; $eval
+#?(:clj ; ToDo: CLJS doesn't have ns-resolve.
 (defn $eval
   ([s] ($eval s @$))
   ([s context]
@@ -470,7 +471,7 @@
          (let [res (eval form)]
            (if (and (fn? res) (core/= :bi/primary (-> res meta :bi/step-type)))
              (jflatten (res))
-             (jflatten res))))))))
+             (jflatten res)))))))))
 
 ;;; $join
 (defn $join
@@ -501,6 +502,10 @@
   ([s] (s/assert ::string s) (str/lower-case s)))
 
 ;;; $match
+#?(
+:cljs
+(defn $match [& args] false) ; ToDo: CLJS doesn't have re-matcher.
+:clj
 (defn $match
   "Applies the str string to the pattern regular expression and returns an array of objects,
    with each object containing information about each occurrence of a match withing str.
@@ -540,7 +545,7 @@
      (cond
        (empty? result) nil,
        (and (vector? result) (== 1 (count result))) (first result),
-       :else result))))
+       :else result)))))
 
 ;;; JSONata looks like it uses a matcher:
 ;;;       "Product thing" ~> /^Product/
@@ -552,6 +557,10 @@
 ;;;               "next": "<native function>#0"} <===============
 ;;;
 ;;; So I'm going to do something similar.
+#?(
+:cljs
+   (defn match-regex [& args] :nyi) ; ToDo: re-matcher differs in CLJS
+:clj
 (defn match-regex
   "Return the match object (map with bi/regex-result? true) for
    This is similar to $match only in as far as they both do matching on a regular expressions;
@@ -569,7 +578,7 @@
               "end"   (core/+ ix (count match))
               "groups" groups
               "next" matcher}
-             (with-meta {:bi/regex-result? true})))))))
+             (with-meta {:bi/regex-result? true}))))))))
 
 ;;; $pad
 (defn $pad
@@ -637,7 +646,7 @@
                       (try (let [repl (-> ($match res pattern) replacement)]
                             (str/replace-first res pattern repl))
                           ;; ToDo: Need a better way! See last test of $replace in builtins_test.clj
-                          (catch Exception _e res)))
+                          (catch #?(:clj Exception :cljs :default) _e res)))
                    s
                    (if (core/= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
            :else (fj/fail "Replacement pattern must be a string or function: %s" replacement)))))
@@ -819,6 +828,7 @@
 ;;;  (3) For example, "'#'#" formats 123 to "#123". To create a single quote itself, use two in a row: "# o''clock".
 
 ;;; $formatNumber
+#?(:clj
 (defn $formatNumber
   "Casts the number to a string and formats it to a decimal representation as specified by the picture string.
 
@@ -844,11 +854,12 @@
         (case k ; ToDo: More of these.
           :per-mille (.setMultiplier df 1000)
           nil))
-    (.format df number))))
+    (.format df number)))))
 
 ;;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
 
 ;;; $formatInteger
+#?(:clj   ; ToDo: Calls $formatNumber, which is :clj-only so far.
 (defn $formatInteger
   "Casts the number to a string and formats it to an integer representation as specified by the picture string.
    The behaviour of this function is consistent with the two-argument version of the XPath/XQuery function
@@ -871,7 +882,7 @@
                  nil)]
     (cond (and simple (#{"A" "a" "i" "I"} pic) (neg? num)), (str "-" simple)
           simple  simple
-          :else ($formatNumber num pic))))
+          :else ($formatNumber num pic)))))
 
 ;;; $number
 (defn $number
@@ -881,7 +892,7 @@
     All other values cause an error to be thrown."
   [v_]
   (cond (number? v_) v_
-        (string? v_) (let [n (read-string v_)]
+        (string? v_) (let [n (util/read-str v_)]
                       (if (number? n)
                         n
                         (fj/fail "Cannot be cast to a number: %s" v_)))
@@ -1539,7 +1550,7 @@
      (-> (case (or (get opts "type") type "xml")
            #?(:clj "json") #?(:clj (-> fname slurp json/read-str))
            "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-           "edn"  (-> fname slurp read-string qu/json-like))
+           "edn"  (-> fname slurp util/read-str qu/json-like))
          set-context!)))))
 
 (defn rewrite-sheet-for-mapper
@@ -1789,12 +1800,12 @@
   (letfn [(ppop! []      (swap! path #(if @found? % (-> % butlast vec))))
           (ppush! [step] (swap! path #(if @found? %      (conj % step))))
           (path-to-aux [vsb bod]
-            (try (cond @found?               (throw (Throwable.)) ; unwind.
-                       (sbind-eq vsb bod)    (do (reset! found? true) (throw (Throwable.)))
+            (try (cond @found?               (throw #?(:clj (Throwable.) :cljs js/Error)) ; unwind.
+                       (sbind-eq vsb bod)    (do (reset! found? true) (throw #?(:clj (Throwable.) :cljs js/Error)))
                        (map? bod)            (doseq [[k v] bod]
                                                (ppush! k) (path-to-aux vsb v) (ppop!)),
                        (vector? bod)         (doseq [elem bod] (path-to-aux vsb elem)))
-                 (catch Throwable _e nil)))]
+                 (catch #?(:clj Throwable :cljs :default) _e nil)))]
     (path-to-aux vsb body)))
 
 (defn body&bset-ai-maps

@@ -13,6 +13,7 @@
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
+   [rad-mapper.util        :as util]
    [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]
    [failjure.core :as fj]))
 
@@ -38,12 +39,13 @@
 
 ;;; ToDo: Dissoc is temporary; boxing.
 ;;; dolce-1.edn is both :owl/Class and :owl/ObjectProperty.
+#?(:clj
 (def dolce-test-data
   "Get maps of everything in the DOLCE (dol) namespace. "
   (->> "data/testing/dolce-1.edn"
        slurp
-       read-string
-       (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass))))
+       util/read-str
+       (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass)))))
 
 #?(:clj
 (deftest db-for-tests-1
@@ -489,7 +491,7 @@
          (-> (pull-resource :dol/perdurant conn)
              (dissoc :rdfs/comment)
              str
-             read-string
+             util/read-str
              (update :rdfs/subClassOf set))))))
 
 (def owl-full-express-extra

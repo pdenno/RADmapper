@@ -67,11 +67,10 @@
 (defn run
   "Run the exp through whatever steps are specified; defaults to :execute and
    removes any metadata from value returned and its substructure."
-  [exp & {:keys [simplify? rewrite? debug? debug-parse? keep-meta?]}]
-  (let [execute? (not (or simplify? rewrite?))]
+  [exp & {:keys [rewrite? debug? debug-parse? keep-meta?]}]
+  (let [execute? (not rewrite?)]
     (cond->> ((rew-rewrite*)
               :ptag/exp exp
-              :simplify? simplify?
               :rewrite? rewrite?
               :execute? execute?
               :debug? debug?
@@ -93,10 +92,9 @@
 
 (defmacro run-test
   "Print the test form using testing, run the test."
-  [form-string expect & {:keys [simplify? rewrite? keep-meta? _debug? _debug-parse?]}]
+  [form-string expect & {:keys [rewrite? keep-meta? _debug? _debug-parse?]}]
   `(testing ~(str "\n(run \"" form-string "\")")
      (is (= ~expect (run ~form-string
-                      :simplify? ~simplify?
                       :rewrite? ~rewrite?
                       :keep-meta? ~keep-meta?)))))
 

@@ -2,6 +2,7 @@
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    rewrite* is a top-level function for this."
   (:require
+   #?(:clj [clojure.java.io])
    [clojure.pprint      :refer [cl-format pprint]]
    [clojure.set         :as set]
    [clojure.spec.alpha  :as s]
@@ -16,39 +17,41 @@
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
 (def locals (atom [{}]))
-(declare map-simplify rewrite)
+(declare rewrite)
 (def diag (atom nil))
 
 (defn rewrite*
   "A top-level function for all phases of translation.
-   parse-string, simplify, rewrite and execute, but with controls for partial evaluation, debugging etc.
-   With no opts it rewrites without debug output."
-  [tag str & {:keys [simplify? rewrite? execute? file? debug? debug-parse? skip-top? verbose?] :as opts}]
-  simplify? rewrite? ; ToDo Avoid Kondo warning
+   parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
+   With no opts it parses without debug output."
+  [tag str & {:keys [execute? debug? debug-parse? skip-top? verbose?] :as opts}]
   (let [kopts (-> opts keys set)
-        simplify? (not-empty (set/intersection #{:rewrite? :simplify? :execute?} kopts))
-        rewrite?  (not-empty (set/intersection #{:rewrite? :execute?} kopts))]
+        rewrite?  (not-empty (set/intersection #{:rewrite? :execute?} kopts))
+        ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
     (binding [*debugging?* debug?
               par/*debugging?* debug-parse?]
       (if (or *debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
-      (let [ps (with-open [rdr #?(:clj  (clojure.java.io/reader (if file? str (char-array str)))
-                                  :cljs str)] ; ToDo: Needs work
-                 (as-> (par/make-pstate rdr) ?ps
-                   (par/parse tag ?ps)
-                   (dissoc ?ps :line-seq) ; dissoc so you can print it.
-                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))))]
-        (if (= :ok (:parse-status ps))
-          (as-> (:result ps) ?r
-            (if simplify? (map-simplify ?r) ?r)
-            (if rewrite?
-              (->> (if skip-top? ?r {:_type :toplevel :top ?r}) rewrite)
-              ?r)
-            (if execute? (ev/user-eval ?r :verbose? verbose?) ?r)
-            (if (:rewrite-error? ?r)
-              (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
-              ?r))
-          (case (:parse-status ps)
-            :premature-end (log/error "Parse ended prematurely")))))))
+      #?(:clj (with-open [rdr (-> str char-array clojure.java.io/reader)]
+                (as-> (par/make-pstate rdr) ?ps
+                  (par/parse tag ?ps)
+                  (dissoc ?ps :line-seq) ; dissoc so you can print it.
+                  (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                  (reset! ps-atm ?ps)))
+         :cljs (as-> (par/make-pstate str) ?ps
+                 (par/parse tag ?ps)
+                 (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                 (reset! ps-atm ?ps)))
+      (if (= :ok (:parse-status @ps-atm))
+        (as-> (:result @ps-atm) ?r
+          (if rewrite?
+            (->> (if skip-top? ?r {:typ :toplevel :top ?r}) rewrite)
+            ?r)
+          (if execute? (ev/user-eval ?r :verbose? verbose?) ?r)
+          (if (:rewrite-error? ?r)
+            (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
+            ?r))
+        (case (:parse-status @ps-atm)
+          :premature-end (log/error "Parse ended prematurely"))))))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
@@ -77,25 +80,14 @@
   "<h1>Success!</h1>")
 
 (defn type? [obj type]
-  (cond (keyword? type) (= (:_type obj) type)
-        (set? type) (-> obj :_type type)
-        (map? type) (-> obj :_type type)))
+  (cond (keyword? type) (= (:typ obj) type)
+        (set? type) (-> obj :typ type)
+        (map? type) (-> obj :typ type)))
 
 (defn remove-nils
   "Remove map values that are nil."
   [m]
   (reduce-kv (fn [m k v] (if (= nil v) m (assoc m k v))) {} m))
-
-(defn map-simplify
-  "Recursively traverse the map structures changing records to maps,
-   removing nil map values, and adding :_type value named after the record."
-  [m]
-  (cond (record? m) (-> {:_type (-> m .getClass .getSimpleName keyword)}
-                        (into (zipmap (keys m) (map map-simplify (vals m))))
-                        remove-nils),
-        (map? m) m,
-        (coll? m) (mapv map-simplify m),
-        :else m))
 
 (defn rewrite-dispatch [tag _ & _] tag)
 
@@ -107,7 +99,7 @@
   {})
 
 (defn rewrite [obj & keys]
-  (cond (map? obj)                  (if-let [typ (:_type obj)] (rewrite-meth typ obj keys) obj)
+  (cond (map? obj)                  (if-let [typ (:typ obj)] (rewrite-meth typ obj keys) obj)
         (seq? obj)                  obj #_(map  rewrite obj) ; ToDo: review this. I think I might be able to just return it.
         (vector? obj)               (mapv rewrite obj)
         (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords and chars correspond to operators.
@@ -119,17 +111,16 @@
         (= obj true)                true
         (= obj false)               false
         (nil? obj)                  obj                    ; for optional things like (-> m :where rewrite)
-        #_#_(= java.util.regex.Pattern (type obj)) obj
         :else
         (fj/fail "Don't know how to rewrite obj: %s" obj)))
 
 (defrewrite :toplevel [m] (->> m :top rewrite))
 
 (def ^:dynamic *assume-json-data?* false)
-(def ^:dynamic *inside-let?*  "let is implemented in JaPrimary" false)
+(def ^:dynamic *inside-let?*  "let is implemented in Primary" false)
 
 ;;; These are (<var> <init>) that are mapcat into a let.
-(defrewrite :JaJvarDecl [m]
+(defrewrite :JvarDecl [m]
   (reset-dgensym!)
   (letfn [(name-exp-pair [x]
             (binding [*assume-json-data?* true] ; This is for bi/jflatten, Rule 3.
@@ -146,9 +137,7 @@
       `(let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no primary.
          ~(-> m :var rewrite)))))
 
-{:_type :JaJvarDecl, :var {:_type :JaJvar, :jvar-name "$var"}, :init-val 3}
-
-(defrewrite :JaJvar  [m]
+(defrewrite :Jvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
         '(bi/deref$)
         (and (:special? m) (= "$$" (:jvar-name m)))
@@ -163,12 +152,12 @@
   "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than inside-delim?
   false)
 
-(defrewrite :JaField [m]
+(defrewrite :Field [m]
   (cond inside-delim? (:field-name m),
         inside-step?  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than inside-delim?
         :else `(~'bi/get-step  ~(:field-name m))))
 
-(defrewrite :JaQvar [m]
+(defrewrite :Qvar [m]
   (-> m :qvar-name symbol (with-meta {:qvar? true})))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
@@ -200,28 +189,28 @@
       (re-pattern (cl-format nil "~A" body))
       (re-pattern (cl-format nil "(?~A)~A" flag-str body)))))
 
-(defrewrite :JaExpressDef [m]
+(defrewrite :ExpressDef [m]
   (let [p (-> m :params rewrite)]
     `(~'bi/express {:params   '~(remove map? p)
                     :options  ' ~(some #(when (map? %) %) p)
                     :body '~(-> m :body rewrite)})))
 
-;;; JaExpressBody is like an JaObjExp (map) but not rewritten as one.
+;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below they are interleaved.
-(defrewrite :JaObjExp [m]
+(defrewrite :ObjExp [m]
   `(-> {}
        ~@(map rewrite (:exp m))))
 
-(defrewrite :JaExpressMap [m]
+(defrewrite :ExpressMap [m]
   (reduce (fn [res kv-pair]
             (assoc res (-> kv-pair :key rewrite) (-> kv-pair :val rewrite)))
           {}
           (:kv-pairs m)))
 
-(defrewrite :JaKVPair [m]
+(defrewrite :KVPair [m]
   `(assoc ~(rewrite (:key m)) ~(rewrite (:val m))))
 
-(defrewrite :JaExpressKVPair [m]
+(defrewrite :ExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))
 
 (def ^:dynamic in-regex-fn?
@@ -229,75 +218,75 @@
    the regex as a clojure regex, not a function, as used in 'str' ~> /pattern/."
   false)
 
-(defrewrite :JaFnCall [m]
+(defrewrite :FnCall [m]
   (let [fname (-> m :fn-name)]
     (if (par/builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
       (binding [in-regex-fn? (#{"$match" "$split" "$contains" "$replace"} fname)]
         `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
       `(~(symbol fname) ~@(-> m :args rewrite)))))
 
-(defrewrite :JaRegExp [m]
+(defrewrite :RegExp [m]
     (if in-regex-fn?
       (make-regex (:base m) (:flags m))
       (let [s (dgensym!)]
         `(fn [~s] (bi/match-regex ~s ~(make-regex (:base m) (:flags m)))))))
 
-(defrewrite :JaUniOpExp [m]
+(defrewrite :UniOpExp [m]
   `(~(-> m :uni-op str symbol)
     ~(-> m :exp rewrite)))
 
-(defrewrite :JaRangeExp [m]
+(defrewrite :RangeExp [m]
   `(-> (range ~(rewrite (:start m)) (inc ~(rewrite (:stop m)))) vec))
 
-(defrewrite :JaArray [m]
+(defrewrite :Array [m]
   (if *assume-json-data?*
     `(with-meta
        ~(mapv rewrite (:exprs m))
        {:bi/json-array? true})
     (mapv rewrite (:exprs m))))
 
-(defrewrite :JaQueryDef [m]
+(defrewrite :QueryDef [m]
   `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:triples m))))
 
-(defrewrite :JaQueryTriple [m]
+(defrewrite :QueryTriple [m]
   `[~(rewrite (:ent m))
     ~(rewrite (:rel m))
     ~(rewrite (:val-exp m))])
 
-(defrewrite :JaQueryPred [m]
+(defrewrite :QueryPred [m]
   `[~(rewrite (:exp m))])
 
 ;;; This puts metadata on the function form for use by $map, $filter, $reduce, etc.
 ;;; User functions also translate using this, but don't use the metadata.
-(defrewrite :JaFnDef [m]
+(defrewrite :FnDef [m]
   (let [vars (mapv #(-> % :jvar-name symbol) (:vars m))
         body (-> m :body rewrite)]
     `(with-meta (fn ~(mapv rewrite (:vars m)) ~body)
       {:bi/params '~vars :bi/type :bi/user-fn})))
 
-(defrewrite :JaTripleRole [m] (:role-name m))
+(defrewrite :TripleRole [m] (:role-name m))
 
-(defrewrite :JaImmediateUse [m]
+(defrewrite :ImmediateUse [m]
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
 ;;; See rewrite-thread-immediate for how this came to be.
-(defrewrite :JaThreadRHSfn [m]
+(defrewrite :ThreadRHSfn [m]
   `(~@(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
 ;;; See rewrite-thread-immediate for how this came to be.
 ;;; This one transform a function call into a function.
-(defrewrite :JaThreadRHSfn-call [m]
+(defrewrite :ThreadRHSfn-call [m]
   (reset-dgensym!) ; For debugging, start at _x1
   (let [xtra-arg (dgensym!)
-        [fname & args] (-> m (assoc :_type :JaFnCall) rewrite)]
+        [fname & args] (-> m (assoc :typ :FnCall) rewrite)]
     `(fn [~xtra-arg] (~fname ~xtra-arg ~@args))))
 
-(defrewrite :JaConditionalExp [m]
+(defrewrite :ConditionalExp [m]
   `(if ~(-> m :predicate rewrite)
     ~(-> m :exp1 rewrite)
     ~(-> m :exp2 rewrite)))
 
-(defrewrite :JaOptionsMap [m]
+(defrewrite :OptionsMap [m]
   (reduce (fn [res pair]
             (assoc res (-> pair :key keyword) (-> pair :val rewrite)))
           {}
@@ -308,10 +297,10 @@
 (declare rewrite-bvec-as-sexp precedence op-precedence-tbl)
 
 (defn rewrite-value-step
-  "Wherever the sequence (:JaArray |  :JaObjExp), :bi/get-step, :JaApplyFilter appears,
+  "Wherever the sequence (:Array |  :ObjExp), :bi/get-step, :ApplyFilter appears,
    it indicates a quirk in parsing of things like [1,2,3].[0] which in execution
-   should just return a [0] for each of [1,2,3]. Since that isn't a :JaApplyFilter
-   at all, we need to rewrite it (as a :JaValueMap)."
+   should just return a [0] for each of [1,2,3]. Since that isn't a :ApplyFilter
+   at all, we need to rewrite it (as a :ValueMap)."
   [s]
   (loop [res []
          svals s]
@@ -319,22 +308,22 @@
           [p1 p2 p3] triple
           len (count triple)]
       (cond (< len 3) (into res triple)
-            (and (map? p1) (#{:JaArray :JaObjExp} (:_type p1))
+            (and (map? p1) (#{:Array :ObjExp} (:typ p1))
                  (= 'bi/get-step p2)
-                 (map? p3) (= :JaApplyFilter (:_type p3)))
+                 (map? p3) (= :ApplyFilter (:typ p3)))
             (recur (into res (vector p1
                                      'bi/value-step
-                                     {:_type :JaValueStep :body (:body p3)}))
+                                     {:typ :ValueStep :body (:body p3)}))
                    (->> svals (drop 3) vec))
             :else (recur (conj res p1)
                          (-> svals rest vec))))))
 
 (defn rewrite-thread-immediate
-  "Wherever the sequence <whatever> bi/thread JaImmediateUse appears,
+  "Wherever the sequence <whatever> bi/thread ImmediateUse appears,
    it indicates a quirk in parsing things like 4 ~> function($x){$x+1}()
-   where rewriting as a JaImmediateUse is incorrect; the RHS operator
+   where rewriting as a ImmediateUse is incorrect; the RHS operator
    needs to be preserved as a function def, not executed. This does
-   that by changing by replacing the JaImmediate use with a JaThreadRHS."
+   that by changing by replacing the Immediate use with a ThreadRHS."
   [s]
   (loop [res []
          svals s]
@@ -343,19 +332,19 @@
           len (count triple)]
       (cond (< len 3) (into res triple)
             (and (= 'bi/thread p2)
-                 (map? p3) (#{:JaImmediateUse :JaFnCall} (:_type p3)))
+                 (map? p3) (#{:ImmediateUse :FnCall} (:typ p3)))
             (recur (into res (vector p1
                                      'bi/thread
-                                     (case (:_type p3)
-                                       :JaImmediateUse (assoc p3 :_type :JaThreadRHSfn)
-                                       :JaFnCall       (assoc p3 :_type :JaThreadRHSfn-call))))
+                                     (case (:typ p3)
+                                       :ImmediateUse (assoc p3 :typ :ThreadRHSfn)
+                                       :FnCall       (assoc p3 :typ :ThreadRHSfn-call))))
                    (->> svals (drop 3) vec))
             :else (recur (conj res p1)
                          (-> svals rest vec))))))
 
 ;;; Filter path elements (at least(?) -- maybe map and reduce too) consist of a field path element
 ;;; followed by the body enclosed in the delimiters; the two are not separate path elements.
-(defrewrite :JaBinOpSeq [m]
+(defrewrite :BinOpSeq [m]
   (->> m
        :seq
        rewrite-value-step
@@ -377,8 +366,8 @@
     (into (-> (wrap-form? (first forms) 'bi/init-step) vector)
           (map #(wrap-form? % 'bi/map-step) (rest forms)))))
 
-;;; JaPath are created in gather-steps.
-(defrewrite :JaPath [m]
+;;; Path are created in gather-steps.
+(defrewrite :Path [m]
   `(bi/run-steps
     ~@(binding [inside-step? false
                 inside-delim? false]
@@ -388,19 +377,19 @@
              (map rewrite)
              wrap-non-path))))
 
-;;; Where any of the :exps are JaJvarDecl, they need to wrap the things that follow in a let.
+;;; Where any of the :exps are JvarDecl, they need to wrap the things that follow in a let.
 ;;; Essentially, this turns a sequence into a tree.
-(defrewrite :JaPrimary [m]
+(defrewrite :Primary [m]
   (binding [inside-step? true]
-    (let [segs (util/split-by (complement #(= :JaJvarDecl (:_type %))) (:exps m)) ; split a let
+    (let [segs (util/split-by (complement #(= :JvarDecl (:typ %))) (:exps m)) ; split a let
           map-vec (loop [segs segs
                          res []]
                     (if (empty? segs) res
                         (let [seg (first segs)
-                              new-forms (if (= :JaJvarDecl (-> seg first :_type))
+                              new-forms (if (= :JvarDecl (-> seg first :typ))
                                           (reduce (fn [r form]
                                                     (binding [*inside-let?* true]
-                                                      (if (= :JaJvarDecl (:_type form))
+                                                      (if (= :JvarDecl (:typ form))
                                                         (update r :r/bindings conj (rewrite form))
                                                         (update r :r/body conj (rewrite form)))))
                                                   {:r/bindings [] :r/body []}
@@ -424,18 +413,18 @@
                  (== 1 (-> res :r/body count))  (-> res :r/body first rew)
                  :else                         `(do ~@(rew (:r/body res)))))))))
 
-(defrewrite :JaApplyFilter [m]
+(defrewrite :ApplyFilter [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
         body (binding [inside-step? true] (-> m :body rewrite))]
     `(bi/filter-step
       (fn [~sym] (bi/with-context ~sym ~body)))))
 
-(defrewrite :JaValueStep [m]
+(defrewrite :ValueStep [m]
   (let [body (binding [inside-step? true] (-> m :body rewrite))]
     `(bi/value-step ~body)))
 
-(defrewrite :JaApplyReduce [m]
+(defrewrite :ApplyReduce [m]
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
     `(bi/reduce-step
@@ -460,7 +449,7 @@
 
 ;;; Note: If support of filter-step non-compositional semantics is still "a thing" this is the place to fix it.
 (defn gather-steps ; ToDo: Should :reduce-step really be :path?=true ?
-  "Step through the bvec and collect segments that include :path?=true operators/operands into JaPath objects.
+  "Step through the bvec and collect segments that include :path?=true operators/operands into Path objects.
    The :path?=true things are bi/get-step, bi/filter-step, bi/reduce-step, bi/primary."
   [bvec]
   (loop [bv bvec
@@ -482,14 +471,14 @@
                                     (do (swap! consumed #(+ % 3))
                                         (recur (drop 3 bv2)
                                                (conj (conj path (first bv2))
-                                                     {:_type :JaValueStep
+                                                     {:typ :ValueStep
                                                       :body (:body (nth bv2 2))})))
                                     :else
                                     (do (swap! consumed inc)
                                         (recur (drop 1 bv2)
                                                (conj path (first bv2))))))]
               (recur (drop @consumed bv)
-                     (conj actual (rewrite {:_type :JaPath :path collected}))))
+                     (conj actual (rewrite {:typ :Path :path collected}))))
             :else
             (recur (drop 1 bv)
                    (conj res (first bv)))))))
@@ -559,7 +548,7 @@
                       (range (count args))))))
 
 (defn rewrite-bvec-as-sexp
-  "Process the :seq of a JaBinOpSeq a sexp conforming to
+  "Process the :seq of a BinOpSeq a sexp conforming to
     (1) precedence rules (which are only a concern in languages that have C-language-like syntax).
     (2) lisp-like operator before operand ordering (which is a concern for all).
   The result can have embedded un-rewritten stuff in it; that will be rewritten later."

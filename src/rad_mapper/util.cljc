@@ -1,13 +1,33 @@
 (ns rad-mapper.util
   (:require
    [cemerick.url                 :as url]
-   [clojure.data.xml             :as x]
+   #?(:clj  [clojure.data.xml    :as x]) ; ToDo: Investigate. Not cljs version?
+   #?(:cljs [cljs.reader]) ; ToDo: Investigate. Not cljs version?
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
-   [clojure.walk                 :as walk]
+   [clojure.walk                 :as walk :refer [postwalk]]
    [failjure.core                :as fj]
    [taoensso.timbre              :as log]))
 
+;;; ================== CLJ/CLJS Interop =========================
+(defn regex? [o]
+  #?(:clj  (instance? java.util.regex.Pattern o)
+     :cljs (instance? js/RegExp o)))
+
+(defn read-str [s]
+  #?(:clj  (read-string s)
+     :cljs (cljs.reader/read-string s)))
+
+#?(
+:clj
+   (defn db-atm? [o]
+     (and (instance? clojure.lang.Atom o)
+          (instance? datahike.db.DB @o)))
+:cljs
+   (defn db-atm? [_o] true) ; ToDo: Implement this.
+)
+
+;;; ================== Ordinary Utils =========================
 (defn no-host&time-output-fn
   "I don't want :hostname_ and :timestamp_ in the log output."
   ([data]       (taoensso.timbre/default-output-fn nil  (dissoc data :hostname_ :timestamp_)))
@@ -60,6 +80,7 @@
         (assoc-in ?ns1 [:u->ps "http://www.w3.org/2001/XMLSchema"] ["xsd"]))
       ?ns)))
 
+#?(:clj
 (defn alienate-xml
   "Replace namespaced xml map keywords with their aliases."
   [xml]
@@ -72,17 +93,17 @@
                       (keyword alias-name  local-name)
                       (keyword ns-name     local-name)))
                   tag)))]
-      (walk/postwalk
+      (postwalk
        (fn [obj]
          (if (and (map? obj) (contains? obj :tag))
            (update obj :tag equivalent-tag)
            obj))
-       xml))))
+       xml)))))
 
 (defn clean-whitespace
   "Remove whitespace in element :content."
   [xml]
-  (walk/postwalk
+  (postwalk
    (fn [obj]
      (if (and (map? obj) (contains? obj :content))
        (if (= 1 (count (:content obj))) ;; ToDo Maybe don't remove it if is the only content?
@@ -137,7 +158,7 @@
   [obj]
   (cond
     (not (or (map? obj) (vector? obj)))
-    (if (number-str? obj) (read-string obj) obj)
+    (if (number-str? obj) (read-str obj) obj)
     (vector? obj) (mapv simplify-xml obj)
     (map? obj) (as-> {} ?r
                  (assoc ?r (trans-tag (:xml/tag obj)) (simplify-xml (:xml/content obj)))
@@ -180,16 +201,9 @@
   [obj]
   (->> obj type str (re-matches #"^.+\.(.*)$") second keyword))
 
-;;; Preparing for .cljc
-(defn regex? [o] (= java.util.regex.Pattern (type o)))
-
 (def ^:private num-map "A map indexed by strings with values being the number the string represents."
   (let [nvec (into (range 1 20) (map #(* 10 %) (range 2 10)))]
     (zipmap (map #(cl-format nil "~r" %) nvec) nvec)))
-
-(defn db-atm? [o]
-  (and (= clojure.lang.Atom (type o))
-       #?(:clj (= datahike.db.DB (type @o))))) ; ToDo: FIX THIS!
 
 (def ^:private num-word (-> num-map keys set))
 
