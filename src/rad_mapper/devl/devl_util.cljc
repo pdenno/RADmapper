@@ -6,8 +6,6 @@
    #?(:clj   [datahike.pull-api      :as dp]
       :cljs  [datascript.pull-api    :as dp])))
 
-;;; (require '[rad-mapper.devl.devl-util :refer [nicer]])
-
 (defn clean-form
   "Replace some namespaces with aliases"
   [form]

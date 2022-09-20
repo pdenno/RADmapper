@@ -33,7 +33,7 @@
               java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
               java.time.ZoneId
               java.time.ZoneOffset))
-  #?(:cljs (:require-macros [rad-mapper.builtins :refer [defn* defn$ thread value-step primary init-step map-step]])))
+  #?(:cljs (:require-macros [rad-mapper.builtins :refer [defn* defn$]])))
 
 ;;; ToDo:
 ;;;  * Consider Small Clojure Interpreter (SCI) for Clojure version.
@@ -44,10 +44,17 @@
 
 (declare aref)
 
+#?(:clj
 (defmacro with-context
   "Dynamically bind $ to the value provided."
   [val & body]
-  `(binding [$ (atom ~val)] ~@body))
+  `(binding [$ (atom ~val)] ~@body)))
+
+#?(:cljs
+(def ^:sci/macro with-context
+  "Dynamically bind $ to the value provided."
+  (fn [val & body] `(binding [$ (atom ~val)] ~@body))))
+
 
 (defn set-context!
   "Set the JSONata context variable to the argument. If the root context has not
@@ -231,6 +238,7 @@
   [x y]
   (core/= (jflatten x) (jflatten y)))
 
+#?(:clj
 (defmacro thread
   "The function chaining operator is used in the situations where multiple nested functions need to
    be applied to a value, while making it easy to read. The value on the LHS is evaluated,
@@ -244,7 +252,18 @@
            (if (fn? yarg#)
              (yarg# xarg#)
              (throw (ex-info "The RHS argument to the threading operator is not a function."
-                             {:rhs-operator yarg#})))))))
+                             {:rhs-operator yarg#}))))))))
+
+#?(:cljs
+(def ^:sci/macro thread
+  (fn [x y]
+    `(let [xarg# ~x]
+       (do (set-context! xarg#)
+           (let [yarg# ~y]
+             (if (fn? yarg#)
+               (yarg# xarg#)
+               (throw (ex-info "The RHS argument to the threading operator is not a function."
+                               {:rhs-operator yarg#})))))))))
 
 ;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
@@ -326,6 +345,7 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
+#?(:clj
 (defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
@@ -336,32 +356,66 @@
          (if (vector? x#)
            (->> (mapv func# x#) (mapv vector))
            (vector (func# x#)))))
-     (with-meta {:bi/step-type :bi/value-step})))
+     (with-meta {:bi/step-type :bi/value-step}))))
+
+#?(:cljs
+(def ^:sci/macro value-step
+  (fn [body]
+    `(->
+      (fn ~'value-step [x#]
+        (let [func# (fn [y#] (binding [$ (atom y#)] ~body))]
+          (if (vector? x#)
+            (->> (mapv func# x#) (mapv vector))
+            (vector (func# x#)))))
+      (with-meta {:bi/step-type :bi/value-step})))))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
   ([k] (get-scoped @$ k))
   ([obj k] (get obj k)))
 
+#?(:clj
 (defmacro primary
   "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
    the context atom and runs the body."
   [body]
   `(-> (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
-       (with-meta {:bi/step-type :bi/primary})))
+       (with-meta {:bi/step-type :bi/primary}))))
 
+#?(:cljs
+(def ^:sci/macro primary
+  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
+   the context atom and runs the body."
+  (fn [body]
+    `(-> (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
+         (with-meta {:bi/step-type :bi/primary})))))
+
+#?(:clj
 (defmacro init-step
   "All the arguments of bi/run-steps are functions. This one just runs the argument body,
    which might construct a literal value, be a literal value, or call a function."
   [body]
   `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/init-step})))
+       (with-meta {:bi/step-type :bi/init-step}))))
 
+#?(:cljs
+(def ^:sci/macro init-step
+  (fn [body]
+    `(-> (fn [_x#] ~body)
+         (with-meta {:bi/step-type :bi/init-step})))))
+
+#?(:clj
 (defmacro map-step
   "All the arguments of bi/run-steps are functions. This one maps $ over the argument body."
   [body]
   `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/map-step})))
+       (with-meta {:bi/step-type :bi/map-step}))))
+
+#?(:cljs
+(def ^:sci/macro map-step
+  (fn [body]
+    `(-> (fn [_x#] ~body)
+         (with-meta {:bi/step-type :bi/map-step})))))
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
