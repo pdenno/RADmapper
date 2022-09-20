@@ -217,17 +217,17 @@
         result
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
-          (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})                   ; EOF
-               (when-let [[_ cm] (re-matches #"/\*.*\*/"  s)]              ; comment JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
+          (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})            ; EOF
+               (when-let [[_ cm] (re-matches #"/\*.*\*/"  s)]          ; comment JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
                  {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
-               (and (long-syntactic c) (read-long-syntactic s ws))         ; /regex-pattern/ ++, <=, == etc.
+               (and (long-syntactic c) (read-long-syntactic s ws))     ; /regex-pattern/ ++, <=, == etc.
                (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]
-                 {:ws ws :raw num :tkn (util/read-str num)}),             ; number
-               (when-let [[_ st] (re-matches #"(?s)(\"[^\"]*\").*" s)]    ; string literal
+                 {:ws ws :raw num :tkn (util/read-str num)}),          ; number
+               (when-let [[_ st] (re-matches #"(?s)(\"[^\"]*\").*" s)] ; string literal
                  {:ws ws :raw st :tkn (util/read-str st)})
-               (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)]    ; backquoted field
+               (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)] ; backquoted field
                  {:ws ws :raw st :tkn {:typ :Field :field-name st}})
-               (and (syntactic c) {:ws ws :raw (str c) :tkn c})           ; literal syntactic char.
+               (and (syntactic c) {:ws ws :raw (str c) :tkn c})        ; literal syntactic char.
                (let [pos (position-break s)
                      word (subs s 0 (or pos (count s)))]
                  (or ; We don't check for "builtin-fns"; as tokens they are just jvars.
