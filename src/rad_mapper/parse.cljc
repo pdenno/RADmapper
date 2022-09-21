@@ -218,7 +218,7 @@
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
           (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})            ; EOF
-               (when-let [[_ cm] (re-matches #"/\*.*\*/"  s)]          ; comment JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
+               (when-let [[_ cm] (re-matches #"(?s)(/\*.*\*/).*" s)]   ; comment JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
                  {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
                (and (long-syntactic c) (read-long-syntactic s ws))     ; /regex-pattern/ ++, <=, == etc.
                (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]

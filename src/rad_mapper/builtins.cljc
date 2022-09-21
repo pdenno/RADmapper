@@ -219,7 +219,7 @@
         (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn* +  "plus"   [x y]   (core/+ x y))
+(defn* +  "plus"   [x y]   (println "x = " x "y = " y) (core/+ x y))
 (defn* -  "minus"  [x y]   (core/- x y))
 (defn* *  "times"  [x y]   (core/* x y))
 (defn* /  "divide" [x y]   (s/assert ::non-zero y) (double (core// x y)))
@@ -269,6 +269,7 @@
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
+  (println "Steps = " steps)
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (let [init-step? (core/= :bi/init-step (-> steps first meta :bi/step-type))]
       (loop [res   (if init-step? (set-context! (-> ((first steps) @$) containerize?)) @$)
