@@ -24,7 +24,7 @@
   "A top-level function for all phases of translation.
    parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it parses without debug output."
-  [tag str & {:keys [execute? debug? debug-parse? skip-top? verbose?] :as opts}]
+  [tag str & {:keys [execute? debug? debug-parse? skip-top? sci?] :as opts}]
   (let [kopts (-> opts keys set)
         rewrite?  (not-empty (set/intersection #{:rewrite? :execute?} kopts))
         ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
@@ -46,7 +46,7 @@
           (if rewrite?
             (->> (if skip-top? ?r {:typ :toplevel :top ?r}) rewrite)
             ?r)
-          (if execute? (ev/user-eval ?r :verbose? verbose?) ?r)
+          (if execute? (ev/user-eval ?r :sci? sci?) ?r)
           (if (:rewrite-error? ?r)
             (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
             ?r))
@@ -414,18 +414,18 @@
   (let [sym (dgensym!)
         body (binding [inside-step? true] (-> m :body rewrite))]
     `(bi/filter-step
-      (fn [~sym] (bi/with-context ~sym ~body)))))
+      (fn [~sym] (binding [bi/$ (atom ~sym)] ~body)))))
 
 (defrewrite :ValueStep [m]
   (let [body (binding [inside-step? true] (-> m :body rewrite))]
-    `(bi/value-step ~body)))
+    `(bi/value-step [~body])))
 
 (defrewrite :ApplyReduce [m]
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
     `(bi/reduce-step
       ~(-> m :operand rewrite)
-      (fn [~sym] (bi/with-context ~sym ~body)))))
+      (fn [~sym] (binding [$ ~sym] ~body)))))
 
 (def spec-ops (-> par/binary-op? vals set)) ; ToDo: Not necessary?
 

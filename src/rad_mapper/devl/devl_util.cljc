@@ -3,6 +3,7 @@
   (:require
    [clojure.pprint :refer [pprint]]
    [clojure.test :refer [is testing]]
+   [rad-mapper.rewrite :as rew]
    #?(:clj   [datahike.pull-api      :as dp]
       :cljs  [datascript.pull-api    :as dp])))
 
@@ -55,7 +56,8 @@
         (seq? obj) (map remove-meta obj)
         :else obj))
 
-(defn rew-processRM
+;;; ToDo: Could probably require rewrite :refer [processRM] and avoid this.
+#_(defn rew-processRM
   "Return rewrite/processRM function."
   []
   (-> (symbol "rad-mapper.rewrite" "processRM") resolve))
@@ -65,13 +67,14 @@
 (defn run
   "Run the exp through whatever steps are specified; defaults to :execute and
    removes any metadata from value returned and its substructure."
-  [exp & {:keys [rewrite? debug? debug-parse? keep-meta?]}]
+  [exp & {:keys [rewrite? debug? debug-parse? keep-meta? sci?]}]
   (let [execute? (not rewrite?)]
-    (cond->> ((rew-processRM)
+    (cond->> (rew/processRM
               :ptag/exp exp
               :rewrite? rewrite?
               :execute? execute?
-              :debug? debug?
+              :sci?     sci?
+              :debug?   debug?
               :debug-parse? debug-parse?)
       true (reset! diag)
       (not keep-meta?) remove-meta
@@ -80,13 +83,13 @@
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) remove-meta nicer-sym))
+  (-> (rew/processRM :ptag/exp exp :rewrite? true) remove-meta nicer-sym))
 
 (defn examine [exp]
-  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) nicer))
+  (-> (rew/processRM :ptag/exp exp :rewrite? true) nicer))
 
 (defn examine- [exp]
-  (-> ((rew-processRM) :ptag/exp exp :rewrite? true) nicer-))
+  (-> (rew/processRM :ptag/exp exp :rewrite? true) nicer-))
 
 (defmacro run-test
   "Print the test form using testing, run the test."

@@ -18,8 +18,10 @@
    #?(:clj  [datahike.api                 :as d]
       :cljs [datascript.core              :as d])
    [failjure.core                :as fj]
+   ;[rad-mapper.builtins          :as bi]
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util]
+   ;;[sci.core                     :as sci] ; ToDo: Temporary?
    [taoensso.timbre              :as log])
   #?(:clj
      (:import java.text.DecimalFormat
@@ -36,25 +38,16 @@
   #?(:cljs (:require-macros [rad-mapper.builtins :refer [defn* defn$]])))
 
 ;;; ToDo:
-;;;  * Consider Small Clojure Interpreter (SCI) for Clojure version.
-;;;  * Make sure meta isn't used where a closure would work.
+;;;  - Make sure meta isn't used where a closure would work.
+;;;  - Clojure uses earmuffs as a clue to whether a var is dynamic. Should I use *$*?
 
-(def ^:dynamic $  "JSONata context variable" (atom nil))
-(def           $$ "JSONata root context."    (atom :bi/unset))
+(def ^:dynamic $  "JSONata context variable" (atom :orig-val))
+;;;(def $ (sci/new-dynamic-var '$ (atom :a-value)))
+(def $$ "JSONata root context."    (atom :bi/unset))
+
+(def ^:dynamic *x* :foo)
 
 (declare aref)
-
-#?(:clj
-(defmacro with-context
-  "Dynamically bind $ to the value provided."
-  [val & body]
-  `(binding [$ (atom ~val)] ~@body)))
-
-#?(:cljs
-(def ^:sci/macro with-context
-  "Dynamically bind $ to the value provided."
-  (fn [val & body] `(binding [$ (atom ~val)] ~@body))))
-
 
 (defn set-context!
   "Set the JSONata context variable to the argument. If the root context has not
@@ -115,15 +108,17 @@
   "If obj is a vector, set  metadata :bi/container?."
   [obj]
   (if (vector? obj)
-    (-> obj (with-meta (merge (meta obj) {:bi/container? true})))
+    (with-meta obj (merge (meta obj) {:bi/container? true}))
     obj))
+
+(def diag (atom nil))
 
 (defn cmap
   "If the object isn't a container, run the function on it,
    otherwise, mapv over the argument and containerize the result."
   [f arg]
   (if (container? arg)
-     (->> (mapv f arg) containerize)
+     (->> (mapv #(binding [$ (atom %)] (f %)) arg) containerize)
     (f arg)))
 
 (defn jflatten
@@ -179,6 +174,18 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
+(defn again?
+  "Primary does double duty:
+      (1) wrapping a whole body like ($foo), and
+      (2) function for mapping like $x.($y + 1).
+   The former is top-level, but returning a function is not what is intended.
+   All top-level expressions from rewrite  are wrapped in this to ensure that
+   the top-level, when a :bi/primary, evaluates it before returning."
+   [res]
+  (if (and (fn? res) (core/= :bi/primary (-> res meta :bi/step-type)))
+    (jflatten (res))
+    (jflatten res)))
+
 ;;; It exists so that rew/wrap-non-path won't wrap it
 (defn deref$
   "Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
@@ -219,7 +226,7 @@
         (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn* +  "plus"   [x y]   (println "x = " x "y = " y) (core/+ x y))
+(defn* +  "plus"   [x y]   (log/debug (format "plus: x = %s y = %s" x y)) (core/+ x y))
 (defn* -  "minus"  [x y]   (core/- x y))
 (defn* *  "times"  [x y]   (core/* x y))
 (defn* /  "divide" [x y]   (s/assert ::non-zero y) (double (core// x y)))
@@ -255,8 +262,8 @@
                              {:rhs-operator yarg#}))))))))
 
 #?(:cljs
-(def ^:sci/macro thread
-  (fn [x y]
+(def thread ^:sci/macro
+  (fn [_&form _&env x y]
     `(let [xarg# ~x]
        (do (set-context! xarg#)
            (let [yarg# ~y]
@@ -265,36 +272,39 @@
                (throw (ex-info "The RHS argument to the threading operator is not a function."
                                {:rhs-operator yarg#})))))))))
 
+(defn step-type
+  "Return a keyword describing what type of step to take next."
+  [steps]
+  (let [step-one (-> steps first  meta :bi/step-type)
+        step-two (-> steps second meta :bi/step-type)]
+    (if (and (core/= :bi/get-step step-one) (core/= :bi/filter-step step-two))
+      :bi/get-filter ; The special non-compositional one.
+      (#{:bi/init-step :bi/filter-step :bi/get-step :bi/value-step :bi/primary :bi/map-step} step-one))))
+
 ;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
-  (println "Steps = " steps)
+  (log/debug "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (let [init-step? (core/= :bi/init-step (-> steps first meta :bi/step-type))]
-      (loop [res   (if init-step? (set-context! (-> ((first steps) @$) containerize?)) @$)
-             steps (if init-step? (rest steps) steps)]
-      (cond (empty? steps) res
-
-            ;; bi/get-step followed by bi/filter-step ("non-compositional" ???)
-            (and (core/= :bi/get-step (-> steps first meta :bi/step-type))
-                 (core/= :bi/filter-step (-> steps second meta :bi/step-type))) ; Then don't do next step. Steal its argument.
-            (let [sfn (second steps)              ; Run the filter specifying the previous step keyword.
-                  new-res (set-context! (sfn res {:bi/call-type :bi/get-step
-                                                  :bi/attr (-> steps first meta :bi/arg)}))]
-              (recur new-res (-> steps rest rest))),
-
-            :else ; All other are "compositional".
-            (let [sfn (first steps)
-                  new-res (set-context!
-                           (case (-> sfn meta :bi/step-type)
-                             :bi/filter-step (sfn res nil) ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
-                             :bi/get-step    (sfn res nil) ; containerizes arg if not map; will do cmap or map get.
-                             :bi/value-step  (sfn res)     ; When res is map it containerizes.
-                             :bi/primary     (if (vector? res) (cmap sfn (containerize? res)) (sfn res))
-                             :bi/map-step    (cmap #(binding [$ (atom %)] (sfn %)) (containerize? res))
-                             (fj/fail "Huh? Meta = %s" (-> sfn meta :bi/step-type))))]
-              (recur new-res (rest steps))))))))
+    (loop [steps steps
+           res   @$]
+      (if (or (empty? steps) (fj/failed? res)) res
+          (let [styp (step-type steps)
+                sfn  (first steps)
+                new-res (case styp
+                          :bi/init-step    (-> (sfn @$) containerize?),
+                          :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
+                                                                :bi/attr (-> steps first meta :bi/arg)}),
+                          :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
+                          :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
+                          :bi/value-step   (if (vector? res) (mapv sfn (containerize? res)) (sfn res)),
+                          :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
+                          :bi/map-step     (cmap sfn (containerize? res)),
+                          (fj/fail "Invalid step. sfn = %s" sfn))]
+            (log/debug (format "    styp = %s meta = %s res = %s" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+            (recur (if (core/= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+                   (set-context! new-res)))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
 ;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
@@ -311,9 +321,8 @@
         will be queried for selection. [This rule has nothing to do with filtering!]"
   [pred|ix-fn]
   (-> (fn filter-step [obj prior-step]
-        (let [prix (fj/try* (pred|ix-fn @$))
-              call-type (:bi/call-type prior-step)
-              ob (if (core/= :bi/get-step call-type)
+        (let [prix (try (pred|ix-fn @$) (catch #?(:clj Exception :cljs :default) _e nil))
+              ob (if (core/= :bi/get-step (:bi/prior-step-type prior-step))
                    (let [k (:bi/attr prior-step)] ; non-compositional semantics
                      (if (vector? obj)
                        (cmap #(get % k) (containerize obj))
@@ -331,8 +340,7 @@
 
 (defn get-step
   "Perform the mapping activity of the 'a' in $.a, for example.
-   This function is called with the state object.
-   It returns the state object with :sys/$ updated."
+   This function is called with the state object."
   [k]
   (-> (fn get-step [& args] ; No arg if called in a primary.
         (let [obj (-> (if (-> args first empty?) @$ (first args)))]
@@ -346,8 +354,15 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-#?(:clj
+
 (defmacro value-step
+  "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
+   and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
+  [body]
+  `(-> (fn [& ignore#] ~body)
+       (with-meta {:bi/step-type :bi/value-step :body ~body})))
+
+#_(defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
   [body]
@@ -357,11 +372,11 @@
          (if (vector? x#)
            (->> (mapv func# x#) (mapv vector))
            (vector (func# x#)))))
-     (with-meta {:bi/step-type :bi/value-step}))))
+     (with-meta {:bi/step-type :bi/value-step})))
 
 #?(:cljs
-(def ^:sci/macro value-step
-  (fn [body]
+(def value-step ^:sci/macro
+  (fn [_&form _&env body]
     `(->
       (fn ~'value-step [x#]
         (let [func# (fn [y#] (binding [$ (atom y#)] ~body))]
@@ -372,24 +387,40 @@
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
-  ([k] (get-scoped @$ k))
-  ([obj k] (get obj k)))
+  ([k]
+   (log/debug (format "get-scoped (single-arg): $ = %s" @$))
+   (get-scoped @$ k))
+  ([obj k]
+   (log/debug (format "get-scoped: obj = %s k = %s " obj k))
+   (get obj k)))
 
-#?(:clj
 (defmacro primary
-  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
-   the context atom and runs the body."
+  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes the context atom and runs the body.
+   Primary is the function used in cmap (mapv) when the argument res in run-steps is a container."
   [body]
-  `(-> (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
-       (with-meta {:bi/step-type :bi/primary}))))
+  `(-> (fn [& ignore#] ~body)
+       (with-meta {:bi/step-type :bi/primary})))
 
-#?(:cljs
-(def ^:sci/macro primary
-  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes
-   the context atom and runs the body."
-  (fn [body]
-    `(-> (fn ~'primary [& arg#] (binding [bi/$ (if (empty? arg#) bi/$ (-> arg# first atom))] ~body))
-         (with-meta {:bi/step-type :bi/primary})))))
+#_(defmacro primary
+  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes the context atom and runs the body.
+   Primary is the function used in cmap (mapv) when the argument res in run-steps is a container."
+  [body]
+  `(-> (fn [& arg#] ;; must sci/bind sci/out to (java.io.StringWriter.) for debugging to work.
+         (log/debug (format "primary (the function): arg = %s $ = %s" arg# @$))
+         (log/debug (format "arg is seq?: %s" (seq? arg#)))
+         (binding [$ (if (empty? arg#) $ (-> arg# first atom))]
+           (log/debug (format "primary (before body, in binding): $ = %s" @$))
+           (let [res# ~body]
+             (log/debug (format "primary (after body, in binding): $ = %s res = %s" @$ res#))
+             res#)))
+       (with-meta {:bi/step-type :bi/primary})))
+
+#_(def primary ^:sci/macro
+  (fn [_&form _&env body]
+    `(-> (fn ~'primary [& arg#]
+           ;;(log/debug (format "primary (the function): arg = %s $ = %s" arg# $)) ; must sci/bind sci/out to *out* for this.
+           (binding [$ (if (empty? arg#) $ (-> arg# first atom))] ~body))
+         (with-meta {:bi/step-type :bi/primary}))))
 
 #?(:clj
 (defmacro init-step
@@ -400,8 +431,8 @@
        (with-meta {:bi/step-type :bi/init-step}))))
 
 #?(:cljs
-(def ^:sci/macro init-step
-  (fn [body]
+(def init-step ^:sci/macro
+  (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/init-step})))))
 
@@ -410,11 +441,11 @@
   "All the arguments of bi/run-steps are functions. This one maps $ over the argument body."
   [body]
   `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/map-step}))))
+       (with-meta {:bi/step-type :bi/map-step :body ~body}))))
 
 #?(:cljs
-(def ^:sci/macro map-step
-  (fn [body]
+(def map-step ^:sci/macro
+  (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/map-step})))))
 
@@ -445,7 +476,7 @@
                         (vector? form) (mapv sba-aux form)
                         (seq? form) (cond (and (core/= (first form) 'bi/key) (== 2 (count form)))
                                           (list 'bi/key sym (second form))
-                                          (core/= form '(core/deref rad-mapper.builtins/$)) sym ; 2022-05-29, added.
+                                          (core/= form '(core/deref rad-mapper.builtins/$)) sym
                                           :else (map sba-aux form))
                         :else form)
                   (with-meta m))))]
@@ -1700,7 +1731,7 @@
 
 ;;; ToDo: This isn't working.
 #_(defn qvar? [obj]  (-> obj meta :qvar?))
-(defn qvar? [obj]  (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
+(defn qvar? [obj]  (and (symbol? obj) (core/= "?" (-> obj str (subs 0 1)))))
 
 (defn entity-qvars
   "Return the set of qvars in entity position of the argument body"
@@ -1883,7 +1914,7 @@
       (bsbinds! body)
       (let [body-sbinds @body-sbinds-atm
             val-sbinds (->> body-sbinds
-                            (filter #(= (:binds %) :val))
+                            (filter #(core/= (:binds %) :val))
                             (mapv #(assoc % :val
                                           (or (:constant? %) (get bset (:sym %))))))]
         (reduce
@@ -1893,7 +1924,7 @@
                  (->> (mapv (fn [kpart]
                               (cond (sbind? kpart)        (get bset (:sym kpart))
                                     ;;(or (string? kpart)
-                                    ;;(number? kpart))  (some #(when (= % kpart) (:val %)) val-sbinds),
+                                    ;;(number? kpart))  (some #(when (core/= % kpart) (:val %)) val-sbinds),
                                     :else                 kpart))
                             (do (sbind-path-to! vsb body) @path))
                       (mapv #(if (keyword? %) (name %) %)))]

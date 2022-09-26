@@ -2,6 +2,7 @@
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
    [clojure.test        :refer  [deftest is testing]]
+   [rad-mapper.builtins  :as bi]
    [rad-mapper.devl.devl-util :refer [run-test examine run] :as dev]))
 
 (deftest today
@@ -15,7 +16,7 @@
   (run-test "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums" [1 2 3 4])
   (run-test "{'number' : [11, 22, 33, 44]}.number[2]" 33)
   (run-test "['a', 'b', 'c'].[1]" [[1][1][1]])
-  (run-test "{'a' :1, 'b' :2}.[1]" [1]))
+  (run-test "{'a' : 1, 'b' : 2}.[1]" [1]))
 
 ;;; CIDER visual cues:
 ;;;  * bright red background on 'is' means it failed.
@@ -291,3 +292,16 @@
 
     (run-test "[{'phone' : {'mobile' : '123-456-7890'}}].phone.mobile"
                 "123-456-7890")))
+
+(defn tryme []
+  (do (bi/reset-env)
+      (bi/again?
+       (bi/primary
+        (let
+            [$f
+             (with-meta
+               (fn [$x] (bi/+ $x 1))
+               #:bi{:type :bi/user-fn, :params '[$x]})]
+          (bi/run-steps
+           (bi/init-step [1 2 3])
+           (bi/map-step ($f (bi/deref$)))))))))

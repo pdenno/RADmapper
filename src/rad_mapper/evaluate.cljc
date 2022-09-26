@@ -1,72 +1,69 @@
 (ns rad-mapper.evaluate
   "Evaluate a rewritten form."
   (:require
-   [clojure.pprint               :refer [cl-format]]
-   [clojure.spec.alpha :as s :refer [check-asserts]]
+   [clojure.pprint               :refer [cl-format pprint]]
+   [clojure.spec.alpha           :as s :refer [check-asserts]]
    #?(:cljs [cljs.js :as cljs])
-   [rad-mapper.builtins :as bi]
-   #?(:clj [rad-mapper.util      :as util])
+   [rad-mapper.devl.devl-util    :as devl :refer [run examine]] ; ToDo: Temporary
+   [rad-mapper.builtins          :as bi]
+   [rad-mapper.util              :as util]
    [sci.core                     :as sci]
    [taoensso.timbre              :as log]))
 
-(def bi-macs "'macs' is a misnomer, since they are rewritten to functions for SCI. They are treated like bi-vars below."
-  [#'bi/with-context #'bi/thread  #'bi/value-step #'bi/primary #'bi/init-step #'bi/map-step])
+(defn rad-string
+  "Walk form replacing namespace alias 'bi' with 'rad-mapper.builtins'.
+   Wrap the form in code for multiple evaluation when it returns a primary fn.
+   Returns that string."
+  [form]
+  (let [ns-alia {"bi" "rad-mapper.builtins"}]
+    (letfn [(ni [form]
+              (cond (vector? form) (->> form (map ni) doall vec),
+                    (seq? form)    (->> form (map ni) doall),
+                    (map? form)    (->> (reduce-kv (fn [m k v] (assoc m k (ni v))) {} form) doall)
+                    (symbol? form) (if-let [nsa (-> form namespace ns-alia)]
+                                     (->> form name (symbol nsa))
+                                     form)
+                    :else form))]
+      (cl-format nil "(do (rad-mapper.builtins/reset-env) (rad-mapper.builtins/again? ~S))" (ni form)))))
 
-(def bi-vars
-  [#'bi/!= #'bi/$ #'bi/$$ #'bi/$abs #'bi/$addSchema #'bi/$append #'bi/$assert #'bi/$average #'bi/$base64decode
-   #'bi/$base64encode #'bi/$boolean #'bi/$ceil #'bi/$contains #'bi/$count #'bi/$decodeUrl #'bi/$decodeUrlComponent #'bi/deref$
-   #'bi/$distinct #'bi/$each #'bi/$encodeUrl #'bi/$encodeUrlComponent #'bi/$error #'bi/$eval #'bi/$exists #'bi/$filter
-   #'bi/$floor #'bi/$formatBase #'bi/$formatInteger #'bi/$formatNumber #'bi/$fromMillis #'bi/$join #'bi/$keys #'bi/$length
-   #'bi/$lookup #'bi/$lowercase #'bi/$map #'bi/$match #'bi/$max #'bi/$merge #'bi/$millis #'bi/$min #'bi/$not #'bi/$now
-   #'bi/$number #'bi/$pad #'bi/$parseInteger #'bi/$power #'bi/$random #'bi/$read #'bi/$readSpreadsheet #'bi/$reduce
-   #'bi/$replace #'bi/$reverse #'bi/$round #'bi/$schemaFor #'bi/$shuffle #'bi/$sift #'bi/$single #'bi/$sort #'bi/$split
-   #'bi/$spread #'bi/$sqrt #'bi/$string #'bi/$substring #'bi/$substringAfter #'bi/$substringBefore #'bi/$sum #'bi/$toMillis
-   #'bi/$trim #'bi/$type #'bi/$uppercase #'bi/$zip #'bi/* #'bi/+ #'bi/- #'bi// #'bi/< #'bi/<= #'bi/= #'bi/> #'bi/>=
-   #'bi/aref #'bi/body&bset-ai-maps #'bi/cmap #'bi/container? #'bi/containerize #'bi/containerize? #'bi/date-fmt-xpath2java
-   #'bi/entity-qvars #'bi/express #'bi/express-sub #'bi/filter-step #'bi/flatten-except-json
-   #'bi/format-time #'bi/found? #'bi/get-scoped #'bi/get-step #'bi/handle-builtin #'bi/higher-order-query-fn
-   #'bi/immediate-query-fn #'bi/jflatten #'bi/match-regex #'bi/path #'bi/query
-   #'bi/query-fn-aux #'bi/qvar? #'bi/reduce-express #'bi/reduce-typical #'bi/reset-env #'bi/rewrite-qform
-   #'bi/rewrite-sheet-for-mapper #'bi/run-steps #'bi/sbind-body #'bi/sbind-eq #'bi/sbind-path-to! #'bi/sbind? #'bi/set-context!
-   #'bi/singlize #'bi/substitute-in-form #'bi/sym-bi-access #'bi/translate-part #'bi/transpose-sheet #'bi/update-db])
+(def ctx
+  (let [publics     (ns-publics 'rad-mapper.builtins)
+        bns         (sci/create-ns 'rad-mapper.builtins)
+        pns         (sci/create-ns 'pprint-ns)
+        tns         (sci/create-ns 'timbre-ns)
+        builtins-ns (update-vals publics #(sci/copy-var* % bns))
+        pprint-ns   {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
+        timbre-ns   {'debug     (sci/copy-var* #'taoensso.timbre/debug tns)
+                     'log!      (sci/copy-var* #'taoensso.timbre/log! tns)
+                     '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
+                     '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)
+                     }]
+    (sci/init {:namespaces {'rad-mapper.builtins  builtins-ns,
+                            'taoensso.timbre      timbre-ns,
+                            'clojure-pprint       pprint-ns}})))
 
-(def bi-vars-clj
-  "These are just used in the clj implementation."
-  #?(:clj  [#'bi/$read]
-     :cljs []))
-
-(def fns (sci/create-ns 'builtins-ns nil))
-(def builtins-ns (reduce (fn [m v] (assoc m (-> v symbol name symbol) (sci/copy-var* v fns)))
-                         {}
-                         (into (into bi-vars bi-macs) bi-vars-clj)))
-
-(def ctx (sci/init {:namespaces {'bi                  builtins-ns, ; ToDo: I suppose this could be cleaner!
-                                 'rad-mapper.builtins builtins-ns}}))
+;;;(def ctx nil)
 
 ;;; (sci/eval-string* ctx "(rad-mapper.builtins/+ 1 1)")
-(def diag (atom nil))
-(def diag-form (atom nil))
+(def sw (java.io.StringWriter.))
 
 (defn user-eval
-  "Do clojure eval in namespace app.model.mm-user.
-   If the sexp has unresolvable symbols, catch them and return :unresolved-symbol."
-  [form & {:keys [debug? check-asserts? use-sci?] :or {check-asserts? false use-sci? true debug? false}}] ; ToDo: debug? temporarily true.
-  (when debug? (println "eval form: " form))
-  (s/check-asserts check-asserts?) ; ToDo: Investigate why check-asserts? = true is a problem
-  (binding [*ns* (find-ns 'user)]
-    (sci/binding [sci/out (if debug? *out* sci/out)]
-      (try
-        (bi/reset-env) ; ToDo: Why no longer (eval form) in CLJ?
-        (let [res #?(:clj  (if use-sci?
-                             (sci/eval-string* ctx (str form))
-                             (-> form str util/read-str eval))
-                     :cljs (sci/eval-string* ctx (-> form rad-nspaces str)))]
-          (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
-            (bi/jflatten (res))
-            (bi/jflatten res)))
-        (catch #?(:clj Exception :cljs :default) e
-          (reset! diag {:e e :form form})
-          (log/error "\nError evaluating form: (See @rad-mapper.evaluate/diag)"
-                     #?(:clj (-> e .getMessage str) :cljs e)
-                     "\nform:"
-                     form))))))
+  "Evaluate the argument form."
+  [form {:keys [debug? check-asserts? debug-eval? sci?]
+         :or   {check-asserts? false}}] ; ToDo: debug? temporarily true.
+  (let [sci? false                      ; ToDo: temporary
+        debug-eval? true                ; ToDo: temporary
+        min-level (util/default-min-log-level)
+        full-form (rad-string form)]
+    (try
+      (when debug-eval?
+        (util/config-log :debug)
+        (log/debug (format "*****  Running %s *****" (if sci? "SCI" "eval"))))
+      (when debug-eval? (-> full-form util/read-str devl/clean-form pprint))
+      (s/check-asserts check-asserts?) ; ToDo: Investigate why check-asserts? = true is a problem
+      (binding [*ns* (find-ns 'user)]  ; ToDo: This doesn't matter for SCI, right?
+        (sci/binding [sci/out sw]
+          (if sci?
+            (sci/eval-string* ctx full-form)
+            (-> full-form util/read-str eval))))
+      (finally (util/config-log min-level)))))
