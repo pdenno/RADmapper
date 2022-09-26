@@ -49,9 +49,9 @@
 
 (defn user-eval
   "Evaluate the argument form."
-  [form {:keys [debug? check-asserts? debug-eval? sci?]
-         :or   {check-asserts? false}}] ; ToDo: debug? temporarily true.
-  (let [sci? false                      ; ToDo: temporary
+  [form & {:keys [debug? check-asserts? debug-eval? sci?]
+           :or   {check-asserts? false}}] ; ToDo: debug? temporarily true.
+  (let [sci? true                      ; ToDo: temporary
         debug-eval? true                ; ToDo: temporary
         min-level (util/default-min-log-level)
         full-form (rad-string form)]
