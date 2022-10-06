@@ -57,9 +57,9 @@
 (def builtin? (-> builtin-fns keys (into ["$$" "$"]) set))
 (def builtin-un-op #{\+, \- :not})
 
-;;; Binary operators.
-(def numeric-operators    '{\% bi/%, \* bi/*, \+ bi/+, \- bi/-, \/ bi//}) ; :range is not one of these.
-(def comparison-operators '{:<= bi/<=, :>= bi/>=, :!= bi/!=, \< bi/<, \= bi/=, \> bi/>, "in" bi/in})
+;;; Binary operators. [+ - * / < > <= >= =]
+(def numeric-operators    '{\% bi/%, \* bi/multiply, \+ bi/add, \- bi/subtract, \/ bi/divide}) ; :range is not one of these.
+(def comparison-operators '{:<= bi/lteq, :>= bi/gteq, :!= bi/!=, \< bi/lt, \= bi/eq, \> bi/gt "in" bi/in})
 (def boolean-operators    '{:and and :or or})
 (def string-operators     '{\& str})
 (def other-operators      '{\. bi/get-step :apply-filter bi/filter-step :apply-reduce bi/reduce-step

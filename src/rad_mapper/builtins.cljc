@@ -4,10 +4,8 @@
    Others (such as bi/key and bi/strcat) implement other parts of the expression language
    but are not available directly to the user except through the operators (e.g. the dot, and &
    respectively for navigation to a property and concatenation)."
-  (:refer-clojure :exclude [+ - * / < > <= >= =]) ; So be careful!
   (:require
    [cemerick.url                 :as url]
-   [clojure.core                 :as core]
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha           :as s]
@@ -54,7 +52,7 @@
    yet been set, set that too."
   [val]
   (reset! $ val)
-  (when (core/= @$$ :bi/unset) (reset! $$ val))
+  (when (= @$$ :bi/unset) (reset! $$ val))
   val)
 
 (s/def ::number number?)
@@ -70,7 +68,7 @@
 (s/def ::strings (s/and vector? (s/coll-of ::string :min-count 1)))
 (s/def ::vectors (s/and vector? (s/coll-of ::vector :min-count 1)))
 (s/def ::objects (s/and vector? (s/coll-of map? :min-count 1)))
-(s/def ::radix (s/and number? #(core/<= 2 % 36)))
+(s/def ::radix (s/and number? #(<= 2 % 36)))
 (s/def ::fn fn?)
 (s/def ::sbind #(-> % meta :sbind?))
 
@@ -182,7 +180,7 @@
    All top-level expressions from rewrite  are wrapped in this to ensure that
    the top-level, when a :bi/primary, evaluates it before returning."
    [res]
-  (if (and (fn? res) (core/= :bi/primary (-> res meta :bi/step-type)))
+  (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
     (jflatten (res))
     (jflatten res)))
 
@@ -226,24 +224,24 @@
         (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn* +  "plus"   [x y]   (log/debug (format "plus: x = %s y = %s" x y)) (core/+ x y))
-(defn* -  "minus"  [x y]   (core/- x y))
-(defn* *  "times"  [x y]   (core/* x y))
-(defn* /  "divide" [x y]   (s/assert ::non-zero y) (double (core// x y)))
-(defn* >  "greater-than"          [x y] (core/>  x y))
-(defn* <  "less-than "            [x y] (core/<  x y))
-(defn* >= "greater-than-or-equal" [x y] (core/>= x y))
-(defn* <= "less-than-or-equal"    [x y] (core/<= x y))
+(defn* add      "plus"   [x y]   (log/debug (format "plus: x = %s y = %s" x y)) (+ x y))
+(defn* subtract "minus"  [x y]   (- x y))
+(defn* multiply "times"  [x y]   (* x y))
+(defn* divide   "divide" [x y]   (s/assert ::non-zero y) (double (/ x y)))
+(defn* gt       "greater-than"          [x y] (>  x y))
+(defn* lt       "less-than "            [x y] (<  x y))
+(defn* gteq     "greater-than-or-equal" [x y] (>= x y))
+(defn* lteq     "less-than-or-equal"    [x y] (<= x y))
 
-(defn =
+(defn eq
   "equal, need not be numbers"
   [x y]
-  (core/= (jflatten x) (jflatten y)))
+  (= (jflatten x) (jflatten y)))
 
 (defn !=
   "not equal, need not be numbers"
   [x y]
-  (core/= (jflatten x) (jflatten y)))
+  (= (jflatten x) (jflatten y)))
 
 #?(:clj
 (defmacro thread
@@ -277,7 +275,7 @@
   [steps]
   (let [step-one (-> steps first  meta :bi/step-type)
         step-two (-> steps second meta :bi/step-type)]
-    (if (and (core/= :bi/get-step step-one) (core/= :bi/filter-step step-two))
+    (if (and (= :bi/get-step step-one) (= :bi/filter-step step-two))
       :bi/get-filter ; The special non-compositional one.
       (#{:bi/init-step :bi/filter-step :bi/get-step :bi/value-step :bi/primary :bi/map-step} step-one))))
 
@@ -292,10 +290,39 @@
       (if (or (empty? steps) (fj/failed? res)) res
           (let [styp (step-type steps)
                 sfn  (first steps)
-                new-res (case styp
+                new-res (case styp ; init-step, value-step, map-step, primary are defined through macros.
                           :bi/init-step    (-> (sfn @$) containerize?),
                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
-                                                                :bi/attr (-> steps first meta :bi/arg)}),
+                                                                :bi/attr (-> sfn meta :bi/arg)}),
+                          :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
+                          :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
+                          :bi/value-step   (do (log/debug (format "Run step -- value-step vec? = %s fn = %s res = %s"
+                                                                  (vector? res) sfn res))
+                                               #_(sfn res)
+                                               (if (vector? res)
+                                                 (mapv #(binding [$ (atom %)] (sfn $)) res)
+                                                 (sfn res))),
+                          :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
+                          :bi/map-step     (cmap sfn (containerize? res)),
+                          (fj/fail "Invalid step. sfn = %s" sfn))]
+            (log/debug (format "    styp = %s meta = %s res = %s" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+            (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+                   (set-context! new-res)))))))
+
+#_(defn run-steps
+  "Run or map over each path step function, passing the result to the next step."
+  [& steps]
+  (log/debug "--- run-steps ---")
+  (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
+    (loop [steps steps
+           res   @$]
+      (if (or (empty? steps) (fj/failed? res)) res
+          (let [styp (step-type steps)
+                sfn  (first steps)
+                new-res (case styp ; init-step, value-step, map-step, primary are defined through macros.
+                          :bi/init-step    (-> (sfn @$) containerize?),
+                          :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
+                                                                :bi/attr (-> sfn meta :bi/arg)}),
                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
                           :bi/value-step   (if (vector? res) (mapv sfn (containerize? res)) (sfn res)),
@@ -303,7 +330,7 @@
                           :bi/map-step     (cmap sfn (containerize? res)),
                           (fj/fail "Invalid step. sfn = %s" sfn))]
             (log/debug (format "    styp = %s meta = %s res = %s" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-            (recur (if (core/= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+            (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
                    (set-context! new-res)))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
@@ -322,7 +349,7 @@
   [pred|ix-fn]
   (-> (fn filter-step [obj prior-step]
         (let [prix (try (pred|ix-fn @$) (catch #?(:clj Exception :cljs :default) _e nil))
-              ob (if (core/= :bi/get-step (:bi/prior-step-type prior-step))
+              ob (if (= :bi/get-step (:bi/prior-step-type prior-step))
                    (let [k (:bi/attr prior-step)] ; non-compositional semantics
                      (if (vector? obj)
                        (cmap #(get % k) (containerize obj))
@@ -354,13 +381,15 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-
 (defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
   [body]
-  `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/value-step :body ~body})))
+  `(-> (fn [& ignore#]
+         (log/debug "Call to the value-step")
+         ~body)
+       (with-meta {:bi/step-type :bi/value-step :body '~body})))
+
 
 #_(defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
@@ -438,7 +467,7 @@
 
 #?(:clj
 (defmacro map-step
-  "All the arguments of bi/run-steps are functions. This one maps $ over the argument body."
+  "All the arguments of bi/run-steps are functions. This one maps argument body over $ ."
   [body]
   `(-> (fn [_x#] ~body)
        (with-meta {:bi/step-type :bi/map-step :body ~body}))))
@@ -455,9 +484,9 @@
    If an index is specified that exceeds the size of the array, then nothing is selected."
   [obj ix]
   (let [len (if (vector? obj) (count obj) 1)
-        ix  (if (neg? ix) (core/+ len ix) ix)]
-    (if (or (and (pos? ix) (core/>= ix len))
-            (and (neg? ix) (core/> (Math/abs ix) len)))
+        ix  (if (neg? ix) (+ len ix) ix)]
+    (if (or (and (pos? ix) (>= ix len))
+            (and (neg? ix) (> (Math/abs ix) len)))
       nil ; Rule 2, above.
       (if (vector? obj) (nth obj ix) obj))))
 
@@ -474,9 +503,9 @@
             (let [m (meta form)]
               (-> (cond (map? form) (reduce-kv (fn [m k v] (assoc m k (sba-aux v))) {} form)
                         (vector? form) (mapv sba-aux form)
-                        (seq? form) (cond (and (core/= (first form) 'bi/key) (== 2 (count form)))
+                        (seq? form) (cond (and (= (first form) 'bi/key) (== 2 (count form)))
                                           (list 'bi/key sym (second form))
-                                          (core/= form '(core/deref rad-mapper.builtins/$)) sym
+                                          (= form '(deref rad-mapper.builtins/$)) sym
                                           :else (map sba-aux form))
                         :else form)
                   (with-meta m))))]
@@ -555,7 +584,7 @@
        (fj/try*
          (reset-env context)
          (let [res (eval form)]
-           (if (and (fn? res) (core/= :bi/primary (-> res meta :bi/step-type)))
+           (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
              (jflatten (res))
              (jflatten res)))))))))
 
@@ -621,11 +650,11 @@
                     (cond (and (number? limit) (zero? lim)) res
                           (empty? match) res
                           :else
-                          (let [ix (core/+ adv (or (index-of (subs s adv) match) 0))]
+                          (let [ix (+ adv (or (index-of (subs s adv) match) 0))]
                             (recur
                              (conj res (-> {"match" match, "index" ix, "groups" (vec groups)}
                                            (with-meta {:bi/regex-result? true})))
-                             (core/+ adv (count match))
+                             (+ adv (count match))
                              (if (number? lim) (dec lim) lim))))))]
      ;; ToDo: Or should I jflatten (which currently doesn't change things)?
      (cond
@@ -661,7 +690,7 @@
        (let [ix (index-of s match)]
          (-> {"match" match
               "start" ix
-              "end"   (core/+ ix (count match))
+              "end"   (+ ix (count match))
               "groups" groups
               "next" matcher}
              (with-meta {:bi/regex-result? true}))))))))
@@ -684,7 +713,7 @@
          awidth (abs width)]
      (if (>= len awidth)
        s
-       (let [extra (->> (repeat (core/- awidth len) char) (apply str))]
+       (let [extra (->> (repeat (- awidth len) char) (apply str))]
          (if (pos? width)
            (str s extra)
            (str extra s)))))))
@@ -726,7 +755,7 @@
            (let [repl (str/replace replacement "$$" "\\$")]
              (reduce (fn [res _i] (str/replace-first res pattern repl))
                      s
-                     (if (core/= :unlimited lim) (-> s count range) (range lim)))),
+                     (if (= :unlimited lim) (-> s count range) (range lim)))),
            (fn? replacement)
            (reduce (fn [res _i]
                       (try (let [repl (-> ($match res pattern) replacement)]
@@ -734,7 +763,7 @@
                           ;; ToDo: Need a better way! See last test of $replace in builtins_test.clj
                           (catch #?(:clj Exception :cljs :default) _e res)))
                    s
-                   (if (core/= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
+                   (if (= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
            :else (fj/fail "Replacement pattern must be a string or function: %s" replacement)))))
 
 ;;; $split
@@ -760,7 +789,7 @@
    (s/assert ::pos-limit limit)
    (let [lim (if (number? limit) (-> limit Math/floor int) limit)
          regex (if (string? separator) (re-pattern separator) separator)]
-     (if (core/= lim :unlimited)
+     (if (= lim :unlimited)
        (str/split s regex)
        (-> (str/split s regex) (subvec 0 lim))))))
 
@@ -787,9 +816,9 @@
     (s/assert ::pos-limit length)
     (let [len (count str)
           res (if (neg? start)
-                (subs str (core/+ len start))
+                (subs str (+ len start))
                 (subs str start))]
-      (if (or (core/= :unlimited length) (> length len))
+      (if (or (= :unlimited length) (> length len))
         res
         (subs res 0 length)))))
 
@@ -858,7 +887,7 @@
   "Take the average of the vector of numbers"
   [nums]
   (s/assert ::numbers nums)
-  (core// (apply core/+ nums)
+  (/ (apply + nums)
           (-> nums count double)))
 
 ;;; $ceil
@@ -1048,7 +1077,7 @@
                (MathContext.
                 (if (zero? precision)
                   (count left)
-                  (core/+ (count left) precision))
+                  (+ (count left) precision))
                 RoundingMode/HALF_EVEN))]
      (if (pos? precision) (double rnum) (long rnum))))))
 
@@ -1058,7 +1087,7 @@
   [nums]
   (let [v (singlize nums)]
     (s/assert ::numbers v)
-     (apply core/+ v)))
+     (apply + v)))
 
 ;;; $sqrt
 (defn $sqrt
@@ -1566,7 +1595,7 @@
    (let [met (meta func)]
      (cond (:bi/express-template? met)                          (fj/fail "Reducing called on express template fn." ),
            (:bi/express? met)                                   (reduce-express coll func init),
-           (not (core/<= 2 (-> met :bi/params count) 4))        (fj/fail "Reduce function must take 2 to 4 args.")
+           (not (<= 2 (-> met :bi/params count) 4))        (fj/fail "Reduce function must take 2 to 4 args.")
            (not init)                                           (reduce-typical coll func)
            :else                                                (reduce-typical (into (vector init) coll) func)))))
 
@@ -1680,7 +1709,7 @@
    (reset! $$ (when-let [sheet (->> (ss/load-workbook filename) (ss/select-sheet sheet-name))]
                (let [row1 (mapv ss/read-cell (-> sheet ss/row-seq first ss/cell-seq ss/into-seq))
                      len  (loop [n (dec (-> sheet ss/row-seq first .getLastCellNum))]
-                            (cond (core/= n 0) 0,
+                            (cond (= n 0) 0,
                                   (not (nth row1 n)) (recur (dec n)),
                                   :else (inc n)))
                      keys (map keyword (take len (util/string-permute)))
@@ -1731,7 +1760,7 @@
 
 ;;; ToDo: This isn't working.
 #_(defn qvar? [obj]  (-> obj meta :qvar?))
-(defn qvar? [obj]  (and (symbol? obj) (core/= "?" (-> obj str (subs 0 1)))))
+(defn qvar? [obj]  (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
 
 (defn entity-qvars
   "Return the set of qvars in entity position of the argument body"
@@ -1752,7 +1781,7 @@
              ;; Remove binding sets that involve a schema entity.
              (remove (fn [bset] (some (fn [bval]
                                         (and (keyword? bval)
-                                             (core/= "db" (namespace bval))))
+                                             (= "db" (namespace bval))))
                                       (vals bset))))
              ;; ToDo: Add an option to query keepDBids. This should be the default, however.
              (mapv (fn [bset] (reduce-kv (fn [m k v] (if (e-qvar? k) m (assoc m k v))) {} bset)))
@@ -1914,7 +1943,7 @@
       (bsbinds! body)
       (let [body-sbinds @body-sbinds-atm
             val-sbinds (->> body-sbinds
-                            (filter #(core/= (:binds %) :val))
+                            (filter #(= (:binds %) :val))
                             (mapv #(assoc % :val
                                           (or (:constant? %) (get bset (:sym %))))))]
         (reduce
@@ -1924,7 +1953,7 @@
                  (->> (mapv (fn [kpart]
                               (cond (sbind? kpart)        (get bset (:sym kpart))
                                     ;;(or (string? kpart)
-                                    ;;(number? kpart))  (some #(when (core/= % kpart) (:val %)) val-sbinds),
+                                    ;;(number? kpart))  (some #(when (= % kpart) (:val %)) val-sbinds),
                                     :else                 kpart))
                             (do (sbind-path-to! vsb body) @path))
                       (mapv #(if (keyword? %) (name %) %)))]

@@ -1,4 +1,4 @@
-(ns rad-mapper.devl.devl-util
+(ns devl.devl-util
   "Tools for repl-based development"
   (:require
    [clojure.pprint :refer [pprint]]
@@ -71,11 +71,11 @@
   (let [execute? (not rewrite?)]
     (cond->> (rew/processRM
               :ptag/exp exp
-              :rewrite? rewrite?
-              :execute? execute?
-              :sci?     sci?
-              :debug?   debug?
-              :debug-parse? debug-parse?)
+              {:rewrite? rewrite?
+               :execute? execute?
+               :sci?     sci?
+               :debug?   debug?
+               :debug-parse? debug-parse?})
       true (reset! diag)
       (not keep-meta?) remove-meta
       true nicer-sym)))
@@ -83,13 +83,13 @@
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> (rew/processRM :ptag/exp exp :rewrite? true) remove-meta nicer-sym))
+  (-> (rew/processRM :ptag/exp exp {:rewrite? true}) remove-meta nicer-sym))
 
 (defn examine [exp]
-  (-> (rew/processRM :ptag/exp exp :rewrite? true) nicer))
+  (-> (rew/processRM :ptag/exp exp {:rewrite? true}) nicer))
 
 (defn examine- [exp]
-  (-> (rew/processRM :ptag/exp exp :rewrite? true) nicer-))
+  (-> (rew/processRM :ptag/exp exp {:rewrite? true}) nicer-))
 
 (defmacro run-test
   "Print the test form using testing, run the test."

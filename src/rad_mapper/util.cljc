@@ -49,7 +49,6 @@
   []
   (->> log/*config* :min-level (some #(when (= #{"*"} (first %)) (second %)))))
 
-
 ;;; ToDo: Refactor: This stuff belongs in the "messaging plug-in".
 (defn nspaces
   "Return a string of n spaces."

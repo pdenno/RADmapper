@@ -4,7 +4,7 @@
    #?(:clj [clojure.java.io :as io])
    [clojure.spec.alpha  :as s]
    [clojure.test :refer  [deftest is testing]]
-   [rad-mapper.devl.devl-util :refer [remove-meta]]
+   [devl.devl-util :refer [remove-meta]]
    [rad-mapper.parse    :as par]
    [rad-mapper.rewrite  :as rew]))
 

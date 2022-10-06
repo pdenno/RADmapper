@@ -24,12 +24,11 @@
   "A top-level function for all phases of translation.
    parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it parses without debug output."
-  [tag str & {:keys [execute? debug? debug-parse? skip-top? sci?] :as opts}]
-  (let [kopts (-> opts keys set)
-        rewrite?  (not-empty (set/intersection #{:rewrite? :execute?} kopts))
+  [tag str opts]
+  (let [rewrite? (or (:rewrite? opts) (:execute? opts))
         ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
-    (binding [*debugging?* debug?
-              par/*debugging?* debug-parse?]
+    (binding [*debugging?* (:debug? opts)
+              par/*debugging?* (:debug-parse? opts)]
       (if (or *debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
       #?(:clj (with-open [rdr (-> str char-array clojure.java.io/reader)]
                 (as-> (par/make-pstate rdr) ?ps
@@ -44,9 +43,9 @@
       (if (= :ok (:parse-status @ps-atm))
         (as-> (:result @ps-atm) ?r
           (if rewrite?
-            (->> (if skip-top? ?r {:typ :toplevel :top ?r}) rewrite)
+            (->> (if (:skip-top? opts) ?r {:typ :toplevel :top ?r}) rewrite)
             ?r)
-          (if execute? (ev/user-eval ?r :sci? sci?) ?r)
+          (if (:execute? opts) (ev/user-eval ?r opts) ?r)
           (if (:rewrite-error? ?r)
             (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
             ?r))
@@ -584,22 +583,22 @@
 (def op-precedence-tbl ; lower :val means binds tighter.
   {:or               {:path? false :assoc :left :val 1000}
    :and              {:path? false :assoc :left :val 900}
-   'bi/<             {:path? false :assoc :none :val 800}
-   'bi/>             {:path? false :assoc :none :val 800}
-   'bi/<=            {:path? false :assoc :none :val 800}
-   'bi/>=            {:path? false :assoc :none :val 800}
-   'bi/=             {:path? false :assoc :none :val 800}
+   'bi/lt            {:path? false :assoc :none :val 800}
+   'bi/gt            {:path? false :assoc :none :val 800}
+   'bi/lteq          {:path? false :assoc :none :val 800}
+   'bi/gteq          {:path? false :assoc :none :val 800}
+   'bi/eq            {:path? false :assoc :none :val 800}
    :!=               {:path? false :assoc :none :val 800}
    :in               {:path? false :assoc :none :val 700}
    'bi/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
    'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
    'str              {:path? false :assoc :left :val 400}
-   'bi/+             {:path? false :assoc :left :val 400}
-   'bi/-             {:path? false :assoc :left :val 400}
+   'bi/add           {:path? false :assoc :left :val 400}
+   'bi/subtract      {:path? false :assoc :left :val 400}
    :range            {:path? false :assoc :left :val 400} ; ToDo guessing
-   'bi/*             {:path? false :assoc :left :val 300}
+   'bi/multiply      {:path? false :assoc :left :val 300}
    'bi/%             {:path? false :assoc :left :val 300}
-   'bi//             {:path? false :assoc :left :val 300}
+   'bi/divide        {:path? false :assoc :left :val 300}
    'bi/get-step      {:path? true  :assoc :left :val 100}
    'bi/filter-step   {:path? true  :assoc :left :val 100}
    'bi/reduce-step   {:path? true  :assoc :left :val 100}})

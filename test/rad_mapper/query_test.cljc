@@ -12,7 +12,7 @@
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
    [rad-mapper.util        :as util]
-   [rad-mapper.devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]
+   [devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]
    [failjure.core :as fj]))
 
 (defmacro run-test-rew

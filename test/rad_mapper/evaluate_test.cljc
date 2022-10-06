@@ -3,7 +3,7 @@
   (:require
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins  :as bi]
-   [rad-mapper.devl.devl-util :refer [run-test examine run] :as dev]))
+   [devl.devl-util :refer [run-test examine run] :as dev]))
 
 (deftest today
   (run-test "[[1,2,3], 4].$[1]" 2)
@@ -294,14 +294,11 @@
                 "123-456-7890")))
 
 (defn tryme []
-  (do (bi/reset-env)
-      (bi/again?
-       (bi/primary
-        (let
-            [$f
-             (with-meta
-               (fn [$x] (bi/+ $x 1))
-               #:bi{:type :bi/user-fn, :params '[$x]})]
-          (bi/run-steps
-           (bi/init-step [1 2 3])
-           (bi/map-step ($f (bi/deref$)))))))))
+  (do
+    (bi/reset-env)
+    (bi/again?
+     (bi/primary
+      (let [$f (with-meta (fn [$x] (bi/add $x 1)) #:bi{:type :bi/user-fn, :params '[$x]})]
+        (bi/run-steps
+         (bi/init-step [1 2 3])
+         (bi/map-step ($f (bi/deref$)))))))))

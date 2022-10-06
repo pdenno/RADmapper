@@ -4,11 +4,25 @@
    [clojure.pprint               :refer [cl-format pprint]]
    [clojure.spec.alpha           :as s :refer [check-asserts]]
    #?(:cljs [cljs.js :as cljs])
-   [rad-mapper.devl.devl-util    :as devl :refer [run examine]] ; ToDo: Temporary
-   [rad-mapper.builtins          :as bi]
    [rad-mapper.util              :as util]
    [sci.core                     :as sci]
    [taoensso.timbre              :as log]))
+
+(defn pretty-form
+  "Replace some namespaces with aliases"
+  [form]
+  (let [ns-alia {"rad-mapper.builtins" "bi"
+                 "bi"                  "bi"
+                 "java.lang.Math"      "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
+    (letfn [(ni [form]
+              (let [m (meta form)]
+                (cond (vector? form) (-> (->> form (map ni) doall vec) (with-meta m)),
+                      (seq? form)    (-> (->> form (map ni) doall) (with-meta m)),
+                      (map? form)    (-> (reduce-kv (fn [m k v] (assoc m k (ni v))) {} form) (with-meta m)),
+                      (symbol? form) (-> (if-let [ns (-> form namespace ns-alia)] (symbol ns (name form)) (symbol (name form)))
+                                         (with-meta m)),
+                      :else form)))]
+      (ni form))))
 
 (defn rad-string
   "Walk form replacing namespace alias 'bi' with 'rad-mapper.builtins'.
@@ -49,21 +63,21 @@
 
 (defn user-eval
   "Evaluate the argument form."
-  [form & {:keys [debug? check-asserts? debug-eval? sci?]
-           :or   {check-asserts? false}}] ; ToDo: debug? temporarily true.
-  (let [sci? true                      ; ToDo: temporary
-        debug-eval? true                ; ToDo: temporary
-        min-level (util/default-min-log-level)
-        full-form (rad-string form)]
+  [form opts]
+  (let [min-level (util/default-min-log-level)
+        full-form (rad-string form)
+        opts      (assoc opts :debug-eval? true)] ; ToDo: Temporary
     (try
-      (when debug-eval?
+      (when (:debug-eval? opts)
         (util/config-log :debug)
-        (log/debug (format "*****  Running %s *****" (if sci? "SCI" "eval"))))
-      (when debug-eval? (-> full-form util/read-str devl/clean-form pprint))
-      (s/check-asserts check-asserts?) ; ToDo: Investigate why check-asserts? = true is a problem
+        (log/debug (format "*****  Running %s *****" (if (:sci? opts) "SCI" "eval")))
+        (-> full-form util/read-str pretty-form pprint))
+      ;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
       (binding [*ns* (find-ns 'user)]  ; ToDo: This doesn't matter for SCI, right?
         (sci/binding [sci/out sw]
-          (if sci?
-            (sci/eval-string* ctx full-form)
-            (-> full-form util/read-str eval))))
+          (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins) (get '$)) nil]
+            (if (:sci? opts)
+              (sci/eval-string* ctx full-form)
+              (-> full-form util/read-str eval)))))
       (finally (util/config-log min-level)))))
+  

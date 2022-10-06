@@ -2,7 +2,7 @@
   "Test the rewrite of parse trees. rew/processRM is a toplevel function"
   (:require
    [clojure.test       :refer  [deftest is testing]]
-   [rad-mapper.devl.devl-util :as devl :refer [examine examine-]]
+   [devl.devl-util :as devl :refer [examine examine-]]
    [rad-mapper.rewrite  :as rew]))
 
 (defmacro run-test
