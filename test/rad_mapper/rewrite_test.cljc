@@ -29,12 +29,12 @@
     (testing "miscellaneous simple rewrites"
       (run-test "1" 1)
       (run-test "[1, 2, 3]"  [1 2 3])
-      (run-test "1 + 2" '(bi/+ 1 2))
+      (run-test "1 + 2" '(bi/add 1 2))
       (run-test "[1..5]" '(-> (range 1 (inc 5)) vec))
-      (run-test "$A[1]" '(bi/run-steps (bi/init-step $A) (bi/filter-step (fn [_x1] (bi/with-context _x1 1)))))
+      ;(run-test "$A[1]" '(bi/run-steps (bi/init-step $A) (bi/filter-step (fn [_x1] (bi/with-context _x1 1))))) ; I think I got rid of bi/w-c.
       (run-test "$sum($v.field)" '(bi/$sum (bi/run-steps (bi/init-step $v) (bi/get-step "field"))))
       (run-test "$sum(a.b)"      '(bi/$sum (bi/run-steps (bi/get-step "a") (bi/get-step "b"))))
-      (run-test "(A * B)"        '(bi/primary (bi/* (bi/get-scoped "A") (bi/get-scoped "B"))))
+      (run-test "(A * B)"        '(bi/primary (bi/multiply (bi/get-scoped "A") (bi/get-scoped "B"))))
       (run-test "4 ~> $f()"      '(bi/thread 4 (fn [_x1] ($f _x1))))
       (run-test "$" '(bi/deref$))
       (run-test "$foo" '$foo))
@@ -51,15 +51,15 @@
       (run-test "$var.(P * Q)"
                 '(bi/run-steps
                   (bi/init-step $var)
-                  (bi/primary (bi/* (bi/get-scoped "P") (bi/get-scoped "Q")))))
+                  (bi/primary (bi/multiply (bi/get-scoped "P") (bi/get-scoped "Q")))))
 
       (run-test "$data.(A * B)"
                 '(bi/run-steps
                   (bi/init-step $data)
-                  (bi/primary (bi/* (bi/get-scoped "A") (bi/get-scoped "B")))))
+                  (bi/primary (bi/multiply (bi/get-scoped "A") (bi/get-scoped "B")))))
 
       (run-test "a.b.c.d + e.f"
-                '(bi/+ (bi/run-steps
+                '(bi/add (bi/run-steps
                         (bi/get-step "a")
                         (bi/get-step "b")
                         (bi/get-step "c")
@@ -67,38 +67,38 @@
                        (bi/run-steps (bi/get-step "e")
                                      (bi/get-step "f"))))
       (run-test "a + b * $f(c + d)"
-                '(bi/+ (bi/get-step "a")
-                       (bi/* (bi/get-step "b")
-                             ($f (bi/+ (bi/get-step "c") (bi/get-step "d"))))))
+                '(bi/add (bi/get-step "a")
+                       (bi/multiply (bi/get-step "b")
+                             ($f (bi/add (bi/get-step "c") (bi/get-step "d"))))))
 
       (run-test "$var.a + b.c.(P * Q)"
-                '(bi/+ (bi/run-steps
+                '(bi/add (bi/run-steps
                         (bi/init-step $var)
                         (bi/get-step "a"))
                        (bi/run-steps
                         (bi/get-step "b")
                         (bi/get-step "c")
-                        (bi/primary (bi/* (bi/get-scoped "P") (bi/get-scoped "Q"))))))
+                        (bi/primary (bi/multiply (bi/get-scoped "P") (bi/get-scoped "Q"))))))
 
       (run-test "$var.a + b.c.(P * Q) + d"
-                '(bi/+ (bi/+ (bi/run-steps
+                '(bi/add (bi/add (bi/run-steps
                               (bi/init-step $var)
                               (bi/get-step "a"))
                              (bi/run-steps
                               (bi/get-step "b")
                               (bi/get-step "c")
-                              (bi/primary (bi/* (bi/get-scoped "P") (bi/get-scoped "Q")))))
+                              (bi/primary (bi/multiply (bi/get-scoped "P") (bi/get-scoped "Q")))))
                        (bi/get-step "d")))
 
       (run-test "$var.a + b.c.(P * Q) + d.(M * N)"
-                '(bi/+ (bi/+ (bi/run-steps
+                '(bi/add (bi/add (bi/run-steps
                               (bi/init-step $var)
                               (bi/get-step "a"))
                              (bi/run-steps
                               (bi/get-step "b")
                               (bi/get-step "c")
-                              (bi/primary (bi/* (bi/get-scoped "P") (bi/get-scoped "Q")))))
-                       (bi/run-steps (bi/get-step "d") (bi/primary (bi/* (bi/get-scoped "M") (bi/get-scoped "N"))))))
+                              (bi/primary (bi/multiply (bi/get-scoped "P") (bi/get-scoped "Q")))))
+                       (bi/run-steps (bi/get-step "d") (bi/primary (bi/multiply (bi/get-scoped "M") (bi/get-scoped "N"))))))
 
       (run-test "$var.a.b.c.(P * Q)"
                 '(bi/run-steps
@@ -106,35 +106,35 @@
                   (bi/get-step "a")
                   (bi/get-step "b")
                   (bi/get-step "c")
-                  (bi/primary (bi/* (bi/get-scoped "P") (bi/get-scoped "Q")))))
+                  (bi/primary (bi/multiply (bi/get-scoped "P") (bi/get-scoped "Q")))))
 
       (run-test "$sum($v.a.(P * Q))"
                 '(bi/$sum
                   (bi/run-steps
                    (bi/init-step $v)
                    (bi/get-step "a")
-                   (bi/primary (bi/* (bi/get-scoped "P") (bi/get-scoped "Q")))))))
+                   (bi/primary (bi/multiply (bi/get-scoped "P") (bi/get-scoped "Q")))))))
 
 
     (testing "miscellaneous"
       (run-test "function($v,$i,$a) { $v.cbc_InvoicedQuantity < 0 }"
                 '(with-meta
                    (fn [$v $i $a]
-                     (bi/< (bi/run-steps
+                     (bi/lt (bi/run-steps
                             (bi/init-step $v)
                             (bi/get-step "cbc_InvoicedQuantity")) 0))
                    #:bi{:type :bi/user-fn, :params '[$v $i $a]}))
 
       (run-test "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))"
                 '(bi/primary (let [$inc
-                                   (with-meta (fn [$v] (bi/+ $v 1))
+                                   (with-meta (fn [$v] (bi/add $v 1))
                                      #:bi{:type :bi/user-fn, :params (quote [$v])})]
                                (bi/$map [1 2 3] $inc))))
 
       (run-test "$reduce([1..5], function($x,$y){$x + $y}, 100)"
                 '(bi/$reduce (-> (range 1 (inc 5)) vec)
                              (with-meta
-                               (fn [$x $y] (bi/+ $x $y))
+                               (fn [$x $y] (bi/add $x $y))
                                #:bi{:type :bi/user-fn, :params (quote [$x $y])}) 100)
                 :keep-meta? true)
 
@@ -149,7 +149,7 @@
                                  (bi/init-step $v)
                                  (bi/get-step "InvoiceLine"))
                                 (with-meta (fn [$v $i $a]
-                                             (bi/< (bi/run-steps
+                                             (bi/lt (bi/run-steps
                                                     (bi/init-step $v)
                                                     (bi/get-step "Quantity")) 0))
                                   #:bi{:type :bi/user-fn, :params (quote [$v $i $a])})))
@@ -180,4 +180,4 @@
     (is (= '{:asKeys [?ownerName ?systemName], :otherStuff true}
            (rew/processRM :ptag/options-map "{asKeys     : [?ownerName, ?systemName],
                                              otherStuff : true}"
-                         :rewrite? true)))))
+                          {:rewrite? true})))))

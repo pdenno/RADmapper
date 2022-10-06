@@ -66,7 +66,7 @@
   [form opts]
   (let [min-level (util/default-min-log-level)
         full-form (rad-string form)
-        opts      (assoc opts :debug-eval? true)] ; ToDo: Temporary
+        opts      (-> opts (assoc :debug-eval? false) (assoc :sci? true))] ; ToDo: Temporary
     (try
       (when (:debug-eval? opts)
         (util/config-log :debug)

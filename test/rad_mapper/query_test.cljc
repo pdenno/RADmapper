@@ -182,7 +182,7 @@
                                $q := query(){[?class :rdf/type     'owl/Class']
                                              [?class :resource/iri  ?class-iri]};
                                $q($) )"
-                            :execute? true)
+                            {:execute? true})
               (map :?class-iri)
               (map keyword)
               set)))))

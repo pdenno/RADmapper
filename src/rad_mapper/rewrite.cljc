@@ -24,33 +24,34 @@
   "A top-level function for all phases of translation.
    parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
    With no opts it parses without debug output."
-  [tag str opts]
-  (let [rewrite? (or (:rewrite? opts) (:execute? opts))
-        ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
-    (binding [*debugging?* (:debug? opts)
-              par/*debugging?* (:debug-parse? opts)]
-      (if (or *debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
-      #?(:clj (with-open [rdr (-> str char-array clojure.java.io/reader)]
-                (as-> (par/make-pstate rdr) ?ps
+  ([tag str] (processRM tag str {}))
+  ([tag str opts]
+   (let [rewrite? (or (:rewrite? opts) (:execute? opts))
+         ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
+     (binding [*debugging?* (:debug? opts)
+               par/*debugging?* (:debug-parse? opts)]
+       (if (or *debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
+       #?(:clj (with-open [rdr (-> str char-array clojure.java.io/reader)]
+                 (as-> (par/make-pstate rdr) ?ps
+                   (par/parse tag ?ps)
+                   (dissoc ?ps :line-seq) ; dissoc so you can print it.
+                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                   (reset! ps-atm ?ps)))
+          :cljs (as-> (par/make-pstate str) ?ps
                   (par/parse tag ?ps)
-                  (dissoc ?ps :line-seq) ; dissoc so you can print it.
                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
                   (reset! ps-atm ?ps)))
-         :cljs (as-> (par/make-pstate str) ?ps
-                 (par/parse tag ?ps)
-                 (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
-                 (reset! ps-atm ?ps)))
-      (if (= :ok (:parse-status @ps-atm))
-        (as-> (:result @ps-atm) ?r
-          (if rewrite?
-            (->> (if (:skip-top? opts) ?r {:typ :toplevel :top ?r}) rewrite)
-            ?r)
-          (if (:execute? opts) (ev/user-eval ?r opts) ?r)
-          (if (:rewrite-error? ?r)
-            (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
-            ?r))
-        (case (:parse-status @ps-atm)
-          :premature-end (log/error "Parse ended prematurely"))))))
+       (if (= :ok (:parse-status @ps-atm))
+         (as-> (:result @ps-atm) ?r
+           (if rewrite?
+             (->> (if (:skip-top? opts) ?r {:typ :toplevel :top ?r}) rewrite)
+             ?r)
+           (if (:execute? opts) (ev/user-eval ?r opts) ?r)
+           (if (:rewrite-error? ?r)
+             (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
+             ?r))
+         (case (:parse-status @ps-atm)
+           :premature-end (log/error "Parse ended prematurely")))))))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.

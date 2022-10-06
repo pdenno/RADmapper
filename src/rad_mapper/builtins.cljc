@@ -115,8 +115,10 @@
   "If the object isn't a container, run the function on it,
    otherwise, mapv over the argument and containerize the result."
   [f arg]
+  (reset! diag f)
   (if (container? arg)
-     (->> (mapv #(binding [$ (atom %)] (f %)) arg) containerize)
+    (->> (mapv #(binding [$ (atom %)] (f %)) arg)
+         containerize)
     (f arg)))
 
 (defn jflatten
@@ -224,7 +226,7 @@
         (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn* add      "plus"   [x y]   (log/debug (format "plus: x = %s y = %s" x y)) (+ x y))
+(defn* add      "plus"   [x y]   (+ x y))
 (defn* subtract "minus"  [x y]   (- x y))
 (defn* multiply "times"  [x y]   (* x y))
 (defn* divide   "divide" [x y]   (s/assert ::non-zero y) (double (/ x y)))
@@ -470,7 +472,7 @@
   "All the arguments of bi/run-steps are functions. This one maps argument body over $ ."
   [body]
   `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/map-step :body ~body}))))
+       (with-meta {:bi/step-type :bi/map-step :body '~body}))))
 
 #?(:cljs
 (def map-step ^:sci/macro

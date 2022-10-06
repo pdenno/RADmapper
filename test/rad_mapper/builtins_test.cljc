@@ -61,7 +61,7 @@
 
       (run-test "$encodeUrlComponent('?x=test')" "%3Fx%3Dtest"))
 
-    (testing "$eval"
+    #_(testing "$eval"                                             ; <========================== COMMENTED OUT pre-CLJS testing.
       (run-test "$eval('[1,2,3]')" [1 2 3])
       (run-test "$eval('[1,$string(2),3]')" [1 "2" 3]))
 

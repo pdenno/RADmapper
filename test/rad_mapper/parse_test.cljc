@@ -140,7 +140,7 @@
                     :body {:typ :BinOpSeq,
                            :seq [{:typ :Jvar,
                                   :jvar-name "$x"}
-                                 bi/+ 1]}},
+                                 bi/add 1]}},
               :args [3]}
            (rew/processRM :ptag/exp "function($x){$x+1}(3)")))
 
