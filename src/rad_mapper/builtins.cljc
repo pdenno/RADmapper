@@ -16,10 +16,8 @@
    #?(:clj  [datahike.api                 :as d]
       :cljs [datascript.core              :as d])
    [failjure.core                :as fj]
-   ;[rad-mapper.builtins          :as bi]
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util]
-   ;;[sci.core                     :as sci] ; ToDo: Temporary?
    [taoensso.timbre              :as log])
   #?(:clj
      (:import java.text.DecimalFormat
@@ -311,30 +309,6 @@
             (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
                    (set-context! new-res)))))))
 
-#_(defn run-steps
-  "Run or map over each path step function, passing the result to the next step."
-  [& steps]
-  (log/debug "--- run-steps ---")
-  (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (loop [steps steps
-           res   @$]
-      (if (or (empty? steps) (fj/failed? res)) res
-          (let [styp (step-type steps)
-                sfn  (first steps)
-                new-res (case styp ; init-step, value-step, map-step, primary are defined through macros.
-                          :bi/init-step    (-> (sfn @$) containerize?),
-                          :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
-                                                                :bi/attr (-> sfn meta :bi/arg)}),
-                          :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
-                          :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
-                          :bi/value-step   (if (vector? res) (mapv sfn (containerize? res)) (sfn res)),
-                          :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
-                          :bi/map-step     (cmap sfn (containerize? res)),
-                          (fj/fail "Invalid step. sfn = %s" sfn))]
-            (log/debug (format "    styp = %s meta = %s res = %s" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-            (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
-                   (set-context! new-res)))))))
-
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
 ;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
 ;;; rather than the first author from all of the books. http://docs.jsonata.org/processing
@@ -364,7 +338,7 @@
                 (-> (cmap #(aref % ix) ob) jflatten)))
             (as-> ob ?o          ; Filter behavior.
               (singlize ?o)
-              (-> (filterv pred|ix-fn ?o) containerize?)))))
+              (-> (filterv #(binding [$ (atom %)] (pred|ix-fn %)) ?o) containerize?)))))
       (with-meta {:bi/step-type :bi/filter-step})))
 
 (defn get-step
@@ -392,19 +366,6 @@
          ~body)
        (with-meta {:bi/step-type :bi/value-step :body '~body})))
 
-
-#_(defmacro value-step
-  "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
-   and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
-  [body]
-  `(->
-     (fn ~'value-step [x#]
-       (let [func# (fn [y#] (binding [$ (atom y#)] ~body))]
-         (if (vector? x#)
-           (->> (mapv func# x#) (mapv vector))
-           (vector (func# x#)))))
-     (with-meta {:bi/step-type :bi/value-step})))
-
 #?(:cljs
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
@@ -430,20 +391,6 @@
    Primary is the function used in cmap (mapv) when the argument res in run-steps is a container."
   [body]
   `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/primary})))
-
-#_(defmacro primary
-  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes the context atom and runs the body.
-   Primary is the function used in cmap (mapv) when the argument res in run-steps is a container."
-  [body]
-  `(-> (fn [& arg#] ;; must sci/bind sci/out to (java.io.StringWriter.) for debugging to work.
-         (log/debug (format "primary (the function): arg = %s $ = %s" arg# @$))
-         (log/debug (format "arg is seq?: %s" (seq? arg#)))
-         (binding [$ (if (empty? arg#) $ (-> arg# first atom))]
-           (log/debug (format "primary (before body, in binding): $ = %s" @$))
-           (let [res# ~body]
-             (log/debug (format "primary (after body, in binding): $ = %s res = %s" @$ res#))
-             res#)))
        (with-meta {:bi/step-type :bi/primary})))
 
 #_(def primary ^:sci/macro

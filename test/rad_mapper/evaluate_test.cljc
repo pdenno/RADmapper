@@ -292,23 +292,3 @@
 
     (run-test "[{'phone' : {'mobile' : '123-456-7890'}}].phone.mobile"
                 "123-456-7890")))
-
-(defn tryme []
-  (bi/reset-env)
-  (bi/again?
-   (bi/primary
-    (let
-        [$f
-         (with-meta
-           (fn [$x] (bi/add $x 1))
-           #:bi{:type :bi/user-fn, :params '[$x]})]
-      (bi/run-steps
-       (bi/init-step [1 2 3])
-       (bi/map-step ($f (bi/deref$))))))))
-
-(defn tryme2 []
-  (let [$f (with-meta (fn [$x] (bi/add $x 1)) #:bi{:type :bi/user-fn, :params '[$x]})]
-      (bi/run-steps
-       (bi/init-step [1 2 3])
-       (bi/map-step ($f (bi/deref$))))))
-
