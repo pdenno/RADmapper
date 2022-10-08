@@ -1,0 +1,12 @@
+#kaocha/v1
+{:plugins [:kaocha.plugin/hooks]
+ :tests [{:id :unit
+          :test-paths ["test"]
+          #_#_ :type :kaocha.type/cljs2}
+         {:id :unit-cljs
+          :type :kaocha.type/cljs2
+          :test-paths ["test"]
+          ;; :cljs/timeout 10000                        ; 10 seconds, the default
+          ;; :cljs/repl-env cljs.repl.node/repl-env     ; node is the default
+          ;; :cljs/repl-env cljs.repl.browser/repl-env
+          }]}

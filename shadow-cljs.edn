@@ -6,7 +6,7 @@
             :output-dir "resources/public/js"
             #_#_:asset-path "/js"
             :compiler-options {:externs ["datascript/externs.js"]}
-            :modules  {:app {:init-fn rad-mapper.rewrite/success}
+            :modules  {:app {:init-fn dev.dutil/success}
                              #_#_:entries [rad-mapper.rewrite]}
             #_#_:devtools {:after-load rad-mapper.rewrite/success}}
 
@@ -15,11 +15,11 @@
             :exports-vars rad-mapper.rewrite/processRad
             :compiler-options {:externs ["datascript/externs.js"]}}
 
-  :test-kaocha {:target    :browser-test
-                :runner-ns kaocha.cljs2.shadow-runner
-                :test-dir  "target/kaocha-test"
-                :ns-regexp ".*-test$"
+  :test-kaocha {:target           :browser-test
+                :runner-ns        kaocha.cljs2.shadow-runner
+                :test-dir         "target/kaocha-test"
+                :ns-regexp        ".*-test$"
                 :compiler-options {:externs ["datascript/externs.js"]}
-                :devtools {:http-port 1818
-                           :http-root "target/kaocha-test"
-                           :preloads [lambdaisland.chui.remote]}}}}
+                :devtools         {:http-port 1818
+                                   :http-root "target/kaocha-test"
+                                   :preloads [lambdaisland.chui.remote]}}}}

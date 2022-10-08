@@ -3,7 +3,10 @@
   (:require
    [clojure.pprint               :refer [cl-format pprint]]
    [clojure.spec.alpha           :as s :refer [check-asserts]]
-   #?(:cljs [cljs.js :as cljs])
+   #?(:cljs [cljs.js :as cljs]) ; ToDo: Not needed?
+   [failjure.core                :as fj]
+   [rad-mapper.parse             :as par]
+   [rad-mapper.rewrite           :as rew]
    [rad-mapper.util              :as util]
    [sci.core                     :as sci]
    [taoensso.timbre              :as log]))
@@ -47,8 +50,8 @@
         tns         (sci/create-ns 'timbre-ns)
         builtins-ns (update-vals publics #(sci/copy-var* % bns))
         pprint-ns   {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
-        timbre-ns   {'debug     (sci/copy-var* #'taoensso.timbre/debug tns)
-                     'log!      (sci/copy-var* #'taoensso.timbre/log! tns)
+        timbre-ns   {#_#_'debug     (sci/copy-var* #'taoensso.timbre/debug tns) ; a macro
+                     #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
                      '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
                      '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)
                      }]
@@ -56,11 +59,10 @@
                             'taoensso.timbre      timbre-ns,
                             'clojure-pprint       pprint-ns}})))
 
-;;;(def ctx nil)
+#?(:clj
+(def sw (java.io.StringWriter.)))
 
-;;; (sci/eval-string* ctx "(rad-mapper.builtins/+ 1 1)")
-(def sw (java.io.StringWriter.))
-
+#?(:clj
 (defn user-eval
   "Evaluate the argument form."
   [form opts]
@@ -79,5 +81,57 @@
             (if (:sci? opts)
               (sci/eval-string* ctx full-form)
               (-> full-form util/read-str eval)))))
-      (finally (util/config-log min-level)))))
-  
+      (finally (util/config-log min-level))))))
+
+#?(:cljs
+(defn user-eval
+  "Evaluate the argument form."
+  [form opts]
+  (let [min-level (util/default-min-log-level)
+        full-form (rad-string form)
+        opts      (-> opts (assoc :debug-eval? false) (assoc :sci? true))] ; ToDo: Temporary
+    (try
+      (when (:debug-eval? opts)
+        (util/config-log :debug)
+        (log/debug "*****  Running SCI *****")
+        (-> full-form util/read-str pretty-form pprint))
+      ;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
+      (binding [*ns* (find-ns 'user)]  ; ToDo: This doesn't matter for SCI, right?
+        (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins) (get '$)) nil]
+          (if (:sci? opts)
+            (sci/eval-string* ctx full-form)
+            (-> full-form util/read-str eval))))
+      (finally (util/config-log min-level))))))
+
+(defn processRM
+  "A top-level function for all phases of translation.
+   parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
+   With no opts it parses without debug output."
+  ([tag str] (processRM tag str {}))
+  ([tag str opts]
+   (let [rewrite? (or (:rewrite? opts) (:execute? opts))
+         ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
+     (binding [rew/*debugging?* (:debug? opts)
+               par/*debugging?* (:debug-parse? opts)]
+       (if (or rew/*debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
+       #?(:clj (with-open [rdr (-> str char-array clojure.java.io/reader)]
+                 (as-> (par/make-pstate rdr) ?ps
+                   (par/parse tag ?ps)
+                   (dissoc ?ps :line-seq) ; dissoc so you can print it.
+                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                   (reset! ps-atm ?ps)))
+          :cljs (as-> (par/make-pstate str) ?ps
+                  (par/parse tag ?ps)
+                  (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                  (reset! ps-atm ?ps)))
+       (if (= :ok (:parse-status @ps-atm))
+         (as-> (:result @ps-atm) ?r
+           (if rewrite?
+             (->> (if (:skip-top? opts) ?r {:typ :toplevel :top ?r}) rew/rewrite)
+             ?r)
+           (if (:execute? opts) (user-eval ?r opts) ?r)
+           (if (:rewrite-error? ?r)
+             (fj/fail "Error in rewriting: %s" (with-out-str (pprint ?r)))
+             ?r))
+         (case (:parse-status @ps-atm)
+           :premature-end (log/error "Parse ended prematurely")))))))

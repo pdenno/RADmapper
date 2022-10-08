@@ -58,7 +58,7 @@
 (def builtin-un-op #{\+, \- :not})
 
 ;;; Binary operators. [+ - * / < > <= >= =]
-(def numeric-operators    '{\% bi/%, \* bi/multiply, \+ bi/add, \- bi/subtract, \/ bi/divide}) ; :range is not one of these.
+(def numeric-operators    '{\% bi/%, \* bi/multiply, \+ bi/add, \- bi/subtract, \/ bi/div}) ; :range is not one of these.
 (def comparison-operators '{:<= bi/lteq, :>= bi/gteq, :!= bi/!=, \< bi/lt, \= bi/eq, \> bi/gt "in" bi/in})
 (def boolean-operators    '{:and and :or or})
 (def string-operators     '{\& str})

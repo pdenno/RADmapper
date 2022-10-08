@@ -5,11 +5,11 @@
    #?(:clj  [datahike.pull-api      :as dp])
    #?(:cljs [datascript.core           :as d])
    #?(:cljs [datascript.pull-api      :as dp])
-   [owl-db-tools.resolvers :refer [pull-resource]]
+   #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [devl.devl-util :refer [run-test]]))
+   [dev.dutil :refer [run-test]]))
 
 (deftest anytest
   (is (= true true)))

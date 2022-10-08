@@ -1,4 +1,0 @@
-#kaocha/v1 {}
-{:plugins [:kaocha.plugin/hooks]
- :tests [{:type :kaocha.type/cljs2
-          :kaocha.hooks/before [my.kaocha.hooks/compile-and-launch]}]}

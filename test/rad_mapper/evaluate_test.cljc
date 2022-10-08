@@ -3,7 +3,7 @@
   (:require
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins  :as bi]
-   [devl.devl-util :refer [run-test examine run] :as dev]))
+   [dev.dutil :refer [run-test examine run] :as dev]))
 
 (deftest today
   (run-test "[[1,2,3], 4].$[1]" 2)

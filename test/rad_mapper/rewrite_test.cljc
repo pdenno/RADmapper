@@ -2,17 +2,17 @@
   "Test the rewrite of parse trees. rew/processRM is a toplevel function"
   (:require
    [clojure.test       :refer  [deftest is testing]]
-   [devl.devl-util :as devl :refer [examine examine-]]
+   [dev.dutil :as dev :refer [examine examine-]]
    [rad-mapper.rewrite  :as rew]))
 
 (defmacro run-test
-  "Use this to expand devl/run-test with :rewrite? true."
+  "Use this to expand dev/run-test with :rewrite? true."
   [exp gold & {:keys [keep-meta?]}]
-  `(devl/run-test ~exp ~gold :rewrite? true :keep-meta? ~keep-meta?))
+  `(dev/run-test ~exp ~gold :rewrite? true :keep-meta? ~keep-meta?))
 
 (defn run
-  "Use this to expand devl/run-test with :rewrite? true."
-  [exp] (devl/run exp :rewrite? true))
+  "Use this to expand dev/run-test with :rewrite? true."
+  [exp] (dev/run exp :rewrite? true))
 
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[0] translate correctly."

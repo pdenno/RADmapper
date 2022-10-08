@@ -227,7 +227,7 @@
 (defn* add      "plus"   [x y]   (+ x y))
 (defn* subtract "minus"  [x y]   (- x y))
 (defn* multiply "times"  [x y]   (* x y))
-(defn* divide   "divide" [x y]   (s/assert ::non-zero y) (double (/ x y)))
+(defn* div      "divide" [x y]   (s/assert ::non-zero y) (double (/ x y))) ; cljs.core/divide 
 (defn* gt       "greater-than"          [x y] (>  x y))
 (defn* lt       "less-than "            [x y] (<  x y))
 (defn* gteq     "greater-than-or-equal" [x y] (>= x y))
@@ -296,7 +296,7 @@
                                                                 :bi/attr (-> sfn meta :bi/arg)}),
                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
-                          :bi/value-step   (do (log/debug (format "Run step -- value-step vec? = %s fn = %s res = %s"
+                          :bi/value-step   (do (log/debug (cl-format nil "Run step -- value-step vec? = ~S fn = ~S res = ~S"
                                                                   (vector? res) sfn res))
                                                #_(sfn res)
                                                (if (vector? res)
@@ -305,7 +305,7 @@
                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
                           :bi/map-step     (cmap sfn (containerize? res)),
                           (fj/fail "Invalid step. sfn = %s" sfn))]
-            (log/debug (format "    styp = %s meta = %s res = %s" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+            (log/debug (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
             (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
                    (set-context! new-res)))))))
 
@@ -357,6 +357,7 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
+#?(:clj
 (defmacro value-step
   "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
@@ -364,41 +365,38 @@
   `(-> (fn [& ignore#]
          (log/debug "Call to the value-step")
          ~body)
-       (with-meta {:bi/step-type :bi/value-step :body '~body})))
+       (with-meta {:bi/step-type :bi/value-step :body '~body}))))
 
 #?(:cljs
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
-    `(->
-      (fn ~'value-step [x#]
-        (let [func# (fn [y#] (binding [$ (atom y#)] ~body))]
-          (if (vector? x#)
-            (->> (mapv func# x#) (mapv vector))
-            (vector (func# x#)))))
-      (with-meta {:bi/step-type :bi/value-step})))))
+      `(-> (fn [& ignore#]
+         (log/debug "Call to the value-step")
+         ~body)
+       (with-meta {:bi/step-type :bi/value-step :body '~body})))))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
   ([k]
-   (log/debug (format "get-scoped (single-arg): $ = %s" @$))
+   (log/debug (cl-format nil "get-scoped (single-arg): $ = ~S" @$))
    (get-scoped @$ k))
   ([obj k]
-   (log/debug (format "get-scoped: obj = %s k = %s " obj k))
+   (log/debug (cl-format nil "get-scoped: obj = ~S k = ~S " obj k))
    (get obj k)))
 
+#?(:clj
 (defmacro primary
   "Return a function with meta {:bi/step-type :bi/primary} that optionally takes the context atom and runs the body.
    Primary is the function used in cmap (mapv) when the argument res in run-steps is a container."
   [body]
   `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/primary})))
+       (with-meta {:bi/step-type :bi/primary}))))
 
-#_(def primary ^:sci/macro
+#?(:cljs
+(def primary ^:sci/macro
   (fn [_&form _&env body]
-    `(-> (fn ~'primary [& arg#]
-           ;;(log/debug (format "primary (the function): arg = %s $ = %s" arg# $)) ; must sci/bind sci/out to *out* for this.
-           (binding [$ (if (empty? arg#) $ (-> arg# first atom))] ~body))
-         (with-meta {:bi/step-type :bi/primary}))))
+    `(-> (fn [& ignore#] ~body)
+         (with-meta {:bi/step-type :bi/primary})))))
 
 #?(:clj
 (defmacro init-step
@@ -425,7 +423,7 @@
 (def map-step ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
-         (with-meta {:bi/step-type :bi/map-step})))))
+         (with-meta {:bi/step-type :bi/map-step :body '~body})))))
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,

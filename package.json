@@ -1,10 +1,10 @@
 {
-  "name": "guestbook",
+  "name": "radmapper",
   "version": "1.0.0",
-  "description": "exploring clojure-mode with kit guestbook",
+  "description": "RADmapper mapping engine",
   "main": "index.js",
   "dependencies": {
-    "shadow-cljs": "^2.20.1"
+    "shadow-cljs": "^2.20.2"
   },
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"

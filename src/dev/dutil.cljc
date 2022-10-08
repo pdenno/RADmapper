@@ -1,11 +1,17 @@
-(ns devl.devl-util
+(ns dev.dutil
   "Tools for repl-based development"
   (:require
    [clojure.pprint :refer [pprint]]
    [clojure.test :refer [is testing]]
-   [rad-mapper.rewrite :as rew]
    #?(:clj   [datahike.pull-api      :as dp]
-      :cljs  [datascript.pull-api    :as dp])))
+      :cljs  [datascript.pull-api    :as dp])
+   [rad-mapper.evaluate              :as ev]
+   [taoensso.timbre                  :as log]))
+
+(defn success ; ToDo: This should be temporary.
+  "To demonstrate debugging with browser"
+  []
+  (log/debug "Loaded!"))
 
 (defn clean-form
   "Replace some namespaces with aliases"
@@ -30,7 +36,7 @@
   "Show macroexpand-1 pretty-printed form sans package names.
    Argument is a quoted form"
   [form & {:keys [pprint?] :or {pprint? true}}]
-        (cond-> (-> form macroexpand-1 clean-form)
+        (cond-> (-> form clean-form) #_(-> form macroexpand-1 clean-form) ; ToDo: problem with macroexpand-1 in cljs?
           pprint? pprint))
 
 (defn nicer-
@@ -41,7 +47,7 @@
           pprint? pprint))
 
 (defn nicer-sym
-  "Forms coming back from rew/processRM have symbols prefixed by clojure.core
+  "Forms coming back from ev/processRM have symbols prefixed by clojure.core
    and other namespaces. On the quoted form in testing, I'd rather not see this.
    This takes away those namespace prefixes."
   [form]
@@ -69,7 +75,7 @@
    removes any metadata from value returned and its substructure."
   [exp & {:keys [rewrite? debug? debug-parse? keep-meta? sci?]}]
   (let [execute? (not rewrite?)]
-    (cond->> (rew/processRM
+    (cond->> (ev/processRM
               :ptag/exp exp
               {:rewrite? rewrite?
                :execute? execute?
@@ -83,13 +89,13 @@
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> (rew/processRM :ptag/exp exp {:rewrite? true}) remove-meta nicer-sym))
+  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) remove-meta nicer-sym))
 
 (defn examine [exp]
-  (-> (rew/processRM :ptag/exp exp {:rewrite? true}) nicer))
+  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) nicer))
 
 (defn examine- [exp]
-  (-> (rew/processRM :ptag/exp exp {:rewrite? true}) nicer-))
+  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) nicer-))
 
 (defmacro run-test
   "Print the test form using testing, run the test."

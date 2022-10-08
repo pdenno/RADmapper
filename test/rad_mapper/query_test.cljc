@@ -12,11 +12,11 @@
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
    [rad-mapper.util        :as util]
-   [devl.devl-util :as devl :refer [run-test nicer nicer- run run-rew examine remove-meta]]
+   [dev.dutil :refer [run-test nicer nicer- run run-rew examine remove-meta]]
    [failjure.core :as fj]))
 
 (defmacro run-test-rew
-  "Use this to expand devl/run-test with :rewrite? true."
+  "Use this to expand dev/run-test with :rewrite? true."
   [exp gold]
   `(run-test ~exp ~gold :rewrite? true))
 
