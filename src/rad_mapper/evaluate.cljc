@@ -19,7 +19,7 @@
   (log/info "Loaded!"))
 
 (defn pretty-form
-  "Replace some namespaces with aliases"
+  "Replace some namespaces with aliases for diagnostic legability."
   [form]
   (let [ns-alia {"rad-mapper.builtins" "bi"
                  "bi"                  "bi"
@@ -34,10 +34,22 @@
                       :else form)))]
       (ni form))))
 
-(defn rad-string
-  "Walk form replacing namespace alias 'bi' with 'rad-mapper.builtins'.
-   Wrap the form in code for multiple evaluation when it returns a primary fn.
-   Returns that string."
+(defn expand-sci-macros
+  [form]
+  (cond (vector? form) (->> form (map expand-sci-macros) doall vec),
+        (seq? form)    (let [func (when (-> form first symbol?)
+                                    #?(:cljs (try (-> form first eval) (catch :default _ nil))
+                                       :clj  (when-let [v (-> form first resolve)]
+                                               (try (var-get v) (catch Throwable _ nil)))))]
+                         (if (and (fn? func) (-> func meta :sci/macro))
+                           (-> (apply func (into [nil nil] (rest form))) expand-sci-macros)
+                           (map expand-sci-macros form)))
+        (map? form)    (reduce-kv (fn [m k v] (assoc m k (expand-sci-macros v))) {} form)
+        :else          form))
+
+(defn rad-form
+  "Walk form replacing the namespace alias 'bi' with 'rad-mapper.builtins' and expanding macros for SCI.
+   Wrap the form in code for multiple evaluation when it returns a primary fn."
   [form]
   (let [ns-alia {"bi" "rad-mapper.builtins"}]
     (letfn [(ni [form]
@@ -48,7 +60,8 @@
                                      (->> form name (symbol nsa))
                                      form)
                     :else form))]
-      (cl-format nil "(do (rad-mapper.builtins/reset-env) (rad-mapper.builtins/again? ~S))" (ni form)))))
+      `(do (rad-mapper.builtins/reset-env) (rad-mapper.builtins/again? ~(ni form))))))
+
 
 (def ctx
   (let [publics     (ns-publics 'rad-mapper.builtins)
@@ -66,52 +79,30 @@
                             'taoensso.timbre      timbre-ns,
                             'clojure-pprint       pprint-ns}})))
 
-#?(:clj
-(def sw (java.io.StringWriter.)))
+#?(:clj (def sw (java.io.StringWriter.)))
 
-#?(:clj
+
 (defn user-eval
   "Evaluate the argument form."
   [form opts]
   (let [min-level (util/default-min-log-level)
-        full-form (rad-string form)
-        opts      (-> opts (assoc :debug-eval? false) (assoc :sci? true))] ; ToDo: Temporary
-    (try
-      (when (:debug-eval? opts)
-        (util/config-log :debug)
-        (log/debug (format "*****  Running %s *****" (if (:sci? opts) "SCI" "eval")))
-        (-> full-form util/read-str pretty-form pprint))
-      ;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
-      (binding [*ns* (find-ns 'user)]  ; ToDo: This doesn't matter for SCI, right?
-        (sci/binding [sci/out sw]
-          (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins) (get '$)) nil]
-            (if (:sci? opts)
-              (sci/eval-string* ctx full-form)
-              (-> full-form util/read-str eval)))))
-      (finally (util/config-log min-level))))))
-
-#?(:cljs
-(defn user-eval
-  "Evaluate the argument form."
-  [form opts]
-  (let [min-level (util/default-min-log-level)
-        full-form (rad-string form)
+        full-form (-> form rad-form expand-sci-macros)
         opts      (-> opts
                       #_(assoc :debug-eval? false)
-                      (assoc :sci? (util/cljs?)))] ; ToDo: Someday will want finer control.
-    (println "opts = " opts)
+                      (assoc :sci? (or (util/cljs?) (:sci? opts))))]
     (try
       (when (:debug-eval? opts)
         (util/config-log :debug)
-        (log/info "*****  Running SCI *****")
-        (-> full-form util/read-str pretty-form pprint))
+        (log/debug (cl-format nil "*****  Running %s *****" (if (:sci? opts) "SCI" "eval")))
+        (-> full-form pretty-form pprint))
       ;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
-      (binding [*ns* (find-ns 'user)]  ; ToDo: This doesn't matter for SCI, right?
+      (sci/binding [sci/out sw]
         (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins) (get '$)) nil]
           (if (:sci? opts)
             (sci/eval-string* ctx full-form)
-            (-> full-form util/read-str eval))))
-      (finally (util/config-log min-level))))))
+            (binding [*ns* (find-ns 'rad-mapper.builtins)] (eval full-form)))))
+      (finally (util/config-log min-level)))))
+
 
 (defn processRM
   "A top-level function for all phases of translation.

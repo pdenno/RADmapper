@@ -243,23 +243,6 @@
   [x y]
   (= (jflatten x) (jflatten y)))
 
-#?(:clj
-(defmacro thread
-  "The function chaining operator is used in the situations where multiple nested functions need to
-   be applied to a value, while making it easy to read. The value on the LHS is evaluated,
-   then passed into the function on the RHS as its first argument. If the function has any other arguments,
-   then these are passed to the function in parenthesis as usual. It is an error if the RHS is not a
-   function, or an expression that evaluates to a function."
-  [x y]
-  `(let [xarg# ~x]
-     (do (set-context! xarg#)
-         (let [yarg# ~y]
-           (if (fn? yarg#)
-             (yarg# xarg#)
-             (throw (ex-info "The RHS argument to the threading operator is not a function."
-                             {:rhs-operator yarg#}))))))))
-
-#?(:cljs
 (def thread ^:sci/macro
   (fn [_&form _&env x y]
     `(let [xarg# ~x]
@@ -268,7 +251,7 @@
              (if (fn? yarg#)
                (yarg# xarg#)
                (throw (ex-info "The RHS argument to the threading operator is not a function."
-                               {:rhs-operator yarg#})))))))))
+                               {:rhs-operator yarg#}))))))))
 
 (defn step-type
   "Return a keyword describing what type of step to take next."
@@ -290,7 +273,7 @@
       (if (or (empty? steps) (fj/failed? res)) res
           (let [styp (step-type steps)
                 sfn  (first steps)
-                new-res (case styp ; init-step, value-step, map-step, primary are defined through macros.
+                new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
                           :bi/init-step    (-> (sfn @$) containerize?),
                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
                                                                 :bi/attr (-> sfn meta :bi/arg)}),
@@ -357,23 +340,12 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-#?(:clj
-(defmacro value-step
-  "Return a function that evaluates what is in the the []  'hello' in [1,2,3].['hello']
-   and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
-  [body]
-  `(-> (fn [& ignore#]
-         (log/info "Call to the value-step")
-         ~body)
-       (with-meta {:bi/step-type :bi/value-step :body '~body}))))
-
-#?(:cljs
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
       `(-> (fn [& ignore#]
          (log/info "Call to the value-step")
          ~body)
-       (with-meta {:bi/step-type :bi/value-step :body '~body})))))
+       (with-meta {:bi/step-type :bi/value-step :body '~body}))))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
@@ -384,47 +356,21 @@
    (log/info (cl-format nil "get-scoped: obj = ~S k = ~S " obj k))
    (get obj k)))
 
-#?(:clj
-(defmacro primary
-  "Return a function with meta {:bi/step-type :bi/primary} that optionally takes the context atom and runs the body.
-   Primary is the function used in cmap (mapv) when the argument res in run-steps is a container."
-  [body]
-  `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/primary}))))
-
-#?(:cljs
 (def primary ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [& ignore#] ~body)
-         (with-meta {:bi/step-type :bi/primary})))))
+         (with-meta {:bi/step-type :bi/primary}))))
 
-#?(:clj
-(defmacro init-step
-  "All the arguments of bi/run-steps are functions. This one just runs the argument body,
-   which might construct a literal value, be a literal value, or call a function."
-  [body]
-  `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/init-step}))))
-
-#?(:cljs
 (def init-step ^:sci/macro
   (fn [_&form _&env body]
     (log/info "Call to init-step 'macro' with body =" body)
     `(-> (fn [_x#] ~body)
-         (with-meta {:bi/step-type :bi/init-step :bi/body '~body})))))
+         (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
 
-#?(:clj
-(defmacro map-step
-  "All the arguments of bi/run-steps are functions. This one maps argument body over $ ."
-  [body]
-  `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/map-step :body '~body}))))
-
-#?(:cljs
 (def map-step ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
-         (with-meta {:bi/step-type :bi/map-step :body '~body})))))
+         (with-meta {:bi/step-type :bi/map-step :body '~body}))))
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
