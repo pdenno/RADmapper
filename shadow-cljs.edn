@@ -4,11 +4,9 @@
  :builds
  {:lib-dev {:target :browser
             :output-dir "resources/public/js"
-            #_#_:asset-path "/js"
             :compiler-options {:externs ["datascript/externs.js"]}
-            :modules  {:app {:init-fn dev.dutil/success}
-                             #_#_:entries [rad-mapper.rewrite]}
-            #_#_:devtools {:after-load rad-mapper.rewrite/success}}
+            :modules  {:app {:init-fn dev.dutil/start}} ; Ideally would be rad-mapper.evaluate/start, but then dutil isn't loaded!
+            :devtools {:after-load dev.dutil/reload}}
 
   :lib     {:target :node-library
             :output-to "lib.js"

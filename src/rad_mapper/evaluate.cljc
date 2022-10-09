@@ -11,6 +11,13 @@
    [sci.core                     :as sci]
    [taoensso.timbre              :as log]))
 
+(defn start
+  "NOT USED."
+  []
+  #?(:cljs (js/console.log "evaluate.cljc: Loaded console message. Setting log min-level = :debug"))
+  (util/config-log :debug)
+  (log/info "Loaded!"))
+
 (defn pretty-form
   "Replace some namespaces with aliases"
   [form]
@@ -89,11 +96,14 @@
   [form opts]
   (let [min-level (util/default-min-log-level)
         full-form (rad-string form)
-        opts      (-> opts (assoc :debug-eval? false) (assoc :sci? true))] ; ToDo: Temporary
+        opts      (-> opts
+                      #_(assoc :debug-eval? false)
+                      (assoc :sci? (util/cljs?)))] ; ToDo: Someday will want finer control.
+    (println "opts = " opts)
     (try
       (when (:debug-eval? opts)
         (util/config-log :debug)
-        (log/debug "*****  Running SCI *****")
+        (log/info "*****  Running SCI *****")
         (-> full-form util/read-str pretty-form pprint))
       ;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
       (binding [*ns* (find-ns 'user)]  ; ToDo: This doesn't matter for SCI, right?

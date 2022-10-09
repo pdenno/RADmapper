@@ -227,7 +227,7 @@
 (defn* add      "plus"   [x y]   (+ x y))
 (defn* subtract "minus"  [x y]   (- x y))
 (defn* multiply "times"  [x y]   (* x y))
-(defn* div      "divide" [x y]   (s/assert ::non-zero y) (double (/ x y))) ; cljs.core/divide 
+(defn* div      "divide" [x y]   (s/assert ::non-zero y) (double (/ x y))) ; cljs.core/divide
 (defn* gt       "greater-than"          [x y] (>  x y))
 (defn* lt       "less-than "            [x y] (<  x y))
 (defn* gteq     "greater-than-or-equal" [x y] (>= x y))
@@ -283,7 +283,7 @@
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
-  (log/debug "--- run-steps ---")
+  (log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (loop [steps steps
            res   @$]
@@ -296,7 +296,7 @@
                                                                 :bi/attr (-> sfn meta :bi/arg)}),
                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
-                          :bi/value-step   (do (log/debug (cl-format nil "Run step -- value-step vec? = ~S fn = ~S res = ~S"
+                          :bi/value-step   (do (log/info (cl-format nil "Run step -- value-step vec? = ~S fn = ~S res = ~S"
                                                                   (vector? res) sfn res))
                                                #_(sfn res)
                                                (if (vector? res)
@@ -305,7 +305,7 @@
                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
                           :bi/map-step     (cmap sfn (containerize? res)),
                           (fj/fail "Invalid step. sfn = %s" sfn))]
-            (log/debug (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+            (log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
             (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
                    (set-context! new-res)))))))
 
@@ -363,7 +363,7 @@
    and the truth values [[false] [true] [true]] of [1,2,3].[$ = 2]."
   [body]
   `(-> (fn [& ignore#]
-         (log/debug "Call to the value-step")
+         (log/info "Call to the value-step")
          ~body)
        (with-meta {:bi/step-type :bi/value-step :body '~body}))))
 
@@ -371,17 +371,17 @@
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
       `(-> (fn [& ignore#]
-         (log/debug "Call to the value-step")
+         (log/info "Call to the value-step")
          ~body)
        (with-meta {:bi/step-type :bi/value-step :body '~body})))))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
   ([k]
-   (log/debug (cl-format nil "get-scoped (single-arg): $ = ~S" @$))
+   (log/info (cl-format nil "get-scoped (single-arg): $ = ~S" @$))
    (get-scoped @$ k))
   ([obj k]
-   (log/debug (cl-format nil "get-scoped: obj = ~S k = ~S " obj k))
+   (log/info (cl-format nil "get-scoped: obj = ~S k = ~S " obj k))
    (get obj k)))
 
 #?(:clj
@@ -409,8 +409,9 @@
 #?(:cljs
 (def init-step ^:sci/macro
   (fn [_&form _&env body]
+    (log/info "Call to init-step 'macro' with body =" body)
     `(-> (fn [_x#] ~body)
-         (with-meta {:bi/step-type :bi/init-step})))))
+         (with-meta {:bi/step-type :bi/init-step :bi/body '~body})))))
 
 #?(:clj
 (defmacro map-step

@@ -1,17 +1,29 @@
 (ns dev.dutil
-  "Tools for repl-based development"
+  "Tools for repl-based exploration of RADmapper code"
   (:require
    [clojure.pprint :refer [pprint]]
    [clojure.test :refer [is testing]]
    #?(:clj   [datahike.pull-api      :as dp]
       :cljs  [datascript.pull-api    :as dp])
+   [rad-mapper.builtins              :as bi] ; Useful in development
    [rad-mapper.evaluate              :as ev]
-   [taoensso.timbre                  :as log]))
+   [rad-mapper.util                  :as util] ; Useful in development
+   [taoensso.timbre                  :as log :refer-macros [log info debug error]]))
 
-(defn success ; ToDo: This should be temporary.
+(defn start
+  "Without the start here, (and named shadow-cljs.edn build :modules {:app {:init-fn dev.dutil/start}}
+   this file won't be watched!"
+  []
+  #?(:cljs (js/console.log "dutil.cljc: Loaded console message. Setting log min-level = :debug"))
+  (util/config-log :debug)
+  (log/debug "Loaded!"))
+
+(defn ^:dev/after-load reload
   "To demonstrate debugging with browser"
   []
-  (log/debug "Loaded!"))
+  #?(:cljs (js/console.log "dutil: reloading"))
+  (util/config-log :debug)
+  (log/debug "Reloaded!"))
 
 (defn clean-form
   "Replace some namespaces with aliases"
@@ -73,7 +85,7 @@
 (defn run
   "Run the exp through whatever steps are specified; defaults to :execute and
    removes any metadata from value returned and its substructure."
-  [exp & {:keys [rewrite? debug? debug-parse? keep-meta? sci?]}]
+  [exp & {:keys [rewrite? debug? debug-parse? debug-eval? keep-meta? sci?]}]
   (let [execute? (not rewrite?)]
     (cond->> (ev/processRM
               :ptag/exp exp
@@ -81,7 +93,8 @@
                :execute? execute?
                :sci?     sci?
                :debug?   debug?
-               :debug-parse? debug-parse?})
+               :debug-parse? debug-parse?
+               :debug-eval? debug-eval?})
       true (reset! diag)
       (not keep-meta?) remove-meta
       true nicer-sym)))

@@ -35,19 +35,21 @@
 
 (defn config-log
   "Configure Timbre: set reporting levels and drop reporting host and time."
-  [level]
-  (if (#{:trace :debug :info :warn :error :fatal :report} level)
+  [min-level]
+  (if (#{:trace :debug :info :warn :error :fatal :report} min-level)
     (log/set-config!
      (-> log/*config*
          (assoc :output-fn #'no-host&time-output-fn)
          (assoc :min-level [[#{"datahike.*"} :error]
                             [#{"datascript.*"} :error]
-                            [#{"*"} level]])))
-    (log/error "Invalid timbre reporting level:" level)))
+                            [#{"*"} min-level]])))
+    (log/error "Invalid timbre reporting level:" min-level)))
 
 (defn default-min-log-level
   []
   (->> log/*config* :min-level (some #(when (= #{"*"} (first %)) (second %)))))
+
+(defn cljs? [] (if (find-ns 'cljs.core.Namespace) true false))
 
 ;;; ToDo: Refactor: This stuff belongs in the "messaging plug-in".
 (defn nspaces
