@@ -35,10 +35,11 @@
 ;;; --------- string functions -----------------------------------
 (deftest string-fns
   (testing "string functions"
+    #?(:clj ; ToDo: implement cljs
     (testing "$base64(en|de)code"
       (run-test "$base64encode('myuser:mypass')" "bXl1c2VyOm15cGFzcw==")
 
-      (run-test "$base64decode('bXl1c2VyOm15cGFzcw==')" "myuser:mypass"))
+      (run-test "$base64decode('bXl1c2VyOm15cGFzcw==')" "myuser:mypass")))
 
     (testing "$contains"
       (run-test "$contains('abracadabra', 'bra')"   true)
@@ -61,9 +62,9 @@
 
       (run-test "$encodeUrlComponent('?x=test')" "%3Fx%3Dtest"))
 
-    #_(testing "$eval"                                             ; <========================== COMMENTED OUT pre-CLJS testing.
-      (run-test "$eval('[1,2,3]')" [1 2 3])
-      (run-test "$eval('[1,$string(2),3]')" [1 "2" 3]))
+    #_(testing "$eval"   ; ToDo: Investigate for SCI and cljs.
+        (run-test "$eval('[1,2,3]')" [1 2 3])
+        (run-test "$eval('[1,$string(2),3]')" [1 "2" 3]))
 
     (testing "$join"
       (run-test "$join(['a','b','c'])" "abc")
@@ -236,6 +237,7 @@
     (run-test "$spread([{'a' : 1, 'b' : 2},{'a' : 1, 'b' : 2}])"
               [{"a" 1} {"b" 2} {"a" 1} {"b" 2}])))
 
+#?(:clj ; ToDo: Implement cljs
 (deftest date-fns
   (testing "datetime functions"
     (testing "$fromMillis"
@@ -243,4 +245,4 @@
       (run-test "$fromMillis(1510067557121, '[M01]/[D01]/[Y0001] [h#1]:[m01][P]')"
                 "11/07/2017 03:12PM") ; ToDo: Should be 'pm' not 'PM' and 3:12, not 03:12
       (run-test "$fromMillis(1510067557121, '[H01]:[m01]:[s01] [z]', '-0500')"
-                "10:12:37 -0500")))) ; ToDo: Example shows "10:12:37 GMT-05:00"
+                "10:12:37 -0500"))))) ; ToDo: Example shows "10:12:37 GMT-05:00"

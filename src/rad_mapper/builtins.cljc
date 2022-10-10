@@ -18,7 +18,7 @@
    [failjure.core                :as fj]
    [rad-mapper.query             :as qu]
    [rad-mapper.util              :as util]
-   [taoensso.timbre              :as log])
+   [taoensso.timbre              :as log :refer-macros[error debug info log!]])
   #?(:clj
      (:import java.text.DecimalFormat
               java.text.DecimalFormatSymbols
@@ -172,7 +172,7 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-(defn again?
+(defn again? ; ToDo: Use the rewriter to eliminate this.
   "Primary does double duty:
       (1) wrapping a whole body like ($foo), and
       (2) function for mapping like $x.($y + 1).
@@ -342,9 +342,7 @@
 
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
-      `(-> (fn [& ignore#]
-         (log/info "Call to the value-step")
-         ~body)
+      `(-> (fn [& ignore#] ~body)
        (with-meta {:bi/step-type :bi/value-step :body '~body}))))
 
 (defn get-scoped
@@ -363,7 +361,6 @@
 
 (def init-step ^:sci/macro
   (fn [_&form _&env body]
-    (log/info "Call to init-step 'macro' with body =" body)
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
 
@@ -511,10 +508,27 @@
   ([s] (s/assert ::string s) (str/lower-case s)))
 
 ;;; $match
-#?(
-:cljs
-(defn $match [& args] false) ; ToDo: CLJS doesn't have re-matcher.
-:clj
+#?(:cljs
+(defn $match
+  ([pattern] ($match @$ pattern :unlimited))
+  ([p1 p2] (if (util/regex? p1) ($match @$ p1 p2) ($match p1 p2 :unlimited)))
+  ([s pattern _limit] ; ToDo Implement limit (looks easy in grouper)
+   (let [s (if (keyword? s) ; query-roles are allowed.
+             (if (namespace s) (str (namespace s) "/" (name s)) (name s))
+             s)
+         result (as-> (util/grouper pattern s) ?r
+                  (map #(dissoc % :last-index :input) ?r)
+                  (map #(update % :groups (fn [x] (-> x rest vec))) ?r) ; ToDo: Investigate why rest here.
+                  (mapv #(update-keys % name) ?r)
+                  (with-meta ?r {:bi/regex-result? true}))]
+     ;; ToDo: Or should I jflatten (which currently doesn't change things)?
+     (cond
+       (empty? result) nil,
+       (and (vector? result) (== 1 (count result))) (first result),
+       :else result)))))
+
+;;; ToDo: MAYBE write a clojure util/grouper
+#?(:clj
 (defn $match
   "Applies the str string to the pattern regular expression and returns an array of objects,
    with each object containing information about each occurrence of a match withing str.

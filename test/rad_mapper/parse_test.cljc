@@ -24,7 +24,6 @@
   "Run the tokenizer on the argument string."
   [s]
   (-> (par/make-pstate s)
-      #_(assoc :string-block s)
       par/tokens-from-string
       par/tokenize
       :tokens)))

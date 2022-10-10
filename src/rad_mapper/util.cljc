@@ -9,7 +9,7 @@
    [failjure.core                :as fj]
    [taoensso.timbre              :as log]))
 
-;;; ================== CLJ/CLJS Interop =========================
+;;; ================== CLJ/CLJS/SCI Interop =========================
 (defn regex? [o]
   #?(:clj  (instance? java.util.regex.Pattern o)
      :cljs (instance? js/RegExp o)))
@@ -18,14 +18,33 @@
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
-#?(
-:clj
-   (defn db-atm? [o]
-     (and (instance? clojure.lang.Atom o)
-          (instance? datahike.db.DB @o)))
-:cljs
-   (defn db-atm? [_o] true) ; ToDo: Implement this.
-)
+#_(def log-info ^:sci/macro
+  (fn [_&form _&env body]))
+
+(defn db-atm? [o]
+#?(:clj  (and (instance? clojure.lang.Atom o)
+              (instance? datahike.db.DB @o))
+   :cljs true)) ; ToDo: Implement this.
+
+;;; https://stackoverflow.com/questions/53321244/clojurescript-equivalent-of-re-matcher-and-re-groups
+#?(:cljs
+(defn grouper
+  "Uses js/RegExp to find matching groups. Note that the JS value 
+   returned by `:last-index` is the index of the first char in the 
+   input string *after* the current match."
+  [re input-str]
+  (let [re-src re.source] ; the source string from the regexp arg
+    (loop [groups []
+           regexp (js/RegExp. re-src "g")] ; 'g' => global search
+      (let [res     (.exec regexp input-str)
+            res-clj (js->clj res)]
+        (if (nil? res)
+          groups
+          (recur
+            (conj groups {:groups res-clj :match (get res-clj 0) 
+                          :index res.index :input res.input
+                          :last-index regexp.lastIndex})
+            regexp)))))))
 
 ;;; ================== Ordinary Utils =========================
 (defn no-host&time-output-fn
@@ -237,18 +256,9 @@
            (map translate)
            add))))
 
-;;; ToDo: Meta is lost. I don't actually use this anyway.
-#_(defn sort-map
-  "Deep sort a map where map keys are uniform arguments to compare at each level of nesting."
-  [m]
-  (cond (map? m)    (reduce-kv (fn [sm k v] (assoc sm k (sort-map v))) (sorted-map) m),
-        (vector? m) (mapv sort-map m),
-        (seq? m)    (map sort-map m),
-        :else       m))
-
 (defn ln-seq
   "Implement line-seq interoperable for JS-hosted use.
    Pass-through to clojure.core/line-seq for Java-hosted."
-  [arg]
-  #?(:cljs (seq (clojure.string/split-lines arg))
-    :clj   (line-seq arg)))
+  [s]
+  #?(:cljs (seq (clojure.string/split-lines s))
+     :clj  (line-seq s)))

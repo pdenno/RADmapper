@@ -10,7 +10,7 @@
    [rad-mapper.rewrite           :as rew]
    [rad-mapper.util              :as util]
    [sci.core                     :as sci]
-   [taoensso.timbre              :as log]))
+   [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
 (defn start
   "NOT USED."
@@ -63,6 +63,7 @@
         builtins-ns (update-vals publics #(sci/copy-var* % bns))
         pprint-ns   {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
         timbre-ns   {#_#_'debug     (sci/copy-var* #'taoensso.timbre/debug tns) ; a macro
+                     #_#_'info      (sci/copy-var* #'taoensso.timbre/info tns)  ; a macro
                      #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
                      '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
                      '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}]

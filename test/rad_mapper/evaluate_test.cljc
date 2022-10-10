@@ -247,15 +247,14 @@
     (testing "assignments return values; semicolon is a separator."
       (run-test  "{'a' : 1, 'b' : 2}.($x := 3)" 3))
 
-    (testing "advancing context variable on apply-map."
-      (run-test "( $:= $read('data/testing/jsonata/try.json');
+    #?(:clj (testing "advancing context variable on apply-map."
+              (run-test "( $:= $read('data/testing/jsonata/try.json');
                    Account.Order.Product.(Price*Quantity) )"
-                [68.9, 21.67, 137.8, 107.99]))
-
-    (testing "like the try.jsonata page"
-      (run-test "( $:= $read('data/testing/jsonata/try.json');
+                        [68.9, 21.67, 137.8, 107.99])))
+    #?(:clj (testing "like the try.jsonata page"
+              (run-test "( $:= $read('data/testing/jsonata/try.json');
                    $sum(Account.Order.Product.(Price*Quantity)) )"
-                336.36))))
+                        336.36)))))
 
 #_(deftest nyi
   (testing "NYI:"
