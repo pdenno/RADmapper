@@ -1,11 +1,12 @@
 (ns rad-mapper.rewrite-test
   "Test the rewrite of parse trees. rew/processRM is a toplevel function"
   (:require
-   [clojure.test       :refer  [deftest is testing]]
-   [dev.dutil :as dev :refer [examine examine-]]
+   [clojure.test        :refer  [deftest is testing]]
+   [dev.dutil           :as dev :refer-macros [run-test]]
+   [rad-mapper.evaluate :as ev]
    [rad-mapper.rewrite  :as rew]))
 
-(defmacro run-test
+#_(defmacro run-test
   "Use this to expand dev/run-test with :rewrite? true."
   [exp gold & {:keys [keep-meta?]}]
   `(dev/run-test ~exp ~gold :rewrite? true :keep-meta? ~keep-meta?))
@@ -178,6 +179,6 @@
 (deftest options-map
   (testing "rewriting an options map"
     (is (= '{:asKeys [?ownerName ?systemName], :otherStuff true}
-           (rew/processRM :ptag/options-map "{asKeys     : [?ownerName, ?systemName],
+           (ev/processRM :ptag/options-map "{asKeys     : [?ownerName, ?systemName],
                                              otherStuff : true}"
-                          {:rewrite? true})))))
+                         {:rewrite? true})))))

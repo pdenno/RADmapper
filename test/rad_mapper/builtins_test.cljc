@@ -2,7 +2,7 @@
   "Test built-in functions"
   (:require
    [rad-mapper.builtins :as bi]
-   [dev.dutil    :refer [run-test run examine examine-]]
+   [dev.dutil    :refer-macros [run-test]]
    [clojure.test :refer [deftest is testing]]))
 
 (deftest jflatten

@@ -9,7 +9,7 @@
    [rad-mapper.builtins    :as bi]
    [rad-mapper.query       :as qu]
    [rad-mapper.rewrite     :as rew]
-   [dev.dutil :refer [run-test]]))
+   [dev.dutil :refer-macros [run-test]]))
 
 (deftest anytest
   (is (= true true)))

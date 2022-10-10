@@ -1,24 +1,16 @@
 (ns rad-mapper.query-test
   (:require
-   [clojure.pprint         :refer [pprint]]
-   [clojure.test           :refer  [deftest is testing]]
-   [clojure.walk]
+   [clojure.test :refer  [deftest is testing]]
    #?(:clj [datahike.api           :as d])
    #?(:clj [datahike.pull-api      :as dp])
    #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
    #?(:cljs [datascript.core :as d])
    #?(:cljs [datascript.pull-api :as dp])
    [rad-mapper.builtins    :as bi]
-   [rad-mapper.query       :as qu]
-   [rad-mapper.rewrite     :as rew]
-   [rad-mapper.util        :as util]
-   [dev.dutil :refer [run-test nicer nicer- run run-rew examine remove-meta]]
+   #?(:clj [rad-mapper.query       :as qu])
+   #?(:clj [rad-mapper.util :as util])
+   [dev.dutil :refer [run run-rew remove-meta] :refer-macros [run-test]]
    [failjure.core :as fj]))
-
-(defmacro run-test-rew
-  "Use this to expand dev/run-test with :rewrite? true."
-  [exp gold]
-  `(run-test ~exp ~gold :rewrite? true))
 
 ;;; ToDo: I think I intended to test whether some data (from express?) results in this?
 (def test-schema
@@ -65,6 +57,7 @@
       (is (== 33 (->> binding-set (filter #(= :dol/particular (:class-iri %))) count))))))
 )
 
+#?(:clj
 (deftest db-for-tests-2
   (testing "Testing that basic db-for! (and its schema-making) work"
     (let [conn @(qu/db-for! dolce-test-data)
@@ -84,40 +77,38 @@
             #:db{:id 2, :cardinality :db.cardinality/one, :ident :person/lname, :valueType :db.type/string}
             {:db/id 3, :person/fname "Bob", :person/lname "Clark"}]
            (let [conn @(qu/db-for! {:person/fname "Bob" :person/lname "Clark"})]
-             (dp/pull-many conn '[*] (range 1 (-> conn :max-eid inc))))))))
+             (dp/pull-many conn '[*] (range 1 (-> conn :max-eid inc)))))))))
 
 ;;;================================ testing query ==================================
 (deftest query-basics
   (testing "Testing query parsing, rewriting and execution."
     (testing "simple"
-      (run-test-rew
-       "query(){[?class :rdf/type     'owl/Class']
-              [?class :resource/iri  ?class-iri]}"
-       '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])))
+      (is (= (run-rew
+              "query(){[?class :rdf/type     'owl/Class']
+                       [?class :resource/iri  ?class-iri]}")
+             '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])))))
 
-    (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
-      (run-test
-       "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
+  (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
+    (run-test
+     "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
            $q := query(){[?ent ?attr ?val]};
            $q($data))"
-       '[{:?attr :person/lname, :?val "Dee"}
-         {:?attr :person/fname, :?val "Peter"}]))
+     '[{:?attr :person/lname, :?val "Dee"}
+       {:?attr :person/fname, :?val "Peter"}]))
 
   (testing "rewriting of an in-line query"
-    (run-test-rew
-     "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])"
-     '((bi/query '[] '[[?ent ?attr ?val]])
-       [(-> {}
-            (assoc "person/fname" "Peter")
-            (assoc "person/lname" "Dee"))])))
+      (is (= (run-rew "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")
+             '((bi/query '[] '[[?ent ?attr ?val]])
+               [(-> {}
+                    (assoc "person/fname" "Peter")
+                    (assoc "person/lname" "Dee"))]))))
 
   (testing "rewriting of an in-line query with a parameter."
-    (run-test-rew
-     "($qBob := query($name){[?e :name $name]}('Bob');
-         $qBob([{'name' : 'Bob'}]))"
-     '(bi/primary
-       (let [$qBob ((bi/query '[$name] '[[?e :name $name]]) "Bob")]
-         ($qBob [(-> {} (assoc "name" "Bob"))])))))
+    (is (= (run-rew "($qBob := query($name){[?e :name $name]}('Bob');
+                      $qBob([{'name' : 'Bob'}]))")
+           '(bi/primary
+             (let [$qBob ((bi/query '[$name] '[[?e :name $name]]) "Bob")]
+               ($qBob [(-> {} (assoc "name" "Bob"))]))))))
 
   (testing "execution of an in-line query"
     (run-test
@@ -132,19 +123,18 @@
      [{}]))
 
   (testing "rewriting a query using a mapping context with the default name 'source-data-1'"
-    (run-test-rew
-     "( $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
-           $q := query(){[?person :person/fname ?fname]
-                         [?person :person/lname ?lname]};
-         $q($data)
-      )"
-     '(bi/primary
-       (let [$data (with-meta [(-> {}
-                                   (assoc "person/fname" "Bob")
-                                   (assoc "person/lname" "Clark"))]
-                     #:bi{:json-array? true})
-             $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
-         ($q $data)))))
+    (is (= (run-rew "( $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
+                       $q := query(){[?person :person/fname ?fname]
+                                     [?person :person/lname ?lname]};
+                       $q($data)
+                     )")
+           '(bi/primary
+             (let [$data (with-meta [(-> {}
+                                         (assoc "person/fname" "Bob")
+                                         (assoc "person/lname" "Clark"))]
+                           #:bi{:json-array? true})
+                   $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
+               ($q $data))))))
 
   (testing "execution of a query using a mapping context with the default name 'source-data-1'."
     (run-test
@@ -165,27 +155,27 @@
       {:?fname "Bob",   :?lname "Clark"}]))
 
   ;; This tests query on data (rather than directly on a DB).
+  #?(:clj
   (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
            :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
            :dol/feature :dol/time-interval}
          (->> ((bi/query [] '[[?class :rdf/type :owl/Class] [?class :resource/iri  ?class-iri]]) dolce-test-data)
               (map :?class-iri)
               (map keyword)
-              set)))
+              set))))
 
   ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
   (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
            :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
            :dol/feature :dol/time-interval}
-         (->> (rew/processRM :ptag/exp ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
-                            "( $read('data/testing/dolce-2.edn');
-                               $q := query(){[?class :rdf/type     'owl/Class']
-                                             [?class :resource/iri  ?class-iri]};
-                               $q($) )"
-                            {:execute? true})
+         (->> (run-rew ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
+               "( $read('data/testing/dolce-2.edn');
+                  $q := query(){[?class :rdf/type     'owl/Class']
+                                [?class :resource/iri  ?class-iri]};
+                  $q($) )")
               (map :?class-iri)
               (map keyword)
-              set)))))
+              set))))
 
 ;;;================================ testing express ==================================
 (def e0 "express()
@@ -258,9 +248,8 @@
              (-> (efn {:?content "someContent"}) remove-meta))))
 
     (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
-      (run-test-rew
-       e1
-       '(bi/express {:params '($type), :options 'nil, :body '{"instance-of" $type, "content" ?class-iri}})))
+      (is (= (run-rew e1)
+       '(bi/express {:params '($type), :options 'nil, :body '{"instance-of" $type, "content" ?class-iri}}))))
 
     (testing "the function returned is higher-order..."
 
@@ -305,8 +294,7 @@
           []
           [:dol/endurant :dol/participant :dol/participant-in])))
 
-(comment
-(defn write-pretty-file
+#_(defn write-pretty-file
   "Transform/filter and sort objects; write them to fname."
   [fname objs & {:keys [transform] :or {transform identity}}]
   (spit fname
@@ -316,7 +304,7 @@
             (println "\n")
             (pprint obj))
           (println "]"))))
-)
+
 
 (comment (write-pretty-file "data/testing/owl-example.edn" owl-test-data))
 
@@ -384,15 +372,12 @@
 #_(deftest owl-example-rewrite
   (testing "OWL example in the spec"
     (testing "rewriting a query expression. Note quotes; bi/query isn't a macro"
-      (run-test-rew
-       "query($type){[?class :rdf/type $type]
-                     [?class :resource/iri ?class-iri]}"
-     '(bi/query '[$type] '[[?class :rdf/type $type] [?class :resource/iri ?class-iri]])))
+      (is (= (run-rew "query($type){[?class :rdf/type $type]
+                                    [?class :resource/iri ?class-iri]}")
+             '(bi/query '[$type] '[[?class :rdf/type $type] [?class :resource/iri ?class-iri]]))))
 
     (testing "rewriting an express"
-      (run-test-rew
-       owl-immediate-e1  ; was :ptag/express-def
-       :nyi))))
+      (run-rew  owl-immediate-e1 :nyi))))
 
 (def owl-query-immediate
 "
@@ -426,7 +411,7 @@
 
 ;;; ToDo: I think all the owl example stuff are screwed up because the output (and maybe DB) is messed up.
 ;;;       See the function write-pretty-file above.
-#_(deftest owl-example-executes
+#_(deftest owl-example-executes ; ToDo: Investigate
   (testing "Testing execution of $query and express."
 
     ;; bi/query is a higher-order function that returns either a query function, or a higher-order function
@@ -438,11 +423,11 @@
 
     ;; This tests making a new data source and use of a special.
     ;; I just check the type because the actual DB can't be tested for equality.
+    #?(:clj
     (is (= datahike.db.DB
-           (do (rew/processRM :ptag/exp
-                             "($ := $newContext() ~> $addSource($read('data/testing/owl-example.edn'), 'owl-data');)"
-                             :execute? true)
-               (-> @bi/$ :sources (get "owl-data") type))))
+           (do (ev/run-rew
+                "($ := $newContext() ~> $addSource($read('data/testing/owl-example.edn'), 'owl-data');))"
+               (-> @bi/$ :sources (get "owl-data") type))))))
 
     (testing "executing owl-query-immediate"
       (run-test
@@ -643,6 +628,7 @@
     s))
 
 ;; Use attempt-all to handle failures
+#?(:clj
 (defn validate-data [data]
   (fj/attempt-all [email (validate-email (:email data))
                          username (validate-not-empty (:username data))
@@ -650,4 +636,4 @@
         {:email email
          :id id
          :username username}
-    (fj/when-failed [e] (println (fj/message e)))))
+    (fj/when-failed [e] (println (fj/message e))))))

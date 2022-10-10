@@ -1,4 +1,4 @@
-{:deps {:aliases [:lib-dev]}
+{:deps {:aliases [:test-cljs] #_[:lib-dev]}
  :nrepl {:port 7004} ; exerciser uses 7002
  :dev-http {8000 "resources/public"}
  :builds
@@ -13,11 +13,12 @@
             :exports-vars rad-mapper.rewrite/processRad
             :compiler-options {:externs ["datascript/externs.js"]}}
 
-  :test-kaocha {:target           :browser-test
+  :kaocha-test {:target           :browser-test
                 :runner-ns        kaocha.cljs2.shadow-runner
                 :test-dir         "target/kaocha-test"
                 :ns-regexp        ".*-test$"
                 :compiler-options {:externs ["datascript/externs.js"]}
                 :devtools         {:http-port 1818
                                    :http-root "target/kaocha-test"
+                                   :after-load dev.dutil/reload ; I'm guessing.
                                    :preloads [lambdaisland.chui.remote]}}}}

@@ -3,12 +3,12 @@
   (:require
    #?(:clj [clojure.java.io :as io])
    [clojure.spec.alpha  :as s]
-   [clojure.test :refer  [deftest is testing]]
-   [dev.dutil :refer [remove-meta]]
-   [rad-mapper.parse    :as par]
-   [rad-mapper.rewrite  :as rew]))
+   [clojure.test        :refer  [deftest is testing]]
+   [dev.dutil           :refer [remove-meta]]
+   [rad-mapper.evaluate :as ev]
+   [rad-mapper.parse    :as par]))
 
-#?(:clj ; ToDo: Need CLJS version.
+#?(:clj
 (defn test-tokenize
   "Run the tokenizer on the argument string."
   [s]
@@ -18,6 +18,16 @@
         par/tokens-from-string
         par/tokenize
         :tokens))))
+
+#?(:cljs
+(defn test-tokenize
+  "Run the tokenizer on the argument string."
+  [s]
+  (-> (par/make-pstate s)
+      #_(assoc :string-block s)
+      par/tokens-from-string
+      par/tokenize
+      :tokens)))
 
 (deftest parsing-ToDos
   (testing "Things that don't quite sit right!"
@@ -91,7 +101,7 @@
               {:typ :Field, :field-name "d"}
               bi/get-step
               {:typ :Field, :field-name "e"}]}
-           (rew/processRM :ptag/exp "a.b.c.d.e")))))
+           (ev/processRM :ptag/exp "a.b.c.d.e")))))
 
 (def q1
 "query(){[?class :rdf/type            'owl/Class']
@@ -113,12 +123,12 @@
             :ent {:typ :Qvar, :qvar-name "?x"},
             :rel {:typ :TripleRole, :role-name :rdf/type},
             :val-exp "owl/Class"}
-           (rew/processRM :ptag/q-pattern "[?x :rdf/type 'owl/Class']")))
+           (ev/processRM :ptag/q-pattern "[?x :rdf/type 'owl/Class']")))
     (is (= [{:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?x"},
              :rel {:typ :TripleRole, :role-name :a}, :val-exp "one"}
             {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?y"},
              :rel {:typ :TripleRole, :role-name :b}, :val-exp "two"}]
-           (rew/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
+           (ev/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
     (is (= {:typ :QueryDef,
             :params [],
             :triples
@@ -127,13 +137,13 @@
              {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?class"},
               :rel {:typ :TripleRole, :role-name :resource/iri},
               :val-exp {:typ :Qvar, :qvar-name "?class-iri"}}]}
-           (rew/processRM :ptag/exp q1)))))
+           (ev/processRM :ptag/exp q1)))))
 
 (deftest immediate-use
   (testing "Testing expressions that start by defining an in-line, anonymous function or query."
 
     ;; This tests parsing function as an immediate-use expression.
-    (rew/processRM :ptag/exp "function($x){$x+1}(3)")
+    (ev/processRM :ptag/exp "function($x){$x+1}(3)")
     (is (=  '{:typ :ImmediateUse,
               :def {:typ :FnDef,
                     :vars [{:typ :Jvar, :jvar-name "$x"}],
@@ -142,7 +152,7 @@
                                   :jvar-name "$x"}
                                  bi/add 1]}},
               :args [3]}
-           (rew/processRM :ptag/exp "function($x){$x+1}(3)")))
+           (ev/processRM :ptag/exp "function($x){$x+1}(3)")))
 
     ;; This tests parsing query as an immediate-use expression.
     (is (= '{:typ :ImmediateUse,
@@ -157,7 +167,7 @@
                                                         :key "name",
                                                         :val "Bob"}]}]} "Bob"]}
            (->
-            (rew/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")
+            (ev/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")
             remove-meta)))))
 
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
@@ -167,9 +177,10 @@
                                           :keyword keyword?))
 
 (defn parse-ok? [exp]
-  (try (let [res (rew/processRM :ptag/exp exp)]
+  (try (let [res (ev/processRM :ptag/exp exp)]
          (s/valid? ::simplified-parse-structure res))
-       (catch Exception _e false)))
+       #?(:clj  (catch Exception _ false)
+          :cljs (catch :default  _ false))))
 
 (deftest simple
   (testing "Simple (parse):"

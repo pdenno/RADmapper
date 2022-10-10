@@ -18,27 +18,31 @@
            org.clojure/data.codec         {:mvn/version "0.1.1"}
            org.clojure/data.json          {:mvn/version "2.4.0"}
            org.clojure/data.xml           {:mvn/version "0.2.0-alpha8"}
-           org.clojure/data.zip           {:mvn/version "1.0.0"}
-           #_#_org.clojure/tools.namespace    {:mvn/version "1.3.0"}} ; Used (even in prod) for JS eval.
+           org.clojure/data.zip           {:mvn/version "1.0.0"}}
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
- :aliases {:dev {:extra-deps      {com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
+ :aliases {:dev {:extra-deps           {com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
 
-           :lib-dev {:extra-paths ["src/dev"]
-                     :extra-deps  {thheller/shadow-cljs {:mvn/version "2.20.2"}}}
+           :lib-dev   {:extra-paths    ["src/dev"]
+                       :extra-deps     {thheller/shadow-cljs {:mvn/version "2.20.2"}}}
 
-           :test {:extra-paths    ["test"]
-                  :extra-deps     {lambdaisland/kaocha {:mvn/version "1.70.1086"}
-                                   lambdaisland/kaocha-cljs2 {:mvn/version "0.0.35"}
-                                   #_#_com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
 
-           :deploy {:replace-deps {slipset/deps-deploy {:mvn/version "0.2.0"}}
-                    :exec-fn      deps-deploy.deps-deploy/deploy
-                    :exec-args    {:installer :remote
-                                   :sign-releases? false ; signing problem (see mznp deps.edn)
-                                   :artifact "RADmapper-1.0.29.jar"}}
+           :test      {:extra-paths    ["test"]}
+
+           :test-cljs {:extra-paths    ["test"]
+                       :extra-deps     {thheller/shadow-cljs {:mvn/version "2.20.2"}
+                                        lambdaisland/kaocha {:mvn/version "1.70.1086"}
+                                        lambdaisland/kaocha-cljs2 {:mvn/version "0.0.35"}
+                                        com.lambdaisland/glogi        {:mvn/version "1.1.144"}
+                                        #_#_com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
+
+           :deploy   {:replace-deps    {slipset/deps-deploy {:mvn/version "0.2.0"}}
+                      :exec-fn         deps-deploy.deps-deploy/deploy
+                      :exec-args       {:installer :remote
+                                        :sign-releases? false ; signing problem (see mznp deps.edn)
+                                        :artifact "RADmapper-1.0.29.jar"}}
 
            ;; clj -M:morpheus -d graphs -f svg -e 'clojure.core/.*|:clj-kondo/unknown-namespace/.*|:cljs.core/.*' src
-           :morpheus {:extra-deps {thomasa/morpheus {:git/url "https://github.com/benedekfazekas/morpheus.git"
-                                                     :git/sha "9d6f2c1ede8be7ab4508065fe6b7e40e0c099ab6"}}
-                      :main-opts ["-m" "thomasa.morpheus.main"]}}}
+           :morpheus {:extra-deps      {thomasa/morpheus {:git/url "https://github.com/benedekfazekas/morpheus.git"
+                                                          :git/sha "9d6f2c1ede8be7ab4508065fe6b7e40e0c099ab6"}}
+                      :main-opts       ["-m" "thomasa.morpheus.main"]}}}

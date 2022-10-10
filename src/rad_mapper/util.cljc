@@ -250,6 +250,5 @@
   "Implement line-seq interoperable for JS-hosted use.
    Pass-through to clojure.core/line-seq for Java-hosted."
   [arg]
-  #?(:cljs
-    (seq (clojure.string/split-lines arg))
-    :clj (line-seq arg)))
+  #?(:cljs (seq (clojure.string/split-lines arg))
+    :clj   (line-seq arg)))
