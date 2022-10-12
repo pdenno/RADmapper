@@ -555,14 +555,14 @@
    'bi/lteq          {:path? false :assoc :none :val 800}
    'bi/gteq          {:path? false :assoc :none :val 800}
    'bi/eq            {:path? false :assoc :none :val 800}
-   :!=               {:path? false :assoc :none :val 800}
+   'bi/neq           {:path? false :assoc :none :val 800}
    :in               {:path? false :assoc :none :val 700}
    'bi/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
    'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
-   'str              {:path? false :assoc :left :val 400}
+   'bi/concat        {:path? false :assoc :left :val 400}
    'bi/add           {:path? false :assoc :left :val 400}
    'bi/subtract      {:path? false :assoc :left :val 400}
-   :range            {:path? false :assoc :left :val 400} ; ToDo guessing
+   'bi/range         {:path? false :assoc :left :val 400} ; ToDo guessing
    'bi/multiply      {:path? false :assoc :left :val 300}
    'bi/%             {:path? false :assoc :left :val 300}
    'bi/div           {:path? false :assoc :left :val 300}

@@ -86,8 +86,9 @@
   (let [min-level (util/default-min-log-level)
         full-form (rad-form form)
         opts      (-> opts
-                      #_(assoc :debug-eval? false)
-                      (assoc :sci? (or (util/cljs?) (:sci? opts))))]
+                      (assoc :debug-eval? false)
+                      #_(assoc :sci? (or (util/cljs?) (:sci? opts)))
+                      (assoc :sci? true))]
     (when (or (:debug-eval? opts) (= min-level :debug))
       (util/config-log :debug)
       (log/debug (cl-format nil "*****  Running ~S *****" (if (:sci? opts) "SCI" "eval")))
@@ -95,9 +96,10 @@
     (try
       ;;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
       (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins) (get '$)) nil]
-        (if (:sci? opts)
-          (sci/eval-form ctx full-form)
-          (binding [*ns* (find-ns 'rad-mapper.builtins)] (eval full-form))))
+        (sci/binding [sci/out *out*]
+          (if (:sci? opts)
+            (sci/eval-form ctx full-form)
+            (binding [*ns* (find-ns 'rad-mapper.builtins)] (eval full-form)))))
       (finally (util/config-log min-level)))))
 
 (defn processRM
@@ -111,12 +113,12 @@
      (binding [rew/*debugging?* (:debug? opts)
                par/*debugging?* (:debug-parse? opts)]
        (if (or rew/*debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
-       #?(:clj (with-open [rdr (-> str char-array clojure.java.io/reader)]
-                 (as-> (par/make-pstate rdr) ?ps
-                   (par/parse tag ?ps)
-                   (dissoc ?ps :line-seq) ; dissoc so you can print it.
-                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
-                   (reset! ps-atm ?ps)))
+       #?(:clj  (with-open [rdr (-> str char-array clojure.java.io/reader)]
+                  (as-> (par/make-pstate rdr) ?ps
+                    (par/parse tag ?ps)
+                    (dissoc ?ps :line-seq) ; dissoc so you can print it.
+                    (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                    (reset! ps-atm ?ps)))
           :cljs (as-> (par/make-pstate str) ?ps
                   (par/parse tag ?ps)
                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))

@@ -3,30 +3,38 @@
   (:require
    #?(:clj [clojure.java.io :as io])
    [clojure.spec.alpha  :as s]
-   [clojure.test        :refer  [deftest is testing]]
+   [clojure.test        :refer [deftest is testing]]
    [dev.dutil           :refer [remove-meta]]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.parse    :as par]))
+
+(defn tokenize-head
+  "test-tokenize (below) doesn't produce tokens (except for head) it creates maps
+   containing :tkn, :line and :col. (:head ps) is a token; make it a vector of one of these maps."
+  [ps]
+  (-> {:line 1 :col 1}
+      (assoc :tkn (:head ps))
+      vector))
 
 #?(:clj
 (defn test-tokenize
   "Run the tokenizer on the argument string."
   [s]
-  (with-open [rdr (io/reader (char-array ""))]
-    (-> (par/make-pstate rdr)
-        (assoc :string-block s)
-        par/tokens-from-string
-        par/tokenize
-        :tokens))))
+  (with-open [rdr (io/reader (char-array s))]
+    (as-> (par/make-pstate rdr) ?ps
+      (par/tokens-from-string ?ps)
+      (par/tokenize ?ps)
+      (into (tokenize-head ?ps) (:tokens ?ps)))))
 
-#?(:cljs
+:cljs
 (defn test-tokenize
   "Run the tokenizer on the argument string."
   [s]
-  (-> (par/make-pstate s)
-      par/tokens-from-string
-      par/tokenize
-      :tokens)))
+  (as-> (par/make-pstate s) ?ps
+    (par/tokens-from-string ?ps)
+    (par/tokenize ?ps)
+    (into (tokenize-head ?ps) (:tokens ?ps)))))
+
 
 (deftest parsing-ToDos
   (testing "Things that don't quite sit right!"
@@ -47,9 +55,9 @@
       #_(is (= [{:tkn {:base "/wo/", :flags {:ignore-case? true}}, :line 1, :col 1}
               {:tkn \), :line 1, :col 6} {:tkn ::par/eof}]
                (test-tokenize "/wo/i)")))
-      (is (= [{:tkn \[, :line 1}
+      (is (= [{:tkn "[", :line 1}
               {:tkn 1,  :line 1}
-              {:tkn \], :line 1}
+              {:tkn "]", :line 1}
               {:tkn ::par/eof}]
              (->> (test-tokenize "/*  This is my
                                       multi-line comment */ [1]")
@@ -57,27 +65,35 @@
 
     (testing "token stream"
       (is (= [{:tkn :true, :line 1, :col 1}
-              {:tkn \?, :line 1, :col 5}
+              {:tkn "?", :line 1, :col 5}
               {:tkn {:typ :TripleRole :role-name :foo/bar}, :line 1, :col 6}
-              {:tkn \:, :line 1, :col 14}
+              {:tkn ":", :line 1, :col 14}
               {:tkn {:typ :TripleRole :role-name :foo/bat}, :line 1, :col 15}
               {:tkn ::par/eof}]
-             (test-tokenize "true?:foo/bar::foo/bat"))))
+             (test-tokenize "true?:foo/bar::foo/bat")))
+
+      (is (= [{:tkn :true, :line 1, :col 1}
+              {:tkn "?", :line 1, :col 6}
+              {:tkn {:typ :TripleRole :role-name :foo/bar}, :line 1, :col 8}
+              {:tkn ":", :line 1, :col 16}
+              {:tkn {:typ :TripleRole :role-name :foo/bat}, :line 1, :col 17}
+              {:tkn ::par/eof}]
+             (test-tokenize "true ? :foo/bar::foo/bat"))))
 
     (testing "\\? can be isolated as a token"
       (is (= [{:tkn :true, :line 1, :col 1}
-              {:tkn \?, :line 1, :col 5}
+              {:tkn "?", :line 1, :col 5}
               {:tkn "a", :line 1, :col 6}
-              {:tkn \:, :line 1, :col 9}
+              {:tkn ":", :line 1, :col 9}
               {:tkn "b", :line 1, :col 10}
               {:tkn :rad-mapper.parse/eof}]
              (test-tokenize "true?'a':'b'"))))
 
     (testing "triple roles are tokens"
       (is (= [{:tkn :true, :line 1, :col 1}
-              {:tkn \?, :line 1, :col 5}
+              {:tkn "?", :line 1, :col 5}
               {:tkn {:typ :TripleRole, :role-name :foo/bar}, :line 1, :col 6}
-              {:tkn \:, :line 1, :col 14}
+              {:tkn ":", :line 1, :col 14}
               {:tkn {:typ :TripleRole, :role-name :foo/bat}, :line 1, :col 15}
               {:tkn :rad-mapper.parse/eof}]
              (test-tokenize "true?:foo/bar::foo/bat"))))))
@@ -142,7 +158,6 @@
   (testing "Testing expressions that start by defining an in-line, anonymous function or query."
 
     ;; This tests parsing function as an immediate-use expression.
-    (ev/processRM :ptag/exp "function($x){$x+1}(3)")
     (is (=  '{:typ :ImmediateUse,
               :def {:typ :FnDef,
                     :vars [{:typ :Jvar, :jvar-name "$x"}],

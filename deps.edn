@@ -1,4 +1,4 @@
-{:paths   ["src" "src/dev"]
+{:paths   ["src" "src/dev"] ; src/dev not needed?
  :deps    {
            ;; (Logging doesn't work yet.
            ;; Including the next two removes the message seen in shadow execution. (See notes 2022-10-07.)
@@ -23,9 +23,8 @@
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
  :aliases {:dev {:extra-deps           {com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
 
-           :lib-dev   {:extra-paths    ["src/dev"]
+           :lib-dev   {:extra-paths    ["src/dev"] ; Not needed?
                        :extra-deps     {thheller/shadow-cljs {:mvn/version "2.20.2"}}}
-
 
            :test      {:extra-paths    ["test"]}
 

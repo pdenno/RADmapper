@@ -5,9 +5,10 @@
    [clojure.test :refer [is testing]]
    #?(:clj   [datahike.pull-api      :as dp]
       :cljs  [datascript.pull-api    :as dp])
-   [rad-mapper.builtins              :as bi] ; Useful in development
+   [sci.core                         :as core]  ; Useful in development
+   [rad-mapper.builtins              :as bi]    ; Useful in development
    [rad-mapper.evaluate              :as ev]
-   [rad-mapper.util                  :as util] ; Useful in development
+   [rad-mapper.util                  :as util]  ; Useful in development
    [taoensso.timbre                  :as log :refer-macros [log info debug error]]))
 
 (defn start

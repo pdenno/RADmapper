@@ -1,4 +1,4 @@
-{:deps {:aliases [:test-cljs] #_[:lib-dev]}
+{:deps {:aliases [:test-cljs]}
  :nrepl {:port 7004} ; exerciser uses 7002
  :dev-http {8000 "resources/public"}
  :builds
