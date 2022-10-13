@@ -5,8 +5,8 @@
  {:lib-dev {:target :browser
             :output-dir "resources/public/js"
             :compiler-options {:externs ["datascript/externs.js"]}
-            :modules  {:app {:init-fn dev.dutil/start}} ; Ideally would be rad-mapper.evaluate/start, but then dutil isn't loaded!
-            :devtools {:after-load dev.dutil/reload}}
+            :modules  {:app {:init-fn dev.dutil/start}} ; Ideally would be rad-mapper.evaluate/start, but then dev.dutil isn't loaded!...
+            :devtools {:after-load dev.dutil/reload}}   ; ... LATER: Even with these, sometimes it doesn't load  dev.dutil NS.
 
   :lib     {:target :node-library
             :output-to "lib.js"
@@ -14,11 +14,17 @@
             :compiler-options {:externs ["datascript/externs.js"]}}
 
   :kaocha-test {:target           :browser-test
-                :runner-ns        kaocha.cljs2.shadow-runner
                 :test-dir         "target/kaocha-test"
+                :runner-ns        kaocha.cljs2.shadow-runner
                 :ns-regexp        ".*-test$"
                 :compiler-options {:externs ["datascript/externs.js"]}
                 :devtools         {:http-port 1818
                                    :http-root "target/kaocha-test"
                                    :after-load dev.dutil/reload ; I'm guessing.
-                                   :preloads [lambdaisland.chui.remote]}}}}
+                                   :preloads [lambdaisland.chui.remote]}}
+
+  :script   {:target :node-script
+             :main dev.script/main
+             :output-to "out/demo-script/script.js"
+             :devtools {:before-load-async dev.script/stop
+                        :after-load dev.script/start}}}}

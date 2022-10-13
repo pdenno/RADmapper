@@ -29,8 +29,8 @@
 ;;; https://stackoverflow.com/questions/53321244/clojurescript-equivalent-of-re-matcher-and-re-groups
 #?(:cljs
 (defn grouper
-  "Uses js/RegExp to find matching groups. Note that the JS value 
-   returned by `:last-index` is the index of the first char in the 
+  "Uses js/RegExp to find matching groups. Note that the JS value
+   returned by `:last-index` is the index of the first char in the
    input string *after* the current match."
   [re input-str]
   (let [re-src re.source] ; the source string from the regexp arg
@@ -41,7 +41,7 @@
         (if (nil? res)
           groups
           (recur
-            (conj groups {:groups res-clj :match (get res-clj 0) 
+            (conj groups {:groups res-clj :match (get res-clj 0)
                           :index res.index :input res.input
                           :last-index regexp.lastIndex})
             regexp)))))))
@@ -171,7 +171,7 @@
 
 (defn trans-tag [tag]
   (if-let [ns (namespace tag)]
-    (keyword (str ns "_" (name tag)))
+    (keyword (str ns "_" (name tag))) ; ToDo: nname
     tag))
 
 (defn number-str?

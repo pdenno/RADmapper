@@ -6,7 +6,10 @@
    [clojure.test        :refer [deftest is testing]]
    [dev.dutil           :refer [remove-meta]]
    [rad-mapper.evaluate :as ev]
+   [rad-mapper.util     :as util]
    [rad-mapper.parse    :as par]))
+
+(util/config-log :error)
 
 (defn tokenize-head
   "test-tokenize (below) doesn't produce tokens (except for head) it creates maps

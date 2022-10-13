@@ -1,5 +1,3 @@
-;;; See https://github.com/plexus/cljs-test-example/blob/main/shadow-browser-kaocha-cljs2/tests.edn
-
 #kaocha/v1
 {:plugins [:print-invocations :hooks]
  :reporter kaocha.report/documentation
@@ -8,7 +6,8 @@
  ;; bit of debugging to get it right
  :capture-output? false
  :bindings {kaocha.stacktrace/*stacktrace-filters* []}
-
+ ;; This one for shadow starting kaocha.
+ ;; See https://github.com/plexus/cljs-test-example/blob/main/shadow-browser-kaocha-cljs2/tests.edn
  :tests [{:id :browser
           :type :kaocha.type/cljs2
           :test-paths   ["test"]
@@ -24,4 +23,12 @@
           ;; funnel) that we can talk to. In our case it checks if any valid
           ;; clients are already connected to funnel, if not it opens a browser.
           ;; This way we can reuse the browser tab
-          :kaocha.cljs2/clients-hook io.github.plexus.cljs-test-example.kaocha-hooks/launch-browser-and-wait}]}
+          :kaocha.cljs2/clients-hook io.github.plexus.cljs-test-example.kaocha-hooks/launch-browser-and-wait}
+
+         ;; This one is for clj test from shell: bin/kaocha unit
+         {:id          :unit
+          :test-paths  ["test" "src"]
+          :ns-patterns [".*"]
+          ;; :reporter kaocha.report.progress/report
+          ;; :plugins [:kaocha.plugin/profiling :kaocha.plugin/notifier
+          }]}

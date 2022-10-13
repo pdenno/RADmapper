@@ -5,8 +5,8 @@
    [clojure.string :as str :refer [index-of]]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
-   [failjure.core      :as fj]
-   [rad-mapper.util :as util])
+   [rad-mapper.util :as util]
+   [taoensso.timbre :as log])
   #?(:cljs (:require-macros [rad-mapper.parse :refer [defparse defparse-auto]])))
 
 ;;; The 'defparse' parsing functions pass around complete state.
@@ -22,7 +22,10 @@
 ;;;              on exit, it pops it. Macros store and recall push onto the top map of the stack.
 ;;;              For example use, see :ptag/MapSpec and parse-list.
 
-;;; ToDo: Rethink the lexer/parser dichotomy. See Lezer, for example. The continue-tag stuff and regex is pretty bad!
+;;; ToDo:
+;;;   - Rethink the lexer/parser dichotomy. See Lezer, for example. My continue-tag stuff and regex is pretty bad!
+;;;   - Some bi/ things are really just tk/ things, they don't denote an operator. (Maybe op/ and tk/).
+;;;     Also, keywords are more lightweight??? (Can't put meta on them).
 
 (def ^:dynamic *debugging?* false)
 (util/config-log (if *debugging?* :debug :info))
@@ -31,10 +34,10 @@
 
 ;;; ============ Tokenizer ===============================================================
 (def keywords #{"express" "false" "function" "query" "true"})
-(def ^:private syntactic? ; chars that are valid tokens in themselves.
+(def syntactic? ; chars that are valid tokens in themselves.
   #{"[", "]", "(", ")", "{", "}", "=", ",", ".", ":", ";", "*", "+", "/", "-", "<", ">", "%", "&", "\\", "?" "`"})
 
-(def ^:private long-syntactic? ; chars that COULD start a multi-character syntactic elements.
+(def long-syntactic? ; chars that COULD start a multi-character syntactic elements.
   #{"<", ">", "=", ".", ":", "/", "'", "?", "~", "!"}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
 (def other? #{"(" ")" "{" "}" "[" "]" ":" "," ";"})
@@ -68,9 +71,8 @@
 (def comparison-operators '{"<=" bi/lteq, ">=" bi/gteq, "!=" bi/!=, "<" bi/lt, "=" bi/eq, ">" bi/gt "in" bi/in})
 (def boolean-operators    '{"and" and "or" or})
 (def string-operators     '{"&" bi/concat})
-;;; ToDo: Fix this; the apply things don't belong here. "." is a binary operator, no?
-(def other-operators      '{"." bi/get-step :apply-filter bi/filter-step :apply-reduce bi/reduce-step "~>" bi/thread})
-(def non-binary-op? '{".." bi/range "?" "?" ":=" bi/assign})
+(def other-operators      '{"." bi/get-step "~>" bi/thread})
+(def non-binary-op?       '{".." bi/range "?" "?" ":=" bi/assign})
 
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
@@ -154,7 +156,7 @@
   (let [s (-> st str/split-lines first)]
     (if-let [[_ matched] (re-matches #"(\?[a-z,A-Z][a-zA-Z0-9\-\_]*).*" s)]
       {:raw matched :tkn {:typ :Qvar :qvar-name matched}}
-      (fj/fail  "String does not start a legal query variable: %s" s))))
+      (throw (ex-info  "String does not start a legal query variable:" {:string  s})))))
 
 (defn read-triple-role
   "read a triple role"
@@ -164,9 +166,9 @@
     (if-let [[_ matched] (re-matches #"(\:[a-zA-Z][a-zA-Z0-9/\-\_]*).*" s)]
       (if (or (> (-> (for [x matched :when (= x  \/)] x) count) 1)
               (= \/ (nth matched (-> matched count dec))))
-        (fj/fail "String does not start a legal triple role: %s" s)
+        (throw (ex-info "String does not start a legal triple role:" {:string s}))
         {:raw matched :tkn {:typ :TripleRole :role-name (util/read-str matched)}})
-      (fj/fail "String does not start a legal triple role: %s" st))))
+      (throw (ex-info "String does not start a legal triple role:" {:string st})))))
 
 (defn read-long-syntactic
   "Return a map containing a :tkn and :raw string for 'long syntactic' lexemes,
@@ -236,8 +238,8 @@
           (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})            ; EOF
                (when-let [[_ cm] (re-matches #"(?s)(/\*.*\*/).*" s)]   ; comment JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
                  {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
-               (and (long-syntactic? c) (read-long-syntactic s ws))     ; /regex-pattern/ ++, <=, == etc.
-               (when-let [[_ num] (re-matches #"(?s)(\d+(\.\d+(e[+-]?\d+)?)?).*" s)]
+               (and (long-syntactic? c) (read-long-syntactic s ws))    ; /regex-pattern/ ++, <=, == etc.
+               (when-let [[_ num] (re-matches #"(?s)([-]?\d+(\.\d+(e[+-]?\d+)?)?).*" s)] ; + cannot be used as a unary operator.
                  {:ws ws :raw num :tkn (util/read-str num)}),          ; number
                (when-let [[_ st] (re-matches #"(?s)(\"[^\"]*\").*" s)] ; string literal
                  {:ws ws :raw st :tkn (util/read-str st)})
@@ -487,9 +489,9 @@
   ([tag str]
    (let [pstate (->> str tokenize make-pstate (parse tag))]
      (if (not= (:head pstate) ::eof)
-       (fj/fail "Tokens remain: %s." (:tokens pstate))
+       (throw (ex-info "Tokens remain:" {:tokens (:tokens pstate)}))
         #_(do (when *debugging?*
-             (log/error (cl-format nil "~2%*** Tokens remain. pstate=~A ~%" pstate)))
+             (cl-format *out* "~2%*** Tokens remain. pstate=~A ~%" pstate))
            pstate)
        pstate))))
 
@@ -579,7 +581,8 @@
 (s/def ::token  (s/and map? #(contains? % :tkn) #(-> % :tkn nil? not)))
 (s/def ::head #(not (nil? %)))
 
-(def bin-op-plus? (-> (merge binary-op? '{"[" "[" "{" "{"}) vals set))
+(def bin-op-plus? "Looks weird; just used for assessing exp continuation below!"
+  (merge binary-op? '{"[" bi/filter-step "{" bi/reduce-step}))
 
 (s/def ::BinOpSeq (s/keys :req-un [::seq]))
 ;;;=============================== Grammar ===============================
@@ -636,9 +639,11 @@
               (field? tkn))                   (as-> ps ?ps                   ; <jvar>, <qvar> or `backquoted field`
                                                 (assoc ?ps :result tkn)
                                                 (eat-token ?ps))
-          (symbol? tkn)                       (as-> ps ?ps                   ; <field> (not part of param-struct)
-                                                (assoc ?ps :result {:typ :Field :field-name (name tkn)})
-                                                (eat-token ?ps)),
+          (symbol? tkn)                       (do (reset! diag {:tkn tkn :name (name tkn) :ps ps})
+                                                  (cl-format *out* "about to call name on '~S'" tkn)
+                                                  (as-> ps ?ps                   ; <field> (not part of param-struct)
+                                                    (assoc ?ps :result {:typ :Field :field-name (cl-format nil "~S" tkn)})
+                                                    (eat-token ?ps))),
           :else
           (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
                     {:got tkn}))))
@@ -845,6 +850,7 @@
 ;;; <literal> ::= string | number | 'true' | 'false' | regex | <obj> | <array>
 (defparse :ptag/literal
   [ps]
+  (reset! diag {:ps ps})
   (let [tkn (:head ps)]
     (cond (literal? tkn) (-> ps (assoc :result tkn) eat-token), ; :true and :false will be rewritten
           (= tkn "{")     (parse :ptag/obj-exp ps),

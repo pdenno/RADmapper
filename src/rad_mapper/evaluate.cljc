@@ -90,7 +90,7 @@
                       #_(assoc :sci? (or (util/cljs?) (:sci? opts)))
                       (assoc :sci? true))]
     (when (or (:debug-eval? opts) (= min-level :debug))
-      (util/config-log :debug)
+      (util/config-log :error) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox).
       (log/debug (cl-format nil "*****  Running ~S *****" (if (:sci? opts) "SCI" "eval")))
       (-> full-form pretty-form pprint))
     (try
@@ -105,7 +105,7 @@
 (defn processRM
   "A top-level function for all phases of translation.
    parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
-   With no opts it parses without debug output."
+   With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
    (let [rewrite? (or (:rewrite? opts) (:execute? opts))
