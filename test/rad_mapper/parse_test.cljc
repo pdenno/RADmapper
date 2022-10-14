@@ -9,8 +9,6 @@
    [rad-mapper.util     :as util]
    [rad-mapper.parse    :as par]))
 
-(util/config-log :error)
-
 (defn tokenize-head
   "test-tokenize (below) doesn't produce tokens (except for head) it creates maps
    containing :tkn, :line and :col. (:head ps) is a token; make it a vector of one of these maps."
@@ -48,9 +46,9 @@
   (testing "Tokenizer:"
 
     (testing "basic tests"
-      (is (= [{:tkn "This is a string.", :line 1, :col 1}       {:tkn ::par/eof}]
+      (is (= [{:tkn {:typ :StringLiteral :value "This is a string."}, :line 1, :col 1}       {:tkn ::par/eof}]
              (test-tokenize "'This is a string.'")))
-      (is (= [{:tkn "hello's world", :line 1, :col 1}           {:tkn ::par/eof}]
+      (is (= [{:tkn {:typ :StringLiteral :value "hello's world"}, :line 1, :col 1}           {:tkn ::par/eof}]
              (test-tokenize "'hello\\'s world'")))
       (is (= [{:tkn {:typ :Field, :field-name "`foo ?`"}, :line 1, :col 1} {:tkn ::par/eof}]
              (test-tokenize "`foo ?`")))
@@ -67,7 +65,7 @@
                   (mapv #(dissoc % :col))))))
 
     (testing "token stream"
-      (is (= [{:tkn :true, :line 1, :col 1}
+      (is (= [{:tkn :tk/true, :line 1, :col 1}
               {:tkn "?", :line 1, :col 5}
               {:tkn {:typ :TripleRole :role-name :foo/bar}, :line 1, :col 6}
               {:tkn ":", :line 1, :col 14}
@@ -75,7 +73,7 @@
               {:tkn ::par/eof}]
              (test-tokenize "true?:foo/bar::foo/bat")))
 
-      (is (= [{:tkn :true, :line 1, :col 1}
+      (is (= [{:tkn :tk/true, :line 1, :col 1}
               {:tkn "?", :line 1, :col 6}
               {:tkn {:typ :TripleRole :role-name :foo/bar}, :line 1, :col 8}
               {:tkn ":", :line 1, :col 16}
@@ -84,16 +82,16 @@
              (test-tokenize "true ? :foo/bar::foo/bat"))))
 
     (testing "\\? can be isolated as a token"
-      (is (= [{:tkn :true, :line 1, :col 1}
+      (is (= [{:tkn :tk/true, :line 1, :col 1}
               {:tkn "?", :line 1, :col 5}
-              {:tkn "a", :line 1, :col 6}
+              {:tkn {:typ :StringLiteral :value "a"}, :line 1, :col 6}
               {:tkn ":", :line 1, :col 9}
-              {:tkn "b", :line 1, :col 10}
+              {:tkn {:typ :StringLiteral :value "b"}, :line 1, :col 10}
               {:tkn :rad-mapper.parse/eof}]
              (test-tokenize "true?'a':'b'"))))
 
     (testing "triple roles are tokens"
-      (is (= [{:tkn :true, :line 1, :col 1}
+      (is (= [{:tkn :tk/true, :line 1, :col 1}
               {:tkn "?", :line 1, :col 5}
               {:tkn {:typ :TripleRole, :role-name :foo/bar}, :line 1, :col 6}
               {:tkn ":", :line 1, :col 14}
@@ -111,13 +109,13 @@
     (is (= {:typ :BinOpSeq,
             :seq
             '[{:typ :Field, :field-name "a"}
-              bi/get-step
+              :op/get-step
               {:typ :Field, :field-name "b"}
-              bi/get-step
+              :op/get-step
               {:typ :Field, :field-name "c"}
-              bi/get-step
+              :op/get-step
               {:typ :Field, :field-name "d"}
-              bi/get-step
+              :op/get-step
               {:typ :Field, :field-name "e"}]}
            (ev/processRM :ptag/exp "a.b.c.d.e")))))
 
@@ -161,14 +159,14 @@
   (testing "Testing expressions that start by defining an in-line, anonymous function or query."
 
     ;; This tests parsing function as an immediate-use expression.
-    (is (=  '{:typ :ImmediateUse,
-              :def {:typ :FnDef,
-                    :vars [{:typ :Jvar, :jvar-name "$x"}],
-                    :body {:typ :BinOpSeq,
-                           :seq [{:typ :Jvar,
-                                  :jvar-name "$x"}
-                                 bi/add 1]}},
-              :args [3]}
+    (is (= '{:typ :ImmediateUse,
+             :def {:typ :FnDef,
+                   :vars [{:typ :Jvar, :jvar-name "$x"}],
+                   :body {:typ :BinOpSeq,
+                          :seq [{:typ :Jvar,
+                                 :jvar-name "$x"}
+                                :op/add 1]}},
+             :args [3]}
            (ev/processRM :ptag/exp "function($x){$x+1}(3)")))
 
     ;; This tests parsing query as an immediate-use expression.
@@ -183,9 +181,7 @@
                      :exprs [{:typ :ObjExp, :kv-pairs [{:typ :KVPair,
                                                         :key "name",
                                                         :val "Bob"}]}]} "Bob"]}
-           (->
-            (ev/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")
-            remove-meta)))))
+           (ev/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")))))
 
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
 (s/def ::simplified-parse-structure (s/or :typical (s/keys :req-un [::typ])
@@ -203,6 +199,7 @@
   (testing "Simple (parse):"
     (testing "all the, small things"
       (is (parse-ok? "1"))
+      (is (parse-ok? "5 / 9"))
       (is (parse-ok? "[1, 2, 3]"))
       (is (parse-ok? "1 + 2" ))
       (is (parse-ok? "[1..5]"))

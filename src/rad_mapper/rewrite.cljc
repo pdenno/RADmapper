@@ -3,10 +3,8 @@
    processRM is a top-level function for this."
   (:require
    #?(:clj [clojure.java.io])
-   [clojure.pprint      :refer [cl-format pprint]]
-   [clojure.set         :as set]
+   [clojure.pprint      :refer [cl-format]]
    [clojure.spec.alpha  :as s]
-   [failjure.core       :as fj]
    [rad-mapper.builtins :as bi]
    [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
    [rad-mapper.parse    :as par]
@@ -55,26 +53,45 @@
 
 (defmulti rewrite-meth #'rewrite-dispatch)
 
-;;; ToDo: Investigate how this happens. It started with including the rewrite in gather-steps.
-(defmethod rewrite-meth :default [& _args]
-  ;(println "****Called :default rewrite-meth")
-  {})
+(def tkn2sym
+  "Rewrite parser tokens as the function symbol, boolean value, or operator that they represent.
+   Not every :op/thing need be in this list.
+   Sometimes, for example {:typ :RangeExp, :start 1, :stop 5}, the operator is by-passed.
+   Likewise, the so-called value-step is computed."
+  {:tk/true        true
+   :tk/false       false
+   :op/or          'or
+   :op/and         'and
+   :op/lt          'bi/lt
+   :op/gt          'bi/gt
+   :op/lteq        'bi/lteq
+   :op/gteq        'bi/gteq
+   :op/eq          'bi/eq
+   :op/neq         'bi/neq
+   :op/in          'bi/in
+   :op/thread      'bi/thread
+   :op/&           'bi/&
+   :op/concat      'bi/concat
+   :op/add         'bi/add
+   :op/substract   'bi/subtract
+   :op/multiply    'bi/multiply
+   :op/%           'bi/%
+   :op/div         'bi/div
+   :op/get-step    'bi/get-step
+   :op/filter-step 'bi/filter-step
+   :op/reduce-step 'bi/reduce-step})
 
 (defn rewrite [obj & keys]
-  (cond (map? obj)                  (if-let [typ (:typ obj)] (rewrite-meth typ obj keys) obj)
-        (seq? obj)                  obj #_(map  rewrite obj) ; ToDo: review this. I think I might be able to just return it.
-        (vector? obj)               (mapv rewrite obj)
-        (par/binary-op? obj)        (par/binary-op?  obj)  ; Certain keywords and chars correspond to operators.
-        (string? obj)               obj
-        (number? obj)               obj
-        (symbol? obj)               obj
-        (= obj :true)               true
-        (= obj :false)              false
-        (= obj true)                true
-        (= obj false)               false
-        (nil? obj)                  obj                    ; for optional things like (-> m :where rewrite)
-        :else
-        (fj/fail "Don't know how to rewrite obj: %s" obj)))
+  (cond (map? obj)                            (if-let [typ (:typ obj)] (rewrite-meth typ obj keys) obj)
+        (seq? obj)                            obj
+        (vector? obj)                         (mapv rewrite obj)
+        (string? obj)                         obj
+        (number? obj)                         obj
+        (and (keyword? obj)
+             (#{"tk","op"} (namespace obj)))  (get tkn2sym obj :rm/tk-not-found)
+        (symbol? obj)                         obj ; Overambitious rewriting
+        (nil? obj)                            obj ; for optional things like (-> m :where rewrite)
+        :else                                 (throw (ex-info "Don't know how to rewrite obj:" {:obj obj}))))
 
 (defrewrite :toplevel [m] (->> m :top rewrite))
 
@@ -139,8 +156,8 @@
    Thus it is like #'.*(pattern).*'."
   [base flags]
   (when (or (:sticky? flags) (:global? flags))
-    (fj/fail "Regex currently does not support sticky or global flags: %s"
-             {:base base :flags flags}))
+    (throw (ex-info "Regex currently does not support sticky or global flags:"
+                    {:base base :flags flags})))
   (let [body (subs base 1 (-> base count dec)) ; /pattern/ -> pattern
         flag-str (cond-> ""
                    (:ignore-case? flags)   (str "i")
@@ -259,7 +276,7 @@
 (declare rewrite-bvec-as-sexp precedence op-precedence-tbl)
 
 (defn rewrite-value-step
-  "Wherever the sequence (:Array |  :ObjExp), :bi/get-step, :ApplyFilter appears,
+  "Wherever the sequence (:Array |  :ObjExp), :op/get-step, :op/filter-step appears,
    it indicates a quirk in parsing of things like [1,2,3].[0] which in execution
    should just return a [0] for each of [1,2,3]. Since that isn't a :ApplyFilter
    at all, we need to rewrite it (as a :ValueMap)."
@@ -271,8 +288,8 @@
           len (count triple)]
       (cond (< len 3) (into res triple)
             (and (map? p1) (#{:Array :ObjExp} (:typ p1))
-                 (= 'bi/get-step p2)
-                 (map? p3) (= :ApplyFilter (:typ p3)))
+                 (= 'op/get-step p2)
+                 (map? p3) (= :ApplyFilter (:typ p3))) ; ToDo: was :ApplyFilter
             (recur (into res (vector p1
                                      'bi/value-step
                                      {:typ :ValueStep :body (:body p3)}))
@@ -293,7 +310,7 @@
           [p1 p2 p3] triple
           len (count triple)]
       (cond (< len 3) (into res triple)
-            (and (= 'bi/thread p2)
+            (and (= :op/thread p2)
                  (map? p3) (#{:ImmediateUse :FnCall} (:typ p3)))
             (recur (into res (vector p1
                                      'bi/thread
@@ -386,7 +403,7 @@
   (let [body (binding [inside-step? true] (-> m :body rewrite))]
     `(bi/value-step [~body])))
 
-(defrewrite :ApplyReduce [m]
+(defrewrite :ApplyReduce [m] ; ToDo: Not used?
   (let [sym (dgensym!)
         body (-> m :body rewrite)]
     `(bi/reduce-step
@@ -411,14 +428,14 @@
 
 ;;; Note: If support of filter-step non-compositional semantics is still "a thing" this is the place to fix it.
 (defn gather-steps ; ToDo: Should :reduce-step really be :path?=true ?
-  "Step through the bvec and collect segments that include :path?=true operators/operands into Path objects.
-   The :path?=true things are bi/get-step, bi/filter-step, bi/reduce-step, bi/primary."
+  "Step through the bvec and collect segments that include :path?=true operators and their operands into Path objects.
+   The :path?=true things are :op/get-step, :op/filter-step, :op/reduce-step, and the computed value-step."
   [bvec]
   (loop [bv bvec
          res []]
     (let [consumed (atom 0)]
       (cond (empty? bv) res
-            (or (-> bv first op-precedence-tbl :path?)
+            (or (-> bv first #{:op/get-step :op/filter-step :op/reduce-step})
                 (value-step? bv))
             (let [steal (last res)                                                       ; Last operand belongs with path...
                   actual (or (and (not-empty res) (subvec res 0 (-> res count dec))) []) ; ...so this is what res should be before gather path.
@@ -426,8 +443,8 @@
                                    path (if steal [steal] [])]
                               (cond (empty? bv2) path   ; end of path
 
-                                    (and (contains? op-precedence-tbl (first bv2)) ; end of path
-                                         (-> bv2 first op-precedence-tbl :path? not)) path
+                                    (and (contains? op-precedence-tbl (-> bv2 first rewrite)) ; end of path
+                                         (-> bv2 first rewrite op-precedence-tbl :path? not)) path
 
                                     (value-step? bv2) ; add a value-step, e.g. [1 2 3].['hello'] to path.
                                     (do (swap! consumed #(+ % 3))
@@ -548,15 +565,15 @@
 ;;; A lower :val means tighter binding. ToDo: That's a leftover from MiniZinc!
 ;;; For example, 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 (def op-precedence-tbl ; lower :val means binds tighter.
-  {:or               {:path? false :assoc :left :val 1000}
-   :and              {:path? false :assoc :left :val 900}
+  {'or               {:path? false :assoc :left :val 1000}
+   'and              {:path? false :assoc :left :val 900}
    'bi/lt            {:path? false :assoc :none :val 800}
    'bi/gt            {:path? false :assoc :none :val 800}
    'bi/lteq          {:path? false :assoc :none :val 800}
    'bi/gteq          {:path? false :assoc :none :val 800}
    'bi/eq            {:path? false :assoc :none :val 800}
    'bi/neq           {:path? false :assoc :none :val 800}
-   :in               {:path? false :assoc :none :val 700}
+   'bi/in            {:path? false :assoc :none :val 700}
    'bi/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
    'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
    'bi/concat        {:path? false :assoc :left :val 400}

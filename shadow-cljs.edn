@@ -1,4 +1,22 @@
 {:deps {:aliases [:test-cljs]}
+ #_#_:source-paths ["src" "test"]
+ #_#_:dependencies [[org.apache.logging.log4j/log4j-api   "2.17.2"]
+                [org.apache.logging.log4j/log4j-core  "2.17.2"]
+                [com.cemerick/url                "0.1.1"]
+                [com.taoensso/timbre             "5.2.1"]
+                [com.wsscode/pathom3             "2022.08.29-alpha"]
+                [dk.ative/docjure                "1.18.0"] ; spreadsheets
+                [failjure/failjure               "2.2.0"]
+                [io.replikativ/datahike          "0.5.1511"]
+                [datascript/datascript           "1.3.15"]
+                [org.babashka/sci                "0.4.33"]
+                [org.clojure/data.codec          "0.1.1"]
+                [org.clojure/data.json           "2.4.0"]
+                [org.clojure/data.xml            "0.2.0-alpha8"]
+                [org.clojure/data.zip            "1.0.0"]
+                [lambdaisland/kaocha             "1.70.1086"]
+                [lambdaisland/kaocha-cljs2       "0.0.35"]
+                [com.lambdaisland/glogi          "1.1.144"]] ; Not found when using shadow like this to handle dependencies.
  :nrepl {:port 7004} ; exerciser uses 7002
  :dev-http {8000 "resources/public"}
  :builds
@@ -24,6 +42,9 @@
                                    :preloads [lambdaisland.chui.remote]}}
 
   :script   {:target :node-script
+             :source-map true                          ; Default anyway?
+             :source-map-include-sources-content true  ; Default anyway?
+             :source-map-detail-level :all             ; Not default.
              :main dev.script/main
              :output-to "out/demo-script/script.js"
              :devtools {:before-load-async dev.script/stop

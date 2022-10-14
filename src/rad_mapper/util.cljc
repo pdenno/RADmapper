@@ -26,6 +26,7 @@
               (instance? datahike.db.DB @o))
    :cljs true)) ; ToDo: Implement this.
 
+;;; ToDo: Why is SCI able to use this? Util isn't a sci-used ns.
 ;;; https://stackoverflow.com/questions/53321244/clojurescript-equivalent-of-re-matcher-and-re-groups
 #?(:cljs
 (defn grouper
@@ -47,18 +48,24 @@
             regexp)))))))
 
 ;;; ================== Ordinary Utils =========================
-(defn no-host&time-output-fn
-  "I don't want :hostname_ and :timestamp_ in the log output."
-  ([data]       (taoensso.timbre/default-output-fn nil  (dissoc data :hostname_ :timestamp_)))
-  ([opts data]  (taoensso.timbre/default-output-fn opts (dissoc data :hostname_ :timestamp_))))
+
+;;; ToDo: The problem with output to log/debug might have to do with *err* not defined in cljs.
+(defn custom-output-fn
+  " - I don't want :hostname_ and :timestamp_ in the log output preface text..
+    - I don't want any preface text in rad-mapper.parse output."
+  ([data] (custom-output-fn nil data))
+  ([opts data]
+   (if (=  (:?ns-str data) "rad-mapper.parse")
+     (apply str (:vargs data)) ; So it can do simple indented call tracing.
+     (taoensso.timbre/default-output-fn opts (dissoc data :hostname_ :timestamp_)))))
 
 (defn config-log
-  "Configure Timbre: set reporting levels and drop reporting host and time."
+  "Configure Timbre: set reporting levels and specify a custom :output-fn."
   [min-level]
   (if (#{:trace :debug :info :warn :error :fatal :report} min-level)
     (log/set-config!
      (-> log/*config*
-         (assoc :output-fn #'no-host&time-output-fn)
+         (assoc :output-fn #'custom-output-fn)
          (assoc :min-level [[#{"datahike.*"} :error]
                             [#{"datascript.*"} :error]
                             [#{"*"} min-level]])))

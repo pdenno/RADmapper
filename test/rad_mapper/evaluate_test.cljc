@@ -6,6 +6,7 @@
    [dev.dutil            :as dev :refer [examine run] :refer-macros [run-test]]))
 
 (deftest today
+  (run-test "-5"-5)
   (run-test "[[1,2,3], 4].$[1]" 2)
   (run-test "[[1,2,3], 4].$[0][0]" [1 4])
   (run-test "($v := [[1,2,3], 4]; $v.$[0][0])" [1 4] )

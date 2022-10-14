@@ -5,9 +5,9 @@
    [dev.dutil]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.rewrite  :as rew])
-  #?(:cljs (:require-macros [rad-mapper.rewrite-test :refer [run-test]])))
+  #?(:cljs (:require-macros [rad-mapper.test-macros :refer [run-test]])))
 
-(defmacro run-test
+#_(defmacro run-test
   "Use this to expand dev/run-test with :rewrite? true."
   [form-string expect & {:keys [keep-meta?]}]
     `(testing ~(str "\n(run \"" form-string "\")")
@@ -16,12 +16,12 @@
                         :keep-meta? ~keep-meta?)))))
 
 (deftest value-map-rewrite
-  (testing "that things like ['a','b','c'].[0] translate correctly."
+  (testing "that things like ['a','b','c'].[1] translate correctly."
     (is (= '[{:typ :Array, :exprs ["a" "b" "c"]}
              bi/value-step
              {:typ :ValueStep, :body 1}]
            (rew/rewrite-value-step [{:typ :Array, :exprs ["a" "b" "c"]}
-                                    'bi/get-step
+                                    'op/get-step
                                     {:typ :ApplyFilter, :body 1}])))))
 
 ;;; (not= #"abc" #"abc") so don't bother testing things containing regular expressions.
