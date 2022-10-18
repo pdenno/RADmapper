@@ -3,7 +3,7 @@
   (:require
    [failjure.core          :as fj]
    [rad-mapper.query       :as qu]
-   [rad-mapper.rewrite     :as rew]))
+   [rad-mapper.evaluate    :as ev]))
 
 (def diag (atom nil))
 (declare rw-ast)
@@ -128,7 +128,7 @@
         :else (fj/fail "Toplevel is a primitive type?: %s" obj)))
 
 #?(:clj
-(def scott-result (rew/processRM
+(def scott-result (ev/processRM
                    :ptag/exp
                    (slurp "data/testing/map-examples/scott/shipped-item-instance-clean.json"))))
 

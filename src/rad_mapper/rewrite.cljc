@@ -184,7 +184,10 @@
           (:kv-pairs m)))
 
 (defrewrite :KVPair [m]
-  `(assoc ~(rewrite (:key m)) ~(rewrite (:val m))))
+  `(assoc ~(if (= :Qvar (-> m :key :typ))
+             `'~(-> m :key rewrite)
+             (-> m :key rewrite))
+          ~(-> m :val rewrite)))
 
 (defrewrite :ExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))
@@ -205,7 +208,7 @@
   (let [fname (-> m :fn-name)]
     (if (par/builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
       (binding [in-regex-fn? (#{"$match" "$split" "$contains" "$replace"} fname)]
-        `(bi/fncall {:func ~(symbol "bi" fname) :args [~@(-> m :args rewrite)]}))
+        `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
       `(bi/fncall   {:func ~(symbol fname)      :args [~@(-> m :args rewrite)]}))))
 
 (defrewrite :RegExp [m]

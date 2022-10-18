@@ -4,7 +4,11 @@
            rad-mapper.builtins/defn*      clojure.core/defn
            rad-mapper.builtins/defn$      clojure.core/defn
            rad-mapper.parse/defparse      clojure.core/defn
+           rad-mapper.schema-db/defparse  clojure.core/defn
            rad-mapper.rewrite/defrewrite  clojure.core/defn
+
+           com.wsscode.pathom.connect/defresolver       clj-kondo.lint-as/def-catch-all
+           com.wsscode.pathom.connect/defmutation       clj-kondo.lint-as/def-catch-all
 
            failjure.core/attempt-all      clojure.core/let
            failjure.core/if-let-okay?     clojure.core/if-let

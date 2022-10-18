@@ -1,5 +1,5 @@
 #kaocha/v1
-{:plugins [:print-invocations :hooks]
+{
  :reporter kaocha.report/documentation
 
  ;; Make sure no information gets hidden, since this kind of setup can take a
@@ -9,6 +9,7 @@
  ;; This one for shadow starting kaocha.
  ;; See https://github.com/plexus/cljs-test-example/blob/main/shadow-browser-kaocha-cljs2/tests.edn
  :tests [{:id :browser
+          :plugins [:print-invocations :hooks]  ; Was specified at top-level. :unit doesn't like it. OK here?
           :type :kaocha.type/cljs2
           :test-paths   ["test"]
 
@@ -25,7 +26,8 @@
           ;; This way we can reuse the browser tab
           :kaocha.cljs2/clients-hook io.github.plexus.cljs-test-example.kaocha-hooks/launch-browser-and-wait}
 
-         ;; This one is for clj test from shell: bin/kaocha unit
+         ;; This one is for clj test from shell: bin/kaocha unit. I doesn't work yet.
+         ;; :type :kaocha.type/clj is a guess.
          {:id          :unit
           :test-paths  ["test" "src"]
           :ns-patterns [".*"]

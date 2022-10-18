@@ -3,14 +3,14 @@
    [clojure.test :refer  [deftest is testing]]
    #?(:clj [datahike.api           :as d])
    #?(:clj [datahike.pull-api      :as dp])
-;   #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
+;  #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
    #?(:cljs [datascript.core :as d])
    #?(:cljs [datascript.pull-api :as dp])
    [rad-mapper.builtins           :as bi]
    [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util]
-   [dev.dutil :refer [run run-test run-rew remove-meta] :refer-macros [run-test]]))
+   [dev.dutil :refer [run examine run-test run-rew remove-meta] :refer-macros [run-test]]))
 
 ;;; ToDo: I think I intended to test whether some data (from express?) results in this?
 (def test-schema
@@ -32,7 +32,7 @@
 #?(:clj
 (def dolce-test-data
   "Get maps of everything in the DOLCE (dol) namespace. "
-  (->> "data/testing/dolce-1.edn"
+  (->> "data/testing/onto/dolce-1.edn"
        slurp
        util/read-str
        (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass)))))
@@ -93,8 +93,8 @@
      "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
            $q := query(){[?ent ?attr ?val]};
            $q($data))"
-     '[{:?attr :person/lname, :?val "Dee"}
-       {:?attr :person/fname, :?val "Peter"}]))
+     '[{?attr :person/lname, ?val "Dee"}
+       {?attr :person/fname, ?val "Peter"}]))
 
   (testing "rewriting of an in-line query"
       (is (= (run-rew "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")
@@ -107,16 +107,16 @@
     (is (= (run-rew "($qBob := query($name){[?e :name $name]}('Bob');
                       $qBob([{'name' : 'Bob'}]))")
            '(bi/primary
-             (let [$qBob ((bi/query '[$name] '[[?e :name $name]]) "Bob")]
-               ($qBob [(-> {} (assoc "name" "Bob"))]))))))
+            (let [$qBob ((bi/query '[$name] '[[?e :name $name]]) "Bob")]
+              (bi/fncall {:args [[(-> {} (assoc "name" "Bob"))]], :func $qBob}))))))
 
   (testing "execution of an in-line query"
     (run-test
      "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])"
-     [{:?attr :person/lname, :?val "Dee"} {:?attr :person/fname, :?val "Peter"}]))
+     '[{?attr :person/lname, ?val "Dee"} {?attr :person/fname, ?val "Peter"}]))
 
 
-    (testing "Simple parametric"
+    (testing "In-line parametric"
     (run-test
      "($qBob := query($name){[?e :name $name]}('Bob');
        $qBob([{'name' : 'Bob'}]))"
@@ -142,7 +142,7 @@
                                          (assoc "person/lname" "Clark"))]
                            #:bi{:json-array? true})
                    $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
-               ($q $data))))))
+               (bi/fncall {:args [$data], :func $q}))))))
 
   (testing "execution of a query using a mapping context with the default name 'source-data-1'."
     (run-test
@@ -150,7 +150,7 @@
          $q := query(){[?person :person/fname ?fname]
                        [?person :person/lname ?lname]};
          $q($data) )"
-     [{:?fname "Bob", :?lname "Clark"}]))
+     '[{?fname "Bob", ?lname "Clark"}]))
 
   (testing "tests execution of a query using a mapping context with the default name 'source-data-1' (in spec)"
     (run-test
@@ -159,8 +159,8 @@
            $q := query(){[?person :Person/firstname ?fname]
                          [?person :Person/lastname  ?lname]};
         $q($data) )"
-     [{:?fname "Peter", :?lname "Dee"}
-      {:?fname "Bob",   :?lname "Clark"}]))
+     '[{?fname "Peter", ?lname "Dee"}
+       {?fname "Bob",   ?lname "Clark"}]))
 
   ;; This tests query on data (rather than directly on a DB).
   #_(:clj
@@ -168,7 +168,7 @@
            :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
            :dol/feature :dol/time-interval}
          (->> ((bi/query [] '[[?class :rdf/type :owl/Class] [?class :resource/iri  ?class-iri]]) dolce-test-data)
-              (map :?class-iri)
+              (map #(get % '?class-iri))
               (map keyword)
               set))))
 
@@ -181,16 +181,11 @@
                   $q := query(){[?class :rdf/type     'owl/Class']
                                 [?class :resource/iri  ?class-iri]};
                   $q($) )")
-              (map :?class-iri)
+              (map #(get % '?class-iri))
               (map keyword)
               set))))
 
 ;;;================================ testing express ==================================
-(def e0 "express()
-            {  {'instance-of'  : 'example',
-                'content'      : ?class-iri }
-            }")
-
 (deftest simple-immediate
   (testing "Complete simple express"
     (run-test "( $data := {'instance-of' : 'example',
@@ -206,11 +201,10 @@
                $reduce($bsets, $e) )"
               {"inst" "example", "val" "some-val"})))
 
-
 (deftest simple-express
   (testing "the essential steps of a simple express"
     (is (= (let [bbody (bi/sbind-body '{"instance-of" "FixedType" "content" ?class-iri})
-                 bset '{:?class-iri "MY-IRI"}
+                 bset '{?class-iri "MY-IRI"}
                  ai-maps (apply merge {} (bi/body&bset-ai-maps bbody bset))]
              (reduce-kv (fn [m k v] (assoc-in m k v)) {} ai-maps))
            {"instance-of" "FixedType", "content" "MY-IRI"}))))
@@ -234,8 +228,8 @@
 
 ;;; This creates a higher-order function. This is the "immediate" type.
 (def param-efn (bi/express '{:params [$type],
-                             :body {"instance-of" $type
-                                    "content" :?content}}))
+                             :body '{"instance-of" $type
+                                     "content" ?content}}))
 
 (def pefn (param-efn "MyType"))
 
@@ -249,7 +243,7 @@
 
     (testing "The function is executable with a binding set, creating content."
       (is (= {"instance-of" "FixedType", "content" "someContent"}
-             (-> (efn {:?content "someContent"}) remove-meta))))
+             (-> (efn '{?content "someContent"}) remove-meta))))
 
     (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
       (is (= (run-rew "express($type) {  {'instance-of'  : $type,
@@ -267,11 +261,11 @@
       ;; Note that the full example of this above, simple-parameteric-express, works fine.
       #_(testing "Rather than 'FixedType', the instance-of is 'MyType'."
         (is (= {"instance-of" "MyType", "content" "someContent"}
-               (pefn {:?content "someContent"}))))
+               (pefn '{?content "someContent"}))))
 
       #_(testing "The function execution provides an ai-map for $reduce/assoc-in."
         (is (= #:bi{:ai-map {["instance-of"] "MyType" ["content"] "someContent"}}
-               (-> (pefn {:?content "someContent"}) meta))))))))
+               (-> (pefn '{?content "someContent"}) meta))))))))
 
 ;;;====================================================================
 ;; OWL example from the Draft OAGi Interoperable Mapping Specification
@@ -423,8 +417,8 @@
     ;; bi/query is a higher-order function that returns either a query function, or a higher-order function
     ;; that takes a parameter to customize a 'parametric' query function.
     (let [data (-> (bi/$newContext) (bi/$addSource [{:name "Bob"}]))]
-      (is (= [{:?e 2}] ((bi/query  []        '[[?e :name "Bob"]]) (bi/$getSource data "source-data-1"))))
-      (is (= [{:?e 2}] (((bi/query '[$name]  '[[?e :name $name]]) "Bob") (bi/$getSource data "source-data-1"))))
+      (is (= [{'?e 2}] ((bi/query  []        '[[?e :name "Bob"]]) (bi/$getSource data "source-data-1"))))
+      (is (= [{'?e 2}] (((bi/query '[$name]  '[[?e :name $name]]) "Bob") (bi/$getSource data "source-data-1"))))
       (is (= []        (((bi/query '[$name]  '[[?e :name $name]]) "xxx") (bi/$getSource data "source-data-1")))))
 
     ;; This tests making a new data source and use of a special.
@@ -438,11 +432,11 @@
     (testing "executing owl-query-immediate"
       (run-test
        owl-query-immediate
-       [{:?class 12, :?class-iri "dol/endurant", :?class-ns "dol", :?class-name "endurant"}]))
+       [{'?class 12, '?class-iri "dol/endurant", '?class-ns "dol", '?class-name "endurant"}]))
 
     (testing "executing owl-query-parametric"
       (run-test owl-query-parametric
-                [{:?class 12, :?class-iri "dol/endurant", :?class-ns "dol", :?class-name "endurant"}]))
+                [{'?class 12, '?class-iri "dol/endurant", '?class-ns "dol", '?class-name "endurant"}]))
 
     (testing "executing owl-full-immediate"
       (run-test owl-full-immediate
@@ -549,9 +543,9 @@
                                   (assoc
                                    "content"
                                    (-> {}
-                                       (assoc "resourceIRI" (bi/get-from-b-set b-set :?class-iri))
-                                       (assoc "resourceNamespace" (bi/get-from-b-set b-set :?class-ns))
-                                       (assoc "resourceLabel" (bi/get-from-b-set b-set :?class-name)))))})
+                                       (assoc "resourceIRI" (bi/get-from-b-set b-set '?class-iri))
+                                       (assoc "resourceNamespace" (bi/get-from-b-set b-set '?class-ns))
+                                       (assoc "resourceLabel" (bi/get-from-b-set b-set '?class-name)))))})
              $quClass ($qtype "owl/Class")
              $quProp  ($qtype "owl/ObjectProperty")
              $enClassTable ($etype "ClassDefinition")
@@ -575,16 +569,16 @@
                                                  [?d :id ?id]
                                                  [?d :status ?status] };
                                    $q($data) )")
-                        (map #(dissoc % :?y :?s :?z :?d :?x))
+                        (map #(dissoc % '?y '?s '?z '?d '?x))
                         set)]
-        (is (= #{{:?device-name :device3, :?system-name :system1, :?id 300, :?status "Ok", :?owner-name :owner2}
-                 {:?device-name :device8, :?system-name :system2, :?id 800, :?status "Ok", :?owner-name :owner2}
-                 {:?device-name :device2, :?system-name :system1, :?id 200, :?status "Ok", :?owner-name :owner1}
-                 {:?device-name :device4, :?system-name :system1, :?id 400, :?status "Ok", :?owner-name :owner2}
-                 {:?device-name :device5, :?system-name :system2, :?id 500, :?status "Ok", :?owner-name :owner1}
-                 {:?device-name :device7, :?system-name :system2, :?id 700, :?status "Ok", :?owner-name :owner2}
-                 {:?device-name :device6, :?system-name :system2, :?id 600, :?status "Ok", :?owner-name :owner1}
-                 {:?device-name :device1, :?system-name :system1, :?id 100, :?status "Ok", :?owner-name :owner1}}
+        (is (= #{{'?device-name :device3, '?system-name :system1, '?id 300, '?status "Ok", '?owner-name :owner2}
+                 {'?device-name :device8, '?system-name :system2, '?id 800, '?status "Ok", '?owner-name :owner2}
+                 {'?device-name :device2, '?system-name :system1, '?id 200, '?status "Ok", '?owner-name :owner1}
+                 {'?device-name :device4, '?system-name :system1, '?id 400, '?status "Ok", '?owner-name :owner2}
+                 {'?device-name :device5, '?system-name :system2, '?id 500, '?status "Ok", '?owner-name :owner1}
+                 {'?device-name :device7, '?system-name :system2, '?id 700, '?status "Ok", '?owner-name :owner2}
+                 {'?device-name :device6, '?system-name :system2, '?id 600, '?status "Ok", '?owner-name :owner1}
+                 {'?device-name :device1, '?system-name :system1, '?id 100, '?status "Ok", '?owner-name :owner1}}
                result))))
     (testing "full sTPDRs--6 rearrange example"
       (run-test "($data := $read('data/testing/jsonata/sTPDRs--6.json');
@@ -647,7 +641,7 @@
                    $bRes := $bFn($DBb);
 
                    [$aRes, $bRes] )"
-      [[{:?aData "A-value"}] [{:?bData "B-value"}]]))
+      [[{'?aData "A-value"}] [{'?bData "B-value"}]]))
 
     (testing "Really show me the data, and BTW, use a parametric query." ; FIX THIS??? Maybe skip this one in presentation.
       (run-test
@@ -664,7 +658,7 @@
            $bRes := $qbFn($DBb);
 
            [$aRes, $bRes] )"
-        [[{:?data "A-data", :?id 123}] [{:?data "B-data", :?id 123}]]))
+        [[{'?data "A-data", '?id 123}] [{'?data "B-data", '?id 123}]]))
 
     (testing "The above isn't what you want! You want to query both DBs TOGETHER."
       (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'A-data'}];
@@ -676,7 +670,7 @@
                                     [$DBb ?e2 :bAttr ?bData]};
 
                    $qFn($DBa, $DBb) )"
-                [{:?id 123, :?aData "A-data", :?bData "B-data"}]))
+                [{'?id 123, '?aData "A-data", '?bData "B-data"}]))
 
     ;; ToDo: Use one "$Dba" to test argument counting!
     (testing "Similar to the above, but parametric."
@@ -696,8 +690,9 @@
                     $qFn := $qFnT('Bob');
 
                     $qFn($DBa, $DBb) )"
-                [{:?id 123, :?aData "Bob-A-data", :?bData "Bob-B-data" :?name "Bob"}]))
+                [{'?id 123, '?aData "Bob-A-data", '?bData "Bob-B-data" '?name "Bob"}]))
 
+    ;; Can just swap to $map in REPL for this one.
     (testing "Now we express the result by processing the b-sets."
       (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
@@ -713,13 +708,13 @@
 
                    $bSets := $qFn($DBa, $DBb);
 
-                   $eFn := express(){{'name' : ?name}};
+                   $eFn := express(){{'name' : ?name, 'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}};
 
                    $reduce($bSets, $eFn) )"
-                :NYI))))
+                {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234, "name" "Alice"}))
 
-
-(def e1 "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+    (testing "More like what you are looking for"
+      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
 
                    $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
@@ -733,44 +728,36 @@
 
                    $bSets := $qFn($DBa, $DBb);
 
-                   $eFn := express(){{'name' : ?name}};
+                   $eFn := express(){{?id : {'name' : ?name, 'aData' : ?aData, 'bData' : ?bData}}};
 
-                   $reduce($bSets, $eFn) )")
+                   $reduce($bSets, $eFn) )"
 
-(defn tryme []
-  (do
-    (bi/reset-env)
-    (bi/again?
-     (bi/primary-m
-      (let
-          [$DBa
-           (with-meta
-             [(->
-               {}
-               (assoc "id" 123)
-               (assoc "aAttr" "Bob-A-data")
-               (assoc "name" "Bob"))
-              (->
-               {}
-               (assoc "id" 234)
-               (assoc "aAttr" "Alice-A-data")
-               (assoc "name" "Alice"))]
-             #:bi{:json-array? true})
-           $DBb
-           (with-meta
-             [(-> {} (assoc "id" 123) (assoc "bAttr" "Bob-B-data"))
-              (-> {} (assoc "id" 234) (assoc "bAttr" "Alice-B-data"))]
-             #:bi{:json-array? true})
-           $qFn
-           (bi/query
-            '[]
-            '[[$DBa ?e1 :id ?id]
-              [$DBb ?e2 :id ?id]
-              [$DBa ?e1 :name ?name]
-              [$DBa ?e1 :aAttr ?aData]
-              [$DBb ?e2 :bAttr ?bData]])
-           $bSets
-           (bi/fncall {:args [$DBa $DBb], :func $qFn})
-           $eFn
-           (bi/express {:params '(), :options 'nil, :body '{"name" ?name}})]
-        (bi/fncall {:args [$bSets $eFn], :func bi/$reduce}))))))
+                {123 {"aData" "Bob-A-data", "bData" "Bob-B-data", "name" "Bob"},
+                 234 {"aData" "Alice-A-data", "bData" "Alice-B-data", "name" "Alice"}}))))
+
+(deftest qif
+  (testing "QIF"
+    (testing "Express with hand-coded binding set"
+      (run-test
+         "( $bset := {?idKey    : 'KeyVal',
+                      ?idKeyref : 'KeyrefVal',
+                      ?instruct : 'some instruction',
+                      ?method   : 'some method'};
+
+            $eFn := express(){ {'QIFPlan/WorkInstructions' :
+                                  {'QIFPlan.WorkInstructions/IdKey': ?idKey,
+                                   'QIFPlan.WorkInstructions/IdKeyref': {'RefKey/id' : ?idKeyref},
+                                   'QIFPlan.WorkInstructions/Instruction' :
+                                      {'QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction' : {'Instruction' : ?instruct}}
+                                   },
+                                'QIFPlan/ActionMethods' : {'QIFPlan/ActionMethods/ActionMethod' : {'Method' : ?method}}}};
+
+          $eFn($bset)
+        )"
+
+         {"QIFPlan/WorkInstructions"
+          {"QIFPlan.WorkInstructions/IdKey" "KeyVal",
+           "QIFPlan.WorkInstructions/IdKeyref" {"RefKey/id" "KeyrefVal"},
+           "QIFPlan.WorkInstructions/Instruction"
+             {"QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction" {"Instruction" "some instruction"}}},
+          "QIFPlan/ActionMethods" {"QIFPlan/ActionMethods/ActionMethod" {"Method" "some method"}}}))))

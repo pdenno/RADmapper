@@ -1722,7 +1722,7 @@
    Accepts map keys :find :keys :in and :where."
   [qmap]
   `[:find ~@(:vars qmap)
-    :keys ~@(:keys qmap)
+    :syms ~@(:keys qmap) ; No :?qvar
     :in ~@(into (dbs-from-qform (:where qmap)) (:in qmap)) ; ToDo: do we really want the :in like this?
     :where ~@(:where qmap)])
 
@@ -1738,12 +1738,12 @@
       (->> body
            (filter #(and (== 4 (count %)) (-> % second qvar?)))
            (map second)
-           (map keyword)
+           ; (map keyword) ; No :?qvar
            set)
       (->> body
            (filter #(and (== 3 (count %)) (-> % first qvar?)))
            (map first)
-           (map keyword)
+           ; (map keyword) ; No :?qvar
            set))))
 
 (defn query-fn-aux
@@ -1780,7 +1780,7 @@
           (-> (fn [& data|dbs]
                 (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
                   (query-fn-aux db-atms body param-subs)))
-              (with-meta {:bi/fn-type :query-fn :bi/expected-arg-cnt (-> body dbs-from-qform count)}))))
+              (with-meta {:bi/fn-type :query-fn :bi/expected-arg-cnt (max 1 (-> body dbs-from-qform count))}))))
       (with-meta {:bi/fn-type :query-fn-template :bi/expected-arg-cnt (count params)})))
 
 (defn query

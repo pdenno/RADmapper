@@ -3,7 +3,8 @@
   (:require
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins  :as bi]
-   [dev.dutil            :as dev :refer [examine run] :refer-macros [run-test]]))
+   #?(:cljs [dev.dutil :as dev :refer [examine run] :refer-macros [run-test]]
+      :clj  [dev.dutil :as dev :refer [examine run run-test]])))
 
 (deftest today
   (run-test "-5"-5)
