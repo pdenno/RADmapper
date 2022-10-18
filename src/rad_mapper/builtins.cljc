@@ -46,8 +46,9 @@
 (declare aref)
 
 (defn set-context!
-  "Set the JSONata context variable to the argument. If the root context has not
-   yet been set, set that too."
+  "Set the JSONata context variable to the argument.
+   If the root context has not yet been set, set that too.
+   Returns argument."
   [val]
   (reset! $ val)
   (when (= @$$ :bi/unset) (reset! $$ val))
@@ -243,6 +244,16 @@
   [x y]
   (= (jflatten x) (jflatten y)))
 
+#?(:clj
+(defmacro thread-m [x y]
+  `(let [xarg# ~x]
+     (do (set-context! xarg#)
+         (let [yarg# ~y]
+           (if (fn? yarg#)
+             (yarg# xarg#)
+             (throw (ex-info "The RHS argument to the threading operator is not a function."
+                             {:rhs-operator yarg#}))))))))
+
 (def thread ^:sci/macro
   (fn [_&form _&env x y]
     `(let [xarg# ~x]
@@ -266,7 +277,8 @@
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
-  (log/info "--- run-steps ---")
+  ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
+  ;;(log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (loop [steps steps
            res   @$]
@@ -288,7 +300,8 @@
                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
                           :bi/map-step     (cmap sfn (containerize? res)),
                           (fj/fail "Invalid step. sfn = %s" sfn))]
-            (log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+            ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
+            ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
             (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
                    (set-context! new-res)))))))
 
@@ -340,6 +353,12 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
+#?(:clj
+(defmacro value-step-m
+  [body]
+  `(-> (fn [& ignore#] ~body)
+       (with-meta {:bi/step-type :bi/value-step :body '~body}))))
+
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
       `(-> (fn [& ignore#] ~body)
@@ -347,22 +366,33 @@
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $."
-  ([k]
-   (log/info (cl-format nil "get-scoped (single-arg): $ = ~S" @$))
-   (get-scoped @$ k))
-  ([obj k]
-   (log/info (cl-format nil "get-scoped: obj = ~S k = ~S " obj k))
-   (get obj k)))
+  ([k] (get-scoped @$ k))
+  ([obj k] (set-context! (get obj k))))
+
+#?(:clj
+(defmacro primary-m [body]
+  `(-> (fn [& ignore#] ~body)
+       (with-meta {:bi/step-type :bi/primary}))))
 
 (def primary ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [& ignore#] ~body)
          (with-meta {:bi/step-type :bi/primary}))))
 
+#?(:clj
+(defmacro init-step-m [body]
+  `(-> (fn [_x#] ~body)
+       (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
+
 (def init-step ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
+
+#?(:clj
+(defmacro map-step-m [body]
+  `(-> (fn [_x#] ~body)
+       (with-meta {:bi/step-type :bi/map-step :body '~body}))))
 
 (def map-step ^:sci/macro
   (fn [_&form _&env body]
@@ -402,9 +432,27 @@
                   (with-meta m))))]
     (sba-aux form)))
 
+;;; ToDo: Put some code around assignments so that you know the 'name' of the function
+;;;       that is failing the arg count requirement.
+(defn fncall
+  [{:keys [func args]}]
+  (if-let [cnt (-> func meta :bi/expected-arg-cnt)]
+    (if (== cnt (count args))
+      (apply func args)
+      (throw (ex-info (cl-format nil "A function of type ~A expected ~A args; it got ~A."
+                                 (-> func meta :bi/fn-type) cnt (count args)) {})))
+    (apply func args)))
+
 ;;;--------------------------- JSONata built-in functions ------------------------------------
 
 ;;;------------- String --------------
+(defn$ concat-op
+  "JSONata & operator."
+  [s1_ s2]
+  (s/assert ::string s1_)
+  (s/assert ::string s2)
+  (str s1_ s2))
+
 ;;; $base64decode
 #?(:clj
 (defn $base64decode
@@ -423,6 +471,9 @@
   [s]
   (-> s .getBytes b64/encode String.)))
 
+;;;  ToDo: (generally) when arguments do not pas s/assert, need to throw an error.
+;;;        For example, "Argument 1 of function "contains" does not match function signature."
+;;;        This could be built into defn$ and defn$ could be generalized and used more widely.
 ;;; $contains
 (defn$ $contains
   "Returns true if str is matched by pattern, otherwise it returns false.
@@ -435,9 +486,9 @@
    If it is a regex, the function will return true if the regex matches the contents of str."
   [s_ pat]
   (s/assert ::string s_)
-   (if (util/regex? pat)
-     (if (re-find pat s_) true false)
-     (if (index-of s_ pat) true false)))
+  (if (util/regex? pat)
+    (if (re-find pat s_) true false)
+    (if (index-of s_ pat) true false)))
 
 ;;; $decodeUrl
 (defn $decodeUrl
@@ -580,6 +631,7 @@
 ;;;               "next": "<native function>#0"} <===============
 ;;;
 ;;; So I'm going to do something similar.
+;;; ToDo: It seems like there are lots of opportunities to use defn$ where I'm not using it. Should I care?
 #?(
 :cljs
    (defn match-regex [& args] :nyi) ; ToDo: re-matcher differs in CLJS
@@ -1657,35 +1709,51 @@
       :keys  ~(mapv symbol vars)
       :where ~(tp-aux body)})))
 
+(defn dbs-from-qform
+  "Return the DB variables from the query form in the correct order
+   (the order in which they appear)."
+  [qform]
+  (if-let [db-forms (filter #(== 4 (count %)) qform)]
+    (->> db-forms (map first) distinct)
+    '[$]))
+
 (defn rewrite-qform
   "Rewrite a query map such as returned by subsitute-in-form into a form acceptable as a datalog query.
    Accepts map keys :find :keys :in and :where."
   [qmap]
   `[:find ~@(:vars qmap)
     :keys ~@(:keys qmap)
-    :in ~@(into '[$] (:in qmap)) ; ToDo: do we really want the :in like this?
+    :in ~@(into (dbs-from-qform (:where qmap)) (:in qmap)) ; ToDo: do we really want the :in like this?
     :where ~@(:where qmap)])
 
 ;;; ToDo: This isn't working.
 #_(defn qvar? [obj]  (-> obj meta :qvar?))
-(defn qvar? [obj]  (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
+(defn qvar? [obj] (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
 
 (defn entity-qvars
   "Return the set of qvars in entity position of the argument body"
   [body]
-  (->> body
-       (filter #(and (== 3 (count %)) (-> % first qvar?)))
-       (map first)
-       (map keyword)
-       set))
+  (let [dbs-specified? (some #(== 4 (count %)) body)]
+    (if dbs-specified?
+      (->> body
+           (filter #(and (== 4 (count %)) (-> % second qvar?)))
+           (map second)
+           (map keyword)
+           set)
+      (->> body
+           (filter #(and (== 3 (count %)) (-> % first qvar?)))
+           (map first)
+           (map keyword)
+           set))))
 
 (defn query-fn-aux
-  "The function that returns a binding set.
+  "The function that returns a vector binding sets.
    Note that it attaches meta for the DB and body."
-  [db-atm body param-subs]
-  (let [e-qvar? (entity-qvars body)
+  [db-atms body param-subs]
+  (let [dbs (map deref db-atms)
+        e-qvar? (entity-qvars body)
         qmap (substitute-in-form body param-subs)]
-    (-> (->> (d/q (-> qmap rewrite-qform) @db-atm) ; This is possible because body is data to d/q.
+    (-> (->> (apply (partial d/q (-> qmap rewrite-qform)) dbs) ; This is possible because body is data to d/q.
              ;; Remove binding sets that involve a schema entity.
              (remove (fn [bset] (some (fn [bval]
                                         (and (keyword? bval)
@@ -1694,38 +1762,36 @@
              ;; ToDo: Add an option to query keepDBids. This should be the default, however.
              (mapv (fn [bset] (reduce-kv (fn [m k v] (if (e-qvar? k) m (assoc m k v))) {} bset)))
              vec) ; ToDo: The commented metadata might become useful?
-        (with-meta {:bi/b-set? true #_#_#_#_:bi/db-atm db-atm :bi/query-map qmap}))))
+        (with-meta {:bi/b-set? true}))))
 
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body."
   [body]
-  (fn [data|db] ; ToDo: Could I make this use $ if no data supplied?
-    (let [db-atm (if (util/db-atm? data|db)
-                   data|db
-                   (-> data|db keywordize-keys qu/db-for!))]
-      (query-fn-aux db-atm body {}))))
+  (fn [& data|dbs] ; ToDo: Could I make this use $ if no data supplied?
+    (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
+      (query-fn-aux db-atms body {}))))
 
 (defn higher-order-query-fn
   "Return a function that can be called with parameters to return a function to m
    the parameterizes query defined by body and params. (It's just a closure...)"
   [body params]
-  (fn [& args]
-    (let [param-subs (zipmap params args)] ; the closure.
-      (fn [data|db]
-        (let [db-atm (if (util/db-atm? data|db)
-                       data|db
-                       (-> data|db keywordize-keys qu/db-for!))]
-          (query-fn-aux db-atm body param-subs))))))
+  (-> (fn [& args]
+        (let [param-subs (zipmap params args)] ; the closure.
+          (-> (fn [& data|dbs]
+                (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
+                  (query-fn-aux db-atms body param-subs)))
+              (with-meta {:bi/fn-type :query-fn :bi/expected-arg-cnt (-> body dbs-from-qform count)}))))
+      (with-meta {:bi/fn-type :query-fn-template :bi/expected-arg-cnt (count params)})))
 
 (defn query
-  "There are two uses scenarios for query:
+  "There are two usage scenarios for query:
       (1) Calls to query where no parameters are specified return a function
           that takes data and returns binding sets.
       (2) Calls to query that provide parameters return a function that takes
           values for those parameters and return a function of type (1).
 
-  'params' is an ordered vector parameters (jvars) that will be matched to 'args' used
-   to parameterized the query form, thus producing a 'customized' query function.
+  'params' is an ordered vector of parameters (jvars) that will be matched to 'args'
+   used to parameterized the query form, thus producing a 'customized' query function.
 
    Example usage (of the second sort):
 

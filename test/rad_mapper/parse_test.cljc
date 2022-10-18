@@ -4,9 +4,7 @@
    #?(:clj [clojure.java.io :as io])
    [clojure.spec.alpha  :as s]
    [clojure.test        :refer [deftest is testing]]
-   [dev.dutil           :refer [remove-meta]]
    [rad-mapper.evaluate :as ev]
-   [rad-mapper.util     :as util]
    [rad-mapper.parse    :as par]))
 
 (defn tokenize-head
@@ -25,9 +23,9 @@
     (as-> (par/make-pstate rdr) ?ps
       (par/tokens-from-string ?ps)
       (par/tokenize ?ps)
-      (into (tokenize-head ?ps) (:tokens ?ps)))))
+      (into (tokenize-head ?ps) (:tokens ?ps))))))
 
-:cljs
+#?(:cljs
 (defn test-tokenize
   "Run the tokenizer on the argument string."
   [s]
@@ -35,7 +33,6 @@
     (par/tokens-from-string ?ps)
     (par/tokenize ?ps)
     (into (tokenize-head ?ps) (:tokens ?ps)))))
-
 
 (deftest parsing-ToDos
   (testing "Things that don't quite sit right!"
@@ -46,9 +43,9 @@
   (testing "Tokenizer:"
 
     (testing "basic tests"
-      (is (= [{:tkn {:typ :StringLiteral :value "This is a string."}, :line 1, :col 1}       {:tkn ::par/eof}]
+      (is (= [{:tkn {:typ :StringLit :value "This is a string."}, :line 1, :col 1}       {:tkn ::par/eof}]
              (test-tokenize "'This is a string.'")))
-      (is (= [{:tkn {:typ :StringLiteral :value "hello's world"}, :line 1, :col 1}           {:tkn ::par/eof}]
+      (is (= [{:tkn {:typ :StringLit :value "hello's world"}, :line 1, :col 1}           {:tkn ::par/eof}]
              (test-tokenize "'hello\\'s world'")))
       (is (= [{:tkn {:typ :Field, :field-name "`foo ?`"}, :line 1, :col 1} {:tkn ::par/eof}]
              (test-tokenize "`foo ?`")))
@@ -56,9 +53,9 @@
       #_(is (= [{:tkn {:base "/wo/", :flags {:ignore-case? true}}, :line 1, :col 1}
               {:tkn \), :line 1, :col 6} {:tkn ::par/eof}]
                (test-tokenize "/wo/i)")))
-      (is (= [{:tkn "[", :line 1}
+      (is (= [{:tkn \[, :line 1}
               {:tkn 1,  :line 1}
-              {:tkn "]", :line 1}
+              {:tkn \], :line 1}
               {:tkn ::par/eof}]
              (->> (test-tokenize "/*  This is my
                                       multi-line comment */ [1]")
@@ -66,38 +63,47 @@
 
     (testing "token stream"
       (is (= [{:tkn :tk/true, :line 1, :col 1}
-              {:tkn "?", :line 1, :col 5}
-              {:tkn {:typ :TripleRole :role-name :foo/bar}, :line 1, :col 6}
-              {:tkn ":", :line 1, :col 14}
-              {:tkn {:typ :TripleRole :role-name :foo/bat}, :line 1, :col 15}
+              {:tkn \?, :line 1, :col 5}
+              {:tkn {:typ :PatternRole :role-name :foo/bar}, :line 1, :col 6}
+              {:tkn \:, :line 1, :col 14}
+              {:tkn {:typ :PatternRole :role-name :foo/bat}, :line 1, :col 15}
               {:tkn ::par/eof}]
              (test-tokenize "true?:foo/bar::foo/bat")))
 
       (is (= [{:tkn :tk/true, :line 1, :col 1}
-              {:tkn "?", :line 1, :col 6}
-              {:tkn {:typ :TripleRole :role-name :foo/bar}, :line 1, :col 8}
-              {:tkn ":", :line 1, :col 16}
-              {:tkn {:typ :TripleRole :role-name :foo/bat}, :line 1, :col 17}
+              {:tkn \?, :line 1, :col 6}
+              {:tkn {:typ :PatternRole :role-name :foo/bar}, :line 1, :col 8}
+              {:tkn \:, :line 1, :col 16}
+              {:tkn {:typ :PatternRole :role-name :foo/bat}, :line 1, :col 17}
               {:tkn ::par/eof}]
              (test-tokenize "true ? :foo/bar::foo/bat"))))
 
     (testing "\\? can be isolated as a token"
       (is (= [{:tkn :tk/true, :line 1, :col 1}
-              {:tkn "?", :line 1, :col 5}
-              {:tkn {:typ :StringLiteral :value "a"}, :line 1, :col 6}
-              {:tkn ":", :line 1, :col 9}
-              {:tkn {:typ :StringLiteral :value "b"}, :line 1, :col 10}
-              {:tkn :rad-mapper.parse/eof}]
+              {:tkn \?, :line 1, :col 5}
+              {:tkn {:typ :StringLit :value "a"}, :line 1, :col 6}
+              {:tkn \:, :line 1, :col 9}
+              {:tkn {:typ :StringLit :value "b"}, :line 1, :col 10}
+              {:tkn ::par/eof}]
              (test-tokenize "true?'a':'b'"))))
 
-    (testing "triple roles are tokens"
+    (testing "pattern roles are tokens"
       (is (= [{:tkn :tk/true, :line 1, :col 1}
-              {:tkn "?", :line 1, :col 5}
-              {:tkn {:typ :TripleRole, :role-name :foo/bar}, :line 1, :col 6}
-              {:tkn ":", :line 1, :col 14}
-              {:tkn {:typ :TripleRole, :role-name :foo/bat}, :line 1, :col 15}
-              {:tkn :rad-mapper.parse/eof}]
-             (test-tokenize "true?:foo/bar::foo/bat"))))))
+              {:tkn \?, :line 1, :col 5}
+              {:tkn {:typ :PatternRole, :role-name :foo/bar}, :line 1, :col 6}
+              {:tkn \:, :line 1, :col 14}
+              {:tkn {:typ :PatternRole, :role-name :foo/bat}, :line 1, :col 15}
+              {:tkn ::par/eof}]
+             (test-tokenize "true?:foo/bar::foo/bat"))))
+
+    (testing "Problems with comments?" ; ToDo: Currently cljs won't pass this! (See directive in one-token-from-string.)
+      #?(:clj
+         (is (= [{:line 1, :col 1, :tkn 1}
+                 {:tkn 2, :line 2, :col 17}
+                 {:tkn ::par/eof}]
+                (test-tokenize
+                 " 1       /*Foo*/
+                   2       /*Bar*/")))))))
 
 (deftest regexp
   (testing "Testing translation of regular expression"
@@ -135,24 +141,36 @@
 
 (deftest query-tests
   (testing "Testing that queries parse okay."
-    (is (= {:typ :QueryTriple,
+    (is (= {:typ :QueryPattern,
             :ent {:typ :Qvar, :qvar-name "?x"},
-            :rel {:typ :TripleRole, :role-name :rdf/type},
-            :val-exp "owl/Class"}
-           (ev/processRM :ptag/q-pattern "[?x :rdf/type 'owl/Class']")))
-    (is (= [{:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?x"},
-             :rel {:typ :TripleRole, :role-name :a}, :val-exp "one"}
-            {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?y"},
-             :rel {:typ :TripleRole, :role-name :b}, :val-exp "two"}]
+            :rel {:typ :PatternRole, :role-name :rdf/type},
+            :val "owl/Class"
+            :db nil}
+           (ev/processRM :ptag/q-pattern-tuple "[?x :rdf/type 'owl/Class']")))
+    (is (= [{:typ :QueryPattern,
+             :ent {:typ :Qvar, :qvar-name "?x"},
+             :rel {:typ :PatternRole, :role-name :a},
+             :val "one"
+             :db nil}
+            {:typ :QueryPattern,
+             :ent {:typ :Qvar, :qvar-name "?y"},
+             :rel {:typ :PatternRole, :role-name :b},
+             :val "two"
+             :db nil}]
            (ev/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
     (is (= {:typ :QueryDef,
             :params [],
-            :triples
-            [{:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?class"},
-              :rel {:typ :TripleRole, :role-name :rdf/type}, :val-exp "owl/Class"}
-             {:typ :QueryTriple, :ent {:typ :Qvar, :qvar-name "?class"},
-              :rel {:typ :TripleRole, :role-name :resource/iri},
-              :val-exp {:typ :Qvar, :qvar-name "?class-iri"}}]}
+            :patterns
+            [{:typ :QueryPattern,
+              :ent {:typ :Qvar, :qvar-name "?class"},
+              :rel {:typ :PatternRole, :role-name :rdf/type},
+              :val "owl/Class"
+              :db nil}
+             {:typ :QueryPattern,
+              :ent {:typ :Qvar, :qvar-name "?class"},
+              :rel {:typ :PatternRole, :role-name :resource/iri},
+              :val {:typ :Qvar, :qvar-name "?class-iri"}
+              :db nil}]}
            (ev/processRM :ptag/exp q1)))))
 
 (deftest immediate-use
@@ -173,10 +191,11 @@
     (is (= '{:typ :ImmediateUse,
              :def {:typ :QueryDef,
                    :params [{:typ :Jvar, :jvar-name "$name"}],
-                   :triples [{:typ :QueryTriple,
-                              :ent {:typ :Qvar, :qvar-name "?e"},
-                              :rel {:typ :TripleRole, :role-name :name},
-                              :val-exp {:typ :Jvar, :jvar-name "$name"}}]},
+                   :patterns [{:typ :QueryPattern,
+                               :ent {:typ :Qvar, :qvar-name "?e"},
+                               :rel {:typ :PatternRole, :role-name :name},
+                               :val {:typ :Jvar, :jvar-name "$name"}
+                               :db nil}]},
              :args [{:typ :Array,
                      :exprs [{:typ :ObjExp, :kv-pairs [{:typ :KVPair,
                                                         :key "name",

@@ -2,7 +2,8 @@
   "Test built-in functions"
   (:require
    [rad-mapper.builtins :as bi]
-   [dev.dutil    :refer [examine run run-test] :refer-macros [run-test]] ; Keep run, examine for REPL.
+   #?(:cljs [dev.dutil :refer [run examine] :refer-macros [run-test]]
+      :clj  [dev.dutil :refer [run run-test]])  ; Keep run, examine for REPL.
    [clojure.test :refer [deftest is testing]]))
 
 (deftest jflatten
@@ -42,14 +43,14 @@
       (run-test "$base64decode('bXl1c2VyOm15cGFzcw==')" "myuser:mypass")))
 
     (testing "$contains"
+      (run-test "$contains('', '')"                 true)
       (run-test "$contains('abracadabra', 'bra')"   true)
       (run-test "$contains('abracadabra', /a.*a/)"  true)
       (run-test "$contains('abracadabra', /ar.*a/)" false)
       (run-test "$contains('Hello World', /wo/)"    false)
       (run-test "$contains('Hello World', /wo/i)"   true)
-      (run-test "( $ := {'Phone' : { 'type' : 'mobile', 'number' : '077 7700 1234'}};
-                 Phone[$contains(number, /^077/)] )"
-                { "type" "mobile", "number" "077 7700 1234"}))
+      (run-test "( $v := {'Phone' : { 'type' : 'mobile', 'number' : '077 7700 1234'}} $v.Phone[$contains(number, /^077/)] )"
+                {"type" "mobile", "number" "077 7700 1234"}))
 
     (testing "URL stuff"
       (run-test "$decodeUrl('https://mozilla.org/?x=%D1%88%D0%B5%D0%BB%D0%BB%D1%8B')"

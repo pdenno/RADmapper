@@ -34,11 +34,6 @@
            (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
          result#))))
 
-(defn success ; ToDo: This should be temporary.
-  "To demonstrate debugging with browser"
-  []
-  (log/debug "Loaded!"))
-
 (defn type? [obj type]
   (cond (keyword? type) (= (:typ obj) type)
         (set? type) (-> obj :typ type)
@@ -71,9 +66,9 @@
    :op/in          'bi/in
    :op/thread      'bi/thread
    :op/&           'bi/&
-   :op/concat      'bi/concat
+   :op/concat-op   'bi/concat-op
    :op/add         'bi/add
-   :op/substract   'bi/subtract
+   :op/subtract    'bi/subtract
    :op/multiply    'bi/multiply
    :op/%           'bi/%
    :op/div         'bi/div
@@ -88,8 +83,8 @@
         (string? obj)                         obj
         (number? obj)                         obj
         (and (keyword? obj)
-             (#{"tk","op"} (namespace obj)))  (get tkn2sym obj :rm/tk-not-found)
-        (symbol? obj)                         obj ; Overambitious rewriting
+             (#{"tk","op"} (namespace obj)))  (get tkn2sym obj {:rm/tk-not-found obj})
+        (symbol? obj)                         obj ; Overambitious rewriting, probably.
         (nil? obj)                            obj ; for optional things like (-> m :where rewrite)
         :else                                 (throw (ex-info "Don't know how to rewrite obj:" {:obj obj}))))
 
@@ -97,6 +92,8 @@
 
 (def ^:dynamic *assume-json-data?* false)
 (def ^:dynamic *inside-let?*  "let is implemented in Primary" false)
+
+(defrewrite :StringLit [m] (:value m))
 
 ;;; These are (<var> <init>) that are mapcat into a let.
 (defrewrite :JvarDecl [m]
@@ -197,12 +194,19 @@
    the regex as a clojure regex, not a function, as used in 'str' ~> /pattern/."
   false)
 
-(defrewrite :FnCall [m]
+#_(defrewrite :FnCall [m]
   (let [fname (-> m :fn-name)]
     (if (par/builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
       (binding [in-regex-fn? (#{"$match" "$split" "$contains" "$replace"} fname)]
         `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
       `(~(symbol fname) ~@(-> m :args rewrite)))))
+
+(defrewrite :FnCall [m]
+  (let [fname (-> m :fn-name)]
+    (if (par/builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
+      (binding [in-regex-fn? (#{"$match" "$split" "$contains" "$replace"} fname)]
+        `(bi/fncall {:func ~(symbol "bi" fname) :args [~@(-> m :args rewrite)]}))
+      `(bi/fncall   {:func ~(symbol fname)      :args [~@(-> m :args rewrite)]}))))
 
 (defrewrite :RegExp [m]
     (if in-regex-fn?
@@ -225,12 +229,16 @@
     (mapv rewrite (:exprs m))))
 
 (defrewrite :QueryDef [m]
-  `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:triples m))))
+  (let [pats (->> m :patterns (filter #(= (:typ %) :QueryPattern)))]
+    (if (or (not-any? #(:db %) pats) (every?  #(:db %) pats))
+      `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:patterns m)))
+      (throw (ex-info "Either (none of / all of) the non-predicate query patterns must specify a DB." {})))))
 
-(defrewrite :QueryTriple [m]
-  `[~(rewrite (:ent m))
+(defrewrite :QueryPattern [m]
+  `[~@(if (:db m) (list (rewrite (:db m))) '())
+    ~(rewrite (:ent m))
     ~(rewrite (:rel m))
-    ~(rewrite (:val-exp m))])
+    ~(rewrite (:val m))])
 
 (defrewrite :QueryPred [m]
   `[~(rewrite (:exp m))])
@@ -243,7 +251,7 @@
     `(with-meta (fn ~(mapv rewrite (:vars m)) ~body)
       {:bi/params '~vars :bi/type :bi/user-fn})))
 
-(defrewrite :TripleRole [m] (:role-name m))
+(defrewrite :PatternRole [m] (:role-name m))
 
 (defrewrite :ImmediateUse [m]
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
@@ -576,7 +584,7 @@
    'bi/in            {:path? false :assoc :none :val 700}
    'bi/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
    'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
-   'bi/concat        {:path? false :assoc :left :val 400}
+   'bi/concat-op     {:path? false :assoc :left :val 400}
    'bi/add           {:path? false :assoc :left :val 400}
    'bi/subtract      {:path? false :assoc :left :val 400}
    'bi/range         {:path? false :assoc :left :val 400} ; ToDo guessing
@@ -590,6 +598,4 @@
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)
     (-> op op-precedence-tbl :val)
-    (do (println "****** No precedence:" op)
-        (reset! diag op)
-        100)))
+    (throw (ex-info "****** No precedence:" {:op op})))) ; ToDo: This can go away someday.

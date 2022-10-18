@@ -2,18 +2,23 @@
   "Test the rewrite of parse trees. rew/processRM is a toplevel function"
   (:require
    [clojure.test :refer [deftest is testing]]
-   [dev.dutil]
+   [dev.dutil :as dev]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.rewrite  :as rew])
-  #?(:cljs (:require-macros [rad-mapper.test-macros :refer [run-test]])))
+  #?(:cljs (:require-macros [rad-mapper.test-macros :refer [run-test run]])))
 
-#_(defmacro run-test
+#?(:clj
+(defmacro run-test
   "Use this to expand dev/run-test with :rewrite? true."
   [form-string expect & {:keys [keep-meta?]}]
     `(testing ~(str "\n(run \"" form-string "\")")
        (is (= ~expect (dev/run ~form-string
                         :rewrite? true
-                        :keep-meta? ~keep-meta?)))))
+                        :keep-meta? ~keep-meta?))))))
+(defmacro run
+  "Used with REPL"
+  [form-string]
+  `(dev/run ~form-string :rewrite? true))
 
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[1] translate correctly."

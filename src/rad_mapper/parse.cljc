@@ -10,6 +10,11 @@
   #?(:cljs (:require-macros [rad-mapper.parse :refer [defparse]])))
 
 ;;; The 'defparse' parsing functions pass around complete state.
+;;; The lexer mostly produces maps where the :tkn is a string.
+;;; The parser uses these :tkn "string things" to produce map grammar map structures where ":tk/things",
+;;; and ":op/things" are created to match the corresponding "string things."
+;;; binary-op? is an example map from string things to :op/things: {"*" :op/multiply,...}.
+;;;
 ;;; The 'parse state' (AKA pstate) is a map with keys:
 ;;;   :result  - the parse structure from the most recent call to (parse :<some-rule-tag> pstate)
 ;;;   :tokens  - tokenized content that needs to be parsed into :model. First on this vector is also :tkn.
@@ -30,6 +35,7 @@
 
 (def block-size "Number of lines to tokenize together. Light testing suggests 5 is about fastest." 5)
 
+;;; N.B.: In these maps of grammar elements, make sure you use a character literal when the map key is a single character of text!
 ;;; ============ Tokenizer ===============================================================
 (def keywords {"express" :tk/express "false" :tk/false "function" :tk/function "query" :tk/query "true" :tk/true})
 (def syntactic? ; chars that are valid tokens in themselves.
@@ -61,26 +67,26 @@
 (def file-fns     (fn-maps ["$read" "$readSpreadsheet"]))
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns))
-(def builtin? (-> builtin-fns keys (into ["$$" "$"]) set))
-(def builtin-un-op #{"+", "-" :not})
+(def builtin? (-> builtin-fns keys (into ["$$" \$]) set))
+(def builtin-un-op #{\+, \- :not})
 
 ;;; Binary operators. [+ - * / < > <= >= =]
-(def numeric-operators    '{"%" :op/%, "*" :op/multiply, "+" :op/add, "-" :op/subtract, "/" :op/div}) ; :range is not one of these.
-(def comparison-operators '{"<=" :op/lteq, ">=" :op/gteq, "!=" :op/!=, "<" :op/lt, "=" :op/eq, ">" :op/gt "in" :op/in})
+(def numeric-operators    '{\% :op/%, \* :op/multiply, \+ :op/add, \- :op/subtract, \/ :op/div}) ; :range is not one of these.
+(def comparison-operators '{"<=" :op/lteq, ">=" :op/gteq, "!=" :op/!=, \< :op/lt, \= :op/eq, \> :op/gt "in" :op/in})
 (def boolean-operators    '{"and" :op/and "or" :op/or})
-(def string-operators     '{"&" :op/concat})
-(def other-operators      '{"." :op/get-step "~>" :op/thread})
-(def non-binary-op?       '{".." :op/range "?" :op/conditional ":=" :op/assign})
+(def string-operators     '{\& :op/concat-op})
+(def other-operators      '{\. :op/get-step "~>" :op/thread})
+(def non-binary-op?       '{".." :op/range \? :op/conditional ":=" :op/assign})
 
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
 
-(s/def ::Jvar          (s/and (s/keys :req-un [::typ ::jvar-name])              #(= (:typ %) :Jvar)  #(-> % :jvar-name string?)))
-(s/def ::Qvar          (s/and (s/keys :req-un [::typ ::qvar-name])              #(= (:typ %) :Qvar)  #(-> % :qvar-name string?)))
-(s/def ::Field         (s/and (s/keys :req-un [::typ ::field-name])             #(= (:typ %) :Field) #(-> % :field-name string?)))
-(s/def ::StringLiteral (s/and (s/keys :req-un [::typ ::value])                  #(= (:typ %) :StringLiteral) #(-> % :value string?)))
-(s/def ::Comment       (s/and (s/keys :req-un [::typ ::text])                   #(= (:typ %) :Comment)))
-(s/def ::RegExp        (s/and (s/keys :req-un [::typ ::base ::flags])           #(= (:typ %) :RegExp)))
-(s/def ::TripleRole    (s/and (s/keys :req-un [::typ ::role-name])              #(= (:typ %) :TripleRole))) ; ToDo: Needs work.
+(s/def ::Jvar          (s/and (s/keys :req-un [::typ ::jvar-name])       #(= (:typ %) :Jvar)      #(-> % :jvar-name  string?)))
+(s/def ::Qvar          (s/and (s/keys :req-un [::typ ::qvar-name])       #(= (:typ %) :Qvar)      #(-> % :qvar-name  string?)))
+(s/def ::Field         (s/and (s/keys :req-un [::typ ::field-name])      #(= (:typ %) :Field)     #(-> % :field-name string?)))
+(s/def ::StringLit     (s/and (s/keys :req-un [::typ ::value])           #(= (:typ %) :StringLit) #(-> % :value string?)))
+(s/def ::Comment       (s/and (s/keys :req-un [::typ ::text])            #(= (:typ %) :Comment)))
+(s/def ::RegExp        (s/and (s/keys :req-un [::typ ::base ::flags])    #(= (:typ %) :RegExp)))
+(s/def ::PatternRole   (s/and (s/keys :req-un [::typ ::role-name])       #(= (:typ %) :PatternRole))) ; ToDo: Needs work.
 (def new-line "Platform's newline as a string" (with-out-str (newline)))
 
 (defn regex-from-string
@@ -93,7 +99,7 @@
         base (loop [cnt 1
                     in (subs st 1)
                     done? false
-                    out "/"]
+                    out \/]
                (cond done? out
                      (> cnt in-len) nil
                      (empty? in) nil
@@ -118,7 +124,7 @@
    Uses heuristics to guess whether it is a regex."
   [st]
   (or (regex-from-string st)
-      {:raw "/" :tkn "/"}))
+      {:raw "/" :tkn \/}))
 
 (defn quoted-string
   "Return a token map for a string delimited by matching single- or double-quote characters.
@@ -129,10 +135,10 @@
          res ""]
     (cond (empty? chars) (throw (ex-info "unbalanced quoted string" {:string s}))
           (= quote-char (-> chars first))
-          {:raw (str raw quote-char) :tkn {:typ :StringLiteral :value res}}
+          {:raw (str raw quote-char) :tkn {:typ :StringLit :value res}}
           (and (= \\ (-> chars first)) (= quote-char (-> chars second)))
           (recur (-> chars rest rest)
-                 (str raw "\\'")
+                 (str raw \\ quote-char)
                  (str res quote-char))
           :else (recur (rest chars)
                        (str raw (-> chars first))
@@ -146,17 +152,17 @@
       {:raw matched :tkn {:typ :Qvar :qvar-name matched}}
       (throw (ex-info  "String does not start a legal query variable:" {:string  s})))))
 
-(defn read-triple-role
-  "read a triple role"
+(defn read-pattern-role
+  "read a pattern role"
   [st]
   (let [s (-> st str/split-lines first)]
     ;; ToDo: Only one '/' allowed!
     (if-let [[_ matched] (re-matches #"(\:[a-zA-Z][a-zA-Z0-9/\-\_]*).*" s)]
       (if (or (> (-> (for [x matched :when (= x  \/)] x) count) 1)
               (= \/ (nth matched (-> matched count dec))))
-        (throw (ex-info "String does not start a legal triple role:" {:string s}))
-        {:raw matched :tkn {:typ :TripleRole :role-name (util/read-str matched)}})
-      (throw (ex-info "String does not start a legal triple role:" {:string st})))))
+        (throw (ex-info "String does not start a legal pattern role:" {:string s}))
+        {:raw matched :tkn {:typ :PatternRole :role-name (util/read-str matched)}})
+      (throw (ex-info "String does not start a legal pattern role:" {:string st})))))
 
 (defn read-long-syntactic
   "Return a map containing a :tkn and :raw string for 'long syntactic' lexemes,
@@ -169,7 +175,7 @@
                          (= c0 \/) (regex-or-divide st),
                          (#{\' \"} c0) (quoted-string st c0),
                          (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (read-qvar st),
-                         (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (read-triple-role st),
+                         (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (read-pattern-role st),
                          (and (= c0 \:) (= c1 \=)) {:raw ":="},
                          (and (= c0 \<) (= c1 \=)) {:raw "<="},
                          (and (= c0 \>) (= c1 \=)) {:raw ">="},
@@ -224,7 +230,9 @@
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
           (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})            ; EOF
-               (when-let [[_ cm] (re-matches #"(?s)(/\*.*\*/).*" s)]   ; comment JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
+               (when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"
+                                                  :clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*")
+                                               s)]   ; comment; JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
                  {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
                (and (long-syntactic? c) (read-long-syntactic s ws))    ; string literals, /regex-pattern/ ++, <=, == etc.
                (when-let [[_ num] (re-matches #"(?s)([-]?\d+(\.\d+(e[+-]?\d+)?)?).*" s)] ; + cannot be used as a unary operator.
@@ -242,8 +250,8 @@
                     {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id}})
                   (when-let [[_ id] (re-matches #"^(\${1,3}).*" word)]                     ; $, $$, $$$.
                     {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id :special? true}})
-                  (when-let [[_ id] (re-matches #"^(:[a-zA-Z][a-zA-Z0-9\-\_]*).*" word)]   ; triple role
-                    {:ws ws :raw id :tkn {:typ :TripleRole :role-name id}})))
+                  (when-let [[_ id] (re-matches #"^(:[a-zA-Z][a-zA-Z0-9\-\_]*).*" word)]   ; pattern role
+                    {:ws ws :raw id :tkn {:typ :PatternRole :role-name id}})))
                (throw (ex-info "Char starts no known token:" {:raw c :line line}))))]
     (when *debugging-tokenizer?*
       (log/info (cl-format nil "***result = ~S string strg = ~S" result string-block)))
@@ -365,7 +373,7 @@
 
 (defn token-vec [ps] (into (-> ps :head vector) (mapv :tkn (:tokens ps))))
 
-(def balanced-map "What balances with the opening syntax?" { "{" "}", "(" ")", "[" "]", :2d-array-open :2d-array-close})
+(def balanced-map "What balances with the opening syntax?" { \{ \}, \( \), \[ \]})
 (def balanced-inv (set/map-invert balanced-map))
 
 (defn find-token
@@ -521,12 +529,12 @@
      final-ps)))
 
 ;;; ToDo: Just in-line these?
-(defn jvar? [x]        (s/valid? ::Jvar x))
-(defn qvar? [x]        (s/valid? ::Qvar x))
-(defn triple-role? [x] (s/valid? ::TripleRole x))
-(defn field? [x]       (s/valid? ::Field x))
-(defn regex? [x]       (s/valid? ::RegExp x))
-(defn string-lit? [x]  (s/valid? ::StringLiteral x))
+(defn jvar? [x]         (s/valid? ::Jvar x))
+(defn qvar? [x]         (s/valid? ::Qvar x))
+(defn pattern-role? [x] (s/valid? ::PatternRole x))
+(defn field? [x]        (s/valid? ::Field x))
+(defn regex? [x]        (s/valid? ::RegExp x))
+(defn string-lit? [x]   (s/valid? ::StringLit x))
 (defn literal? [tkn]
   (or (string-lit? tkn)
       (number? tkn)
@@ -539,7 +547,7 @@
 (s/def ::head #(not (nil? %)))
 
 (def bin-op-plus? "Looks weird; just used for assessing exp continuation below!"
-  (merge binary-op? '{"." :op/get-step "[" :op/filter-step "{" :op/reduce-step}))
+  (merge binary-op? '{\. :op/get-step \[ :op/filter-step \{ :op/reduce-step}))
 
 (s/def ::BinOpSeq (s/keys :req-un [::seq]))
 ;;;=============================== Grammar ===============================
@@ -583,7 +591,7 @@
   (let [tkn  (:head ps)
         ps   (look ps 1)
         tkn2 (-> ps :look (get 1))]
-    (cond (#{\{ \[ \(} tkn)                        (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
+    (cond (#{\{ \[ \(} tkn)                           (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
           (builtin-un-op tkn)                         (parse :ptag/unary-op-exp ps)  ; <unary-op-exp>
           (#{:tk/function :tk/query :tk/express} tkn) (parse :ptag/construct-def ps) ; <construct-def>
           (and (= \( tkn2)
@@ -706,7 +714,7 @@
 (defparse :ptag/range|array-exp
   [ps]
     (let [tvec (token-vec ps)
-          close-pos (when (= (first tvec) "[") (find-balanced-pos tvec "]"))
+          close-pos (when (= (first tvec) \[) (find-balanced-pos tvec \]))
           range-pos (when close-pos (find-token tvec ".." :stop-pos close-pos))]
     (if (and close-pos range-pos (< range-pos close-pos)) ; ToDo Heuristic! (Replace with try?)
       (as-> ps ?ps
@@ -821,6 +829,16 @@
     (parse-list ?ps \[ \] \, :ptag/exp)
     (assoc ?ps :result {:typ :Array :exprs (:result ?ps)})))
 
+;;; ToDo: This is added because query functions can have pattern roles as arguments. Keep?
+;;;       If this doesn't work out exactly, it may be possible to have a separate kind of function???
+;;;       That would have to be caught later (maybe rewrite, maybe runtime) using metadata, however.
+;;; fn-arg ::== <exp> | <query-role-literal>
+(defparse :ptag/fn-arg
+  [ps]
+  (if (-> ps :head pattern-role?)
+    (parse :ptag/query-role-literal ps)
+    (parse :ptag/exp ps)))
+
 ;;; fn-call ::=  <jvar> '(' <exp>? (',' <exp>)* ')'
 (s/def ::FnCall (s/keys :req-un [::fn-name ::args]))
 (defparse :ptag/fn-call
@@ -828,31 +846,31 @@
     (as-> ps ?ps
       (store ?ps :fn-name (:head ?ps))
       (eat-token ?ps jvar?)
-      (parse-list ?ps \( \) \, :ptag/exp)
+      (parse-list ?ps \( \) \, :ptag/fn-arg) ; ToDo: was :ptag/exp.
       (assoc ?ps :result {:typ :FnCall
                           :fn-name (-> ?ps (recall :fn-name) :jvar-name)
                           :args (:result ?ps)})))
 
-;;; <query-patterns> ::= <q-pattern>+
+;;; <query-patterns> ::= <query-pattern>+
 (defparse :ptag/query-patterns
   [ps]
-  (let [ps-one (parse :ptag/q-pattern ps)]
+  (let [ps-one (parse :ptag/query-pattern ps)]
     (loop [result (vector (:result ps-one))
            ps ps-one]
       (if (not= \[ (:head ps))
         (assoc ps :result result)
-        (let [ps (parse :ptag/q-pattern ps)]
+        (let [ps (parse :ptag/query-pattern ps)]
           (recur (conj result (:result ps))
                  ps))))))
 
-;;; <q-pattern> :: <q-pattern-triple> | <q-pattern-pred>
-(defparse :ptag/q-pattern
+;;; <query-pattern> :: <q-pattern-tuple> | <q-pattern-pred>
+(defparse :ptag/query-pattern
   [ps]
   (let [ps   (look ps 1)
         tkn2 (-> ps :look (get 1))]
     (if (= tkn2 \()
-      (parse :ptag/q-pattern-pred ps)
-      (parse :ptag/q-pattern-triple ps))))
+      (parse :ptag/q-pattern-pred  ps)
+      (parse :ptag/q-pattern-tuple ps))))
 
 ;;; <q-pattern-pred> :: '[' '(' <query-predicate> ')' ']'
 (s/def ::QueryPred (s/keys :req-un [::exp]))
@@ -866,28 +884,44 @@
     (eat-token ?ps \])
     (assoc ?ps :result {:typ :QueryPred :exp (:result ?ps)})))
 
-;;; <q-pattern-triple> :: '[' <QueryVar> <TripleRole> (<QueryVar> | <exp>) ']'
-(s/def ::QueryTriple (s/keys :req-un [::ent ::rel ::val-exp]))
-(defparse :ptag/q-pattern-triple
+;;; ToDo: So far, this is just for specifying arguments to a parametric query function,
+;;;       (It is being added to function call expressions.)
+;;;       It could be use on :ptag/q-pattern-tuple, if that works out.
+(defparse :ptag/query-role-literal
+  [ps]
+  (as-> ps ?ps
+    (assoc ?ps :result (:head ?ps))
+    (eat-token ?ps #(pattern-role? %))))
+
+;;; <q-pattern-tuple> :: '['         <QueryVar> <QueryRole> (<QueryVar> | <exp>) ']' |
+;;;                      '[' <DBVar> <QueryVar> <QueryRole> (<QueryVar> | <exp>) ']'
+(s/def ::QueryPattern (s/keys :req-un [::ent ::rel ::val] :opt-un [::db]))
+(defparse :ptag/q-pattern-tuple
   [ps]
   (as-> ps ?ps
     (eat-token ?ps \[)
+    (if (-> ?ps :head jvar?)
+      (as-> ?ps ?ps1
+        (store ?ps1 :db (:head ?ps1))
+        (eat-token ?ps1))
+      ?ps)
     (store ?ps :ent (:head ?ps))
     (eat-token ?ps qvar?)
     (store ?ps :role (:head ?ps))
-    (eat-token ?ps #(or (triple-role? %) (qvar? %)))
+    (eat-token ?ps #(or (pattern-role? %) (qvar? %)))
     (if (qvar? (:head ?ps))
       (as-> ?ps ?ps1
-          (store ?ps1 :third (:head ?ps1))
+          (store ?ps1 :data (:head ?ps1))
           (eat-token ?ps1))
       (as-> ?ps ?ps1
           (parse :ptag/exp ?ps1)
-          (store ?ps1 :third)))
-    (eat-token ?ps "]")
-    (assoc ?ps :result {:typ :QueryTriple
+          (store ?ps1 :data)))
+    (eat-token ?ps \])
+    (assoc ?ps :result {:typ :QueryPattern
+                        :db  (recall ?ps :db)
                         :ent (recall ?ps :ent)
                         :rel (recall ?ps :role)
-                        :val-exp (recall ?ps :third)})))
+                        :val (recall ?ps :data)})))
 
 ;;; <fn-def> ::= 'function' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
 (s/def ::FnDef (s/keys :req-un [::vars ::body]))
@@ -905,24 +939,27 @@
                         :vars (recall ?ps :jvars)
                         :body (recall ?ps :body)})))
 
-;;; <query-def> ::= 'query '(' <jvar>? [',' <jvar|options>]* ')' '{' <query-patterns> '}'
-(s/def ::QueryDef (s/keys :req-un [::params ::triples]))
+;;; <query-def> ::= 'query (  '(' <jvar>? [',' <jvar|options>]* ')' )? '{' <query-patterns> '}'
+(s/def ::QueryDef (s/keys :req-un [::params ::patterns]))
 (defparse :ptag/query-def
   [ps]
   (as-> ps ?ps
     (eat-token ?ps :tk/query)
-    (parse-list ?ps \( \) \, :ptag/jvar)
-    (store ?ps :params)
+    (if (= \( (:head ?ps))
+      (as-> ?ps ?ps1
+        (parse-list ?ps1 \( \) \, :ptag/jvar)
+        (store ?ps1 :params))
+      ?ps)
     (eat-token ?ps \{)
     (parse :ptag/query-patterns ?ps)
     (eat-token ?ps \})
     (assoc ?ps :result {:typ :QueryDef
                         :params (recall ?ps :params)
-                        :triples (:result ?ps)})))
+                        :patterns (:result ?ps)})))
 
-;;; ToDo: I don't care where you put the options.
-;;;       I don't care whether there is more than one options map.
-;;;       Should I?
+;;; ToDo: We don't care where you put the options.
+;;;       We don't care whether there is more than one options map.
+;;;       Should we?
 (defparse :ptag/jvar|options
   [ps]
   (if (-> ps :head jvar?)
@@ -932,15 +969,18 @@
     (parse :ptag/options-map ps)))
 
 ;;; ToDo: These aren't jvars, probably want some sort of optional parameter syntax.
-;;; <express-def> ::= 'express' '(' <jvar>? [',' <jvar>]* ')' '{' <exp> '}'
+;;; <express-def> ::= 'express' ( '(' <jvar>? [',' <jvar>]* ')' )? '{' <exp> '}'
 (s/def ::ExpressDef (s/keys :req-un [::params ::body]))
 (defparse :ptag/express-def
   [ps]
   (binding [in-express? true]
     (as-> ps ?ps
       (eat-token ?ps :tk/express)
-      (parse-list ?ps \( \) \, :ptag/jvar|options)
-      (store ?ps :params)
+      (if (= \( (:head ?ps))
+        (as-> ?ps ?ps1
+          (parse-list ?ps1 \( \) \, :ptag/jvar|options)
+          (store ?ps1 :params))
+        ?ps)
       (eat-token ?ps \{)
       (parse :ptag/obj-exp ?ps)
       (store ?ps :body)
@@ -963,8 +1003,8 @@
         (store ?ps :def)
         (parse-list ?ps \( \) \, :ptag/exp)
         (store ?ps :args)
-        (assoc ?ps :result {:typ :ImmediateUse
-                            :def (recall ?ps :def)
+        (assoc ?ps :result {:typ  :ImmediateUse
+                            :def  (recall ?ps :def)
                             :args (recall ?ps :args)}))
       ;; This if it is just a definition (which will be assigned to a $id).
       ps)))
@@ -975,7 +1015,7 @@
 (defparse :ptag/options-map
   [ps]
   (as-> ps ?ps
-    (parse-list ?ps "{" "}" "," :ptag/option-kv-pair)
+    (parse-list ?ps \{ \} \, :ptag/option-kv-pair)
     (assoc ?ps :result {:typ :OptionsMap :kv-pairs (:result ?ps)})))
 
 (s/def ::OptionKeywordPair (s/keys :req-un [::key ::val]))

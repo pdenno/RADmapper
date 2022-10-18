@@ -22,6 +22,7 @@
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
  :aliases {:dev       {:extra-paths    ["test" "src/dev"]
+                       :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
                        :extra-deps     {#_#_com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
 
            :lib-dev   {:extra-paths    ["test" "src/dev"] ; Not needed?

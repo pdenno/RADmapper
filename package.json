@@ -4,6 +4,7 @@
   "description": "RADmapper mapping engine",
   "main": "index.js",
   "dependencies": {
+    "jsonata": "^1.8.6",
     "platform": "1.3.5",
     "react": "16.13.0",
     "react-dom": "16.13.0",

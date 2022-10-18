@@ -3,14 +3,14 @@
    [clojure.test :refer  [deftest is testing]]
    #?(:clj [datahike.api           :as d])
    #?(:clj [datahike.pull-api      :as dp])
-   #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
+;   #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
    #?(:cljs [datascript.core :as d])
    #?(:cljs [datascript.pull-api :as dp])
-   [rad-mapper.builtins    :as bi]
-   #?(:clj [rad-mapper.query       :as qu])
-   #?(:clj [rad-mapper.util :as util])
-   [dev.dutil :refer [run run-rew remove-meta] :refer-macros [run-test]]
-   [failjure.core :as fj]))
+   [rad-mapper.builtins           :as bi]
+   [rad-mapper.evaluate           :as ev]
+   [rad-mapper.query              :as qu]
+   [rad-mapper.util               :as util]
+   [dev.dutil :refer [run run-test run-rew remove-meta] :refer-macros [run-test]]))
 
 ;;; ToDo: I think I intended to test whether some data (from express?) results in this?
 (def test-schema
@@ -116,11 +116,19 @@
      [{:?attr :person/lname, :?val "Dee"} {:?attr :person/fname, :?val "Peter"}]))
 
 
-  (testing "execution of an in-line query with a parameter"
+    (testing "Simple parametric"
     (run-test
      "($qBob := query($name){[?e :name $name]}('Bob');
        $qBob([{'name' : 'Bob'}]))"
      [{}]))
+
+
+  ;; ToDo: I think the following should work. I get a "Parse ended prematurely."
+    #_(testing "Simple parameteric in-lined (double in-line)"
+      (run-test
+       "query($name){[?e :name $name]}('Bob') ([{'name' : 'Bob'}])"
+       [{}]))
+
 
   (testing "rewriting a query using a mapping context with the default name 'source-data-1'"
     (is (= (run-rew "( $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
@@ -155,7 +163,7 @@
       {:?fname "Bob",   :?lname "Clark"}]))
 
   ;; This tests query on data (rather than directly on a DB).
-  #?(:clj
+  #_(:clj
   (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
            :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
            :dol/feature :dol/time-interval}
@@ -165,7 +173,7 @@
               set))))
 
   ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
-  (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
+  #_(is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
            :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
            :dol/feature :dol/time-interval}
          (->> (run-rew ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
@@ -198,10 +206,6 @@
                $reduce($bsets, $e) )"
               {"inst" "example", "val" "some-val"})))
 
-(def e1 "express($type)
-            {  {'instance-of'  : $type,
-                'content'      : ?class-iri }
-            }")
 
 (deftest simple-express
   (testing "the essential steps of a simple express"
@@ -248,7 +252,9 @@
              (-> (efn {:?content "someContent"}) remove-meta))))
 
     (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
-      (is (= (run-rew e1)
+      (is (= (run-rew "express($type) {  {'instance-of'  : $type,
+                                          'content'      : ?class-iri }
+                                       }")
        '(bi/express {:params '($type), :options 'nil, :body '{"instance-of" $type, "content" ?class-iri}}))))
 
     (testing "the function returned is higher-order..."
@@ -282,7 +288,7 @@
 #?(:clj
 (def conn (-> db-cfg d/connect deref)))
 
-#?(:clj
+#_(:clj
 (def owl-test-data "the simplified objects used in the Draft OAGi Interoperable Mapping Specification example"
   (reduce (fn [res obj]
             (conj res (as-> (pull-resource obj conn) ?o
@@ -412,7 +418,7 @@
 ;;; ToDo: I think all the owl example stuff are screwed up because the output (and maybe DB) is messed up.
 ;;;       See the function write-pretty-file above.
 #_(deftest owl-example-executes ; ToDo: Investigate
-  (testing "Testing execution of $query and express."
+  (testing "Testing execution of query and express."
 
     ;; bi/query is a higher-order function that returns either a query function, or a higher-order function
     ;; that takes a parameter to customize a 'parametric' query function.
@@ -456,7 +462,7 @@
 
 ;;;================================================================================================================
 ;;; "owl-db-tools is used only in development (See deps.edn.)  It is here mostly to ensure it has needed functionality."
-#?(:clj
+#_(:clj
 (deftest use-of-owl-db-tools-query
   (testing "owl-db-tools/pull-resource"
     (is (=
@@ -616,24 +622,155 @@
                                                   "device8" {"id" 800, "status" "Ok"}}}}}}))))
 
 
-;;; Scratch area for testing failjure
-(defn validate-email [email]
-    (if (re-matches #".+@.+\..+" email)
-      email
-      (fj/fail "Please enter a valid email address (got %s)" email)))
+;;; ToDo: Also demonstrate query with parameter for $id.
+(deftest two-source
+  (testing "Testing a simple 2-source problem."
+    (testing "Show me the data...Oops!"
+      (is (every? fn?
+                  (run "( $DBa := [{'id' : 123, 'aAttr' : 'A-value'}];
+                          $DBb := [{'id' : 123, 'bAttr' : 'B-value'}];
 
-(defn validate-not-empty [s]
-  (if (empty? s)
-    (fj/fail "Please enter a value")
-    s))
+                          $aRes := query(){[?e :aAttr ?aData]};
+                          $bRes := query(){[?e :bAttr ?bData]};
 
-;; Use attempt-all to handle failures
-#?(:clj
-(defn validate-data [data]
-  (fj/attempt-all [email (validate-email (:email data))
-                         username (validate-not-empty (:username data))
-                         id (fj/try* (Integer/parseInt (:id data)))]
-        {:email email
-         :id id
-         :username username}
-    (fj/when-failed [e] (println (fj/message e))))))
+                          [$aRes, $bRes] )"))))
+
+
+    (testing "Really show me the data."
+      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'A-value'}];
+                   $DBb := [{'id' : 123, 'bAttr' : 'B-value'}];
+
+                   $aFn := query(){[?e :aAttr ?aData]};
+                   $bFn := query(){[?e :bAttr ?bData]};
+
+                   $aRes := $aFn($DBa);
+                   $bRes := $bFn($DBb);
+
+                   [$aRes, $bRes] )"
+      [[{:?aData "A-value"}] [{:?bData "B-value"}]]))
+
+    (testing "Really show me the data, and BTW, use a parametric query." ; FIX THIS??? Maybe skip this one in presentation.
+      (run-test
+        "( $DBa := [{'id' : 123, 'aAttr' : 'A-data'}];
+           $DBb := [{'id' : 123, 'bAttr' : 'B-data'}];
+
+           $pFnT := query($vAttr){[?e $vAttr ?data]     /* Send a qvar here??? */
+                                  [?e :id    ?id]};
+
+           $qaFn := $pFnT(:aAttr);
+           $qbFn := $pFnT(:bAttr);
+
+           $aRes := $qaFn($DBa);
+           $bRes := $qbFn($DBb);
+
+           [$aRes, $bRes] )"
+        [[{:?data "A-data", :?id 123}] [{:?data "B-data", :?id 123}]]))
+
+    (testing "The above isn't what you want! You want to query both DBs TOGETHER."
+      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'A-data'}];
+                   $DBb := [{'id' : 123, 'bAttr' : 'B-data'}];
+
+                   $qFn :=  query(){[$DBa ?e1 :id    ?id]
+                                    [$DBb ?e2 :id    ?id]       /* Match on ID. */
+                                    [$DBa ?e1 :aAttr ?aData]
+                                    [$DBb ?e2 :bAttr ?bData]};
+
+                   $qFn($DBa, $DBb) )"
+                [{:?id 123, :?aData "A-data", :?bData "B-data"}]))
+
+    ;; ToDo: Use one "$Dba" to test argument counting!
+    (testing "Similar to the above, but parametric."
+      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+                            {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+
+                   $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
+                            {'id' : 234, 'bAttr' : 'Allic-B-data'}];
+
+                   $qFnT :=  query($name){[$DBa ?e1 :id    ?id]
+                                          [$DBb ?e2 :id    ?id]       /* Match on ID. */
+                                          [$DBa ?e1 :name  $name]     /* Parametric on name */
+                                          [$DBa ?e1 :name  ?name]     /* So that we capture name */
+                                          [$DBa ?e1 :aAttr ?aData]
+                                          [$DBb ?e2 :bAttr ?bData]};
+
+                    $qFn := $qFnT('Bob');
+
+                    $qFn($DBa, $DBb) )"
+                [{:?id 123, :?aData "Bob-A-data", :?bData "Bob-B-data" :?name "Bob"}]))
+
+    (testing "Now we express the result by processing the b-sets."
+      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+                            {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+
+                   $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
+                            {'id' : 234, 'bAttr' : 'Alice-B-data'}];
+
+                   $qFn :=  query(){[$DBa ?e1 :id    ?id]
+                                    [$DBb ?e2 :id    ?id]
+                                    [$DBa ?e1 :name  ?name]
+                                    [$DBa ?e1 :aAttr ?aData]
+                                    [$DBb ?e2 :bAttr ?bData]};
+
+                   $bSets := $qFn($DBa, $DBb);
+
+                   $eFn := express(){{'name' : ?name}};
+
+                   $reduce($bSets, $eFn) )"
+                :NYI))))
+
+
+(def e1 "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+                            {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+
+                   $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
+                            {'id' : 234, 'bAttr' : 'Alice-B-data'}];
+
+                   $qFn :=  query(){[$DBa ?e1 :id    ?id]
+                                    [$DBb ?e2 :id    ?id]
+                                    [$DBa ?e1 :name  ?name]
+                                    [$DBa ?e1 :aAttr ?aData]
+                                    [$DBb ?e2 :bAttr ?bData]};
+
+                   $bSets := $qFn($DBa, $DBb);
+
+                   $eFn := express(){{'name' : ?name}};
+
+                   $reduce($bSets, $eFn) )")
+
+(defn tryme []
+  (do
+    (bi/reset-env)
+    (bi/again?
+     (bi/primary-m
+      (let
+          [$DBa
+           (with-meta
+             [(->
+               {}
+               (assoc "id" 123)
+               (assoc "aAttr" "Bob-A-data")
+               (assoc "name" "Bob"))
+              (->
+               {}
+               (assoc "id" 234)
+               (assoc "aAttr" "Alice-A-data")
+               (assoc "name" "Alice"))]
+             #:bi{:json-array? true})
+           $DBb
+           (with-meta
+             [(-> {} (assoc "id" 123) (assoc "bAttr" "Bob-B-data"))
+              (-> {} (assoc "id" 234) (assoc "bAttr" "Alice-B-data"))]
+             #:bi{:json-array? true})
+           $qFn
+           (bi/query
+            '[]
+            '[[$DBa ?e1 :id ?id]
+              [$DBb ?e2 :id ?id]
+              [$DBa ?e1 :name ?name]
+              [$DBa ?e1 :aAttr ?aData]
+              [$DBb ?e2 :bAttr ?bData]])
+           $bSets
+           (bi/fncall {:args [$DBa $DBb], :func $qFn})
+           $eFn
+           (bi/express {:params '(), :options 'nil, :body '{"name" ?name}})]
+        (bi/fncall {:args [$bSets $eFn], :func bi/$reduce}))))))
