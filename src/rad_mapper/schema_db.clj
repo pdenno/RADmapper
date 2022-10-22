@@ -57,6 +57,7 @@
      :db/db.cardinality=many means value is a vector of values of some :db.type."
   [#:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Cardinality}
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/CategoryCode}
+   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/DataTypeTermName}
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Definition}
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Description}
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/DictionaryEntryName}
@@ -240,6 +241,9 @@
            (= desc [:oagi :ccts/message-schema])
            (->> urn (re-matches #"^urn:oagis-\d+\.\d+:(.+)$") second),
 
+           (= desc [:oagi :generic/code-list-schema])
+           (->> urn (re-matches #"^urn:oagis-\d+\.\d+:(.+)$") second),
+
            (= desc [:qif :generic/message-schema])
            (->> urn (re-matches #"^urn:QIF-\d:Application:QIF(.+)$") second),
 
@@ -290,6 +294,7 @@
           (= spec :cefact-ccl) "" ; ToDo: See also UBL CCL.
           :else "")))
 
+;;; ToDo: A schema is getting past this with schema-name "".
 (defn schema-name
   "Return the name of the schema object. This uses the XML content to determine one."
   [xmap]
@@ -302,27 +307,28 @@
       (= :oagi sdo)
       (if-let [[_ fname] (re-matches #".*Components/(\w+).xsd" pname)]
         (str "urn:oagis-" ver-str ":Components:" fname)
-        (if-let [name  (-> (xpath xmap :xsd/schema :xsd/element) :xml/attrs :name)]
-          (str  "urn:oagis-" ver-str ":" name)
-          (if-let [pname (-> xmap :schema/pathname (str/split #"/") last (str/split #"\.") first)]
-            (do (log/warn "Using pathname to define OAGIS" ver "schema name:" pname)
-                (str "urn:oagis-" ver-str ":" pname))
-            (do (log/warn "Could not determine OAGIS" ver "schema name.")
-                :mm/nil))))
+        (if-let [[_ fname] (re-matches #".*Common/ISO20022/(pain[0-9,\.]+).xsd" pname)]
+          (str "urn:oagis-" ver-str ":Common:" fname)
+          (if-let [name  (-> (xpath xmap :xsd/schema :xsd/element) :xml/attrs :name)]
+            (str  "urn:oagis-" ver-str ":" name)
+            (if-let [res-pname (-> pname (str/split #"/") last (str/split #"\.") first)]
+              (do (log/warn "Using pathname to define OAGIS" ver-str "schema name:" res-pname)
+                  (str "urn:oagis-" ver-str ":" res-pname))
+              (do (log/warn "Could not determine OAGIS" ver-str "schema name.")
+                  :mm/nil))))),
       (= :qif sdo)
-      (if-let [[_ fname] (re-matches #".*/QIFLibrary/(\w+).xsd" (:schema/pathname xmap))]
+      (if-let [[_ fname] (re-matches #".*/QIFLibrary/(\w+).xsd" pname)]
         (str "urn:QIF-" ver-str ":Library:" fname)
-        (if-let [[_ fname] (re-matches #".*/QIFApplications/(\w+).xsd" (:schema/pathname xmap))]
+        (if-let [[_ fname] (re-matches #".*/QIFApplications/(\w+).xsd" pname)]
           (str "urn:QIF-" ver-str ":Application:" fname)
-            (do (log/warn "Could not determine QIF" ver "schema name.") :mm/nil)))
+            (do (log/warn "Could not determine QIF" ver-str "schema name.") :mm/nil)))
       (#{:oasis :cefact :iso :etsi} sdo)
       (if-let [name (schema-ns xmap)]
         name
-        (do (log/warn "Could not determine UBL or ISO schema name:" (:schema/pathname xmap)) ""))
+        (do (log/warn "Could not determine UBL or ISO schema name:" pname) ""))
       :else
       (do
-        (log/warn "Could not determine schema name:" (:schema/pathname xmap))
-        ""))))
+        (log/warn "Could not determine schema name:" pname) ""))))
 
 ;;; ToDo: Make this a multi-method (on the case values)
 (defn schema-type
@@ -353,7 +359,7 @@
       (cond (re-matches #".*Fields\.xsd$" pname) ; though it is in the "Components" directory
             :generic/unqualified-dtype-schema
             (re-matches #".+CodeLists.+" pname)
-            :code-list
+            :generic/code-list-schema
             (re-matches #".+Components.+" pname)
             :ccts/component-schema
             (re-matches #"^http://www.openapplications.org/oagis/10$" ns)
@@ -466,26 +472,27 @@
     :generic/library-schema
     :generic/qualified-dtype-schema,
     :generic/unqualified-dtype-schema
+    :generic/code-list-schema
     :generic/xsd-file})
 
 (s/def ::schema-type-kw #(or (special-schema-type? %)
                              (generic-schema-type? %)))
 
-
 ;;; This does file-level dispatching as well as the details
 (defn rewrite-xsd-dispatch
-  [obj & [tag]]
+  [obj & [specified]]
    (let [stype (:schema/type obj)
          schema-sdo  (:schema/sdo obj)
          meth
-         (cond ;; Straight back out.
-               (keyword? tag) tag,
+         (cond ;; Optional 2nd argument specifies method to call
+               (keyword? specified) specified,
 
                ;; Files (schema-type)
                (and (= stype :ccts/message-schema) (= schema-sdo :oasis))    :ubl/message-schema,
                (and (= stype :ccts/message-schema) (= schema-sdo :oagi))     :oagis/message-schema,
                (and (= stype :ccts/component-schema) (= schema-sdo :oagi))   :generic/qualified-dtype-schema,
                (and (= stype :ccts/component-schema) (= schema-sdo :oasis))  :oasis/component-schema,
+               (and (= stype :generic/message-schema) (= schema-sdo :qif))   :generic/xsd-file, ; ToDo: Probably temporary.
 
                (special-schema-type? stype) stype,
                (generic-schema-type? stype) stype,
@@ -827,7 +834,7 @@
 (def cct-renames
   {:ccts/Cardinality :cct/Cardinality,
    :ccts/CategoryCode  :cct/CategoryCode,
-;  :ccts/DataTypeTermName :cct/DataTypeTermName, ; ToDo: never used.
+   :ccts/DataTypeTermName :cct/DataTypeTermName,
    :ccts/Definition :cct/Definition,
    :ccts/Description :cct/Description,
    :ccts/DictionaryEntryName :cct/DictionaryEntryName,
@@ -979,6 +986,7 @@
   (assert (xml-type? xmap :xsd/enumeration))
   (let [term (-> xmap :xml/attrs :value)
         doc    (xpath xmap :xsd/annotation :xsd/documentation)]
+    ;; Some code lists, like OAGIS CodeList_CurrencyCode_ISO_7_04, don't have documentation.
     {term (rewrite-xsd (:xml/content doc) :oagis-ccts-def)}))
 
 (defparse :code-list
@@ -993,7 +1001,8 @@
                                         (merge m (rewrite-xsd v :code-term)))
                                       {}
                                       (filter #(xml-type? % :xsd/enumeration)
-                                              (:xml/content (xpath xmap :xsd/restriction)))))))
+                                              (:xml/content (xpath xmap :xsd/restriction)))))
+      (dissoc :xsd/restriction)))
 
 ;;;=========================== Schema Operations ===========================================
 (defn list-schemas
@@ -1027,7 +1036,6 @@
   [path]
   (reset! diag-path path)
   (let [db-content (-> path read-clean rewrite-xsd du/condition-form vector)]
-    (reset! diag {:content db-content})
     (try
       (if (du/storable? db-content)
         (try (d/transact conn db-content) ; Use d/transact here, not transact! which uses a future.
@@ -1506,15 +1514,15 @@
     (d/create-database db-cfg)
     (alter-var-root (var conn) (fn [_] (d/connect db-cfg)))
     (d/transact conn db-schema)
-    ;;(add-schema-files! (str ubl-root "maindoc"))
-    ;;(add-schema-files! (str ubl-root "common"))
+;;    (add-schema-files! (str ubl-root "maindoc"))
+;;    (add-schema-files! (str ubl-root "common"))
 ;;    (add-schema-files! (str oagis-10-6-root "Nouns"))
 ;;    (add-schema-files! (str oagis-10-6-root "Platform/2_6/Common"))
-;;    (add-schema-files! (str oagis-10-8-root "Nouns"))
-;;    (add-schema-files! (str oagis-10-8-root "Platform/2_7/Common"))
-;;    (add-schema-files! (str qif-root "QIFApplications"))
+    (add-schema-files! (str oagis-10-8-root "Nouns"))
+    (add-schema-files! (str oagis-10-8-root "Platform/2_7/Common"))
+    (add-schema-files! (str qif-root "QIFApplications"))
     (add-schema-files! (str qif-root "QIFLibrary"))
-    ;;(add-schema-files! michael-root)
+;;    (add-schema-files! michael-root)
     (postprocess-schemas!)
     (log/info "Created schema DB")))
 

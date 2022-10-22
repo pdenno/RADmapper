@@ -44,31 +44,30 @@
   ([str ns]
    (keyword ns str)))
 
-(def keywords?
-  "A set of map keys corresponding to values that should be keywordized"
-  #{:xsd/extension :cct/PrimitiveType :cct/sc-use :cct/sc-type :cct/CategoryCode})
-
-(def needs-zip?
-  "A set of map keys where I need to encode a map for later decoding (See db-utils/resolve-db-id)"
-  #{:code-list/terms})
-
 (defn condition-form
-  "Return the form with certain map values as keywords and certain map values zipped."
-  [form & {:keys [key-pred] :or {key-pred keywords?}}]
-  (cond (map? form) (reduce-kv (fn [m k v]
-                                 (if (needs-zip? k)
-                                   (-> m
-                                       (assoc :zip/keys (-> v keys vec))
-                                       (assoc :zip/vals (-> v vals vec)))
-                                   (if (key-pred k)
-                                     (assoc m k (keywordize v))
-                                     (assoc m k (condition-form v)))))
-                                 {}
-                                 form)
-        (vector? form)   (mapv condition-form form)
-        (set? form) (set (map  condition-form form))
-        (coll? form)     (map  condition-form form)
-        :else form))
+  "Return the form with certain map values as keywords and certain map values zipped.
+   Usually top-level call is a form representing a whole schema file. Walks schema."
+  [form]
+  (let [key-pred? ; Map keys corresponding to values that should be keywordized
+        #{:xsd/extension :cct/PrimitiveType :cct/sc-use :cct/sc-type :cct/CategoryCode}
+        needs-zip? ; Map keys to encode as a map for later decoding (See db-utils/resolve-db-id)
+        #{:code-list/terms}]
+    (letfn [(cf-aux [form]
+              (cond (map? form) (reduce-kv (fn [m k v]
+                                             (if (needs-zip? k)
+                                               (-> m
+                                                   (assoc :zip/keys (-> v keys vec))
+                                                   (assoc :zip/vals (-> v vals vec)))
+                                               (if (key-pred? k)
+                                                 (assoc m k (keywordize v))
+                                                 (assoc m k (cf-aux v)))))
+                                           {}
+                                           form)
+                    (vector? form)   (mapv cf-aux form)
+                    (set? form) (set (map  cf-aux form))
+                    (coll? form)     (map  cf-aux form)
+                    :else form))]
+      (cf-aux form))))
 
 ;;; POD ToDo: Spec about this?
 (defn storable?
@@ -246,6 +245,6 @@
 (defn dir-up
   "file is java.io file. Return the path of the nth parent directory, applied recursively to the ."
   [file n]
-  (if (> n 0) 
+  (if (> n 0)
     (recur (.getParentFile file) (dec n))
     file))
