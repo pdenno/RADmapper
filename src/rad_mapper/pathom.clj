@@ -5,11 +5,11 @@
    [com.wsscode.pathom.connect :as pc :refer [defresolver]]
    [com.wsscode.pathom.core :as p]
    [mount.core :refer [defstate]]
-   [rad-mapper.schema-db     :as schema-db]
-   [taoensso.timbre          :as log]))   
+   [rad-mapper.schema-db     :refer [resolvers]]
+   [taoensso.timbre          :as log]))
 
 ;;; Some of this from Chris O'Donnell's excellent blogging.
-;;; See https://chrisodonnell.dev/posts/giftlist/initial_backend/ 
+;;; See https://chrisodonnell.dev/posts/giftlist/initial_backend/
 (defresolver index-explorer [env _]
   {::pc/input  #{:com.wsscode.pathom.viz.index-explorer/id}
    ::pc/output [:com.wsscode.pathom.viz.index-explorer/index]}
@@ -20,7 +20,7 @@
      (update ::pc/index-mutations
        #(into {} (map (fn [[k v]] [k (dissoc v ::pc/mutate)])) %)))})
 
-(def all-resolvers [index-explorer schema-db/resolvers])
+(def all-resolvers [index-explorer resolvers])
 
 (defn preprocess-parser-plugin
   "Helper to create a plugin that can view/modify the env/tx of a

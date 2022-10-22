@@ -1,4 +1,4 @@
-{:paths   ["src" "src/dev" "test"]
+{:paths   ["src" "test"]
  :deps    {
            ;; (Logging doesn't work yet.
            ;; Including the next two removes the message seen in shadow execution. (See notes 2022-10-07.)
@@ -20,12 +20,17 @@
            org.clojure/data.codec         {:mvn/version "0.1.1"}
            org.clojure/data.json          {:mvn/version "2.4.0"}
            org.clojure/data.xml           {:mvn/version "0.2.0-alpha8"}
-           org.clojure/data.zip           {:mvn/version "1.0.0"}}
+           org.clojure/data.zip           {:mvn/version "1.0.0"}
+
+           nrepl/nrepl        {:mvn/version "1.0.0"}   ; ToDo: Can't shake 0.28.0
+           cider/cider-nrepl  {:mvn/version "0.28.5"}} ; ToDo: Can't shake 0.28.0
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
- :aliases {:dev       {:extra-paths    ["test" "src/dev"]
+ :aliases {:dev       {:extra-paths    ["src/dev"]
                        :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
                        :extra-deps     {#_#_com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}
+                                        cider/cider-nrepl  {:mvn/version "0.28.5"} ; ToDO: I'm guessing! Can't shake 0.28.0!
+                                        org.clojure/java.classpath {:mvn/version "1.0.0"}
                                         org.clojure/tools.namespace {:mvn/version "1.3.0"}}}
 
            :lib-dev   {:extra-paths    ["test" "src/dev"] ; Not needed?
