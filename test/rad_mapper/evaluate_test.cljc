@@ -3,6 +3,7 @@
   (:require
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins  :as bi]
+   [rad-mapper.evaluate  :as ev]
    #?(:cljs [dev.dutil :as dev :refer [examine run] :refer-macros [run-test]]
       :clj  [dev.dutil :as dev :refer [examine run run-test]])))
 
@@ -25,8 +26,6 @@
 ;;;  * washed out background on 'is' means execution failed
 ;;;  * washed out background elsewhere appears to mark more specifically what failed, typically the 'run'.
 (deftest small-things
-  (testing "All the, small things (execute):"
-
     ;; ToDo: It is not so simple. The explantion below is wrong; it is more like the JSONata
     ;;       Exerciser doesn't use the binding to [1]. It will return the old value of $.
     #_(testing "JSONata doesn't recognize assignment to $ inside a code block."
@@ -163,7 +162,7 @@
 
     ;; ToDo: Not a high priority, I think. The problem is is in parsing, I suppose.
     #_(testing "That you can return functions for built-ins"
-        (run-test "[1,2].$sum"  [bi/$sum bi/$sum]))))
+        (run-test "[1,2].$sum"  [bi/$sum bi/$sum])))
 
 (deftest code-block-evaluations
   (testing "Code block:"
@@ -292,4 +291,18 @@
               ["20898" "10878"])
 
     (run-test "[{'phone' : {'mobile' : '123-456-7890'}}].phone.mobile"
-                "123-456-7890")))
+              "123-456-7890")))
+
+(defn tryme []
+  (bi/reset-env)
+  (bi/again?
+   (bi/run-steps
+    (bi/init-step-m
+     (->
+      {}
+      (assoc
+       "a"
+       (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3)))))))
+    (bi/get-step "a")
+    (bi/get-step "b")
+    (bi/primary-m (bi/add (bi/get-scoped "c") (bi/get-scoped "f"))))))

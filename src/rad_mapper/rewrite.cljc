@@ -290,7 +290,11 @@
   "Wherever the sequence (:Array |  :ObjExp), :op/get-step, :op/filter-step appears,
    it indicates a quirk in parsing of things like [1,2,3].[0] which in execution
    should just return a [0] for each of [1,2,3]. Since that isn't a :ApplyFilter
-   at all, we need to rewrite it (as a :ValueMap)."
+   at all, we need to rewrite it (as a :ValueMap).
+
+   N.B. This is about the sequence [:op/get-step :ApplyFilter];
+   not to be confused with sequence [:op/filter-step :op/get-step],
+   which is the 'non-compositional' addressed in run-steps."
   [s]
   (loop [res []
          svals s]
@@ -299,8 +303,8 @@
           len (count triple)]
       (cond (< len 3) (into res triple)
             (and (map? p1) (#{:Array :ObjExp} (:typ p1))
-                 (= 'op/get-step p2)
-                 (map? p3) (= :ApplyFilter (:typ p3))) ; ToDo: was :ApplyFilter
+                 (= :op/get-step p2)
+                 (map? p3) (= :ApplyFilter (:typ p3)))
             (recur (into res (vector p1
                                      'bi/value-step
                                      {:typ :ValueStep :body (:body p3)}))

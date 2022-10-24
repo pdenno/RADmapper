@@ -365,9 +365,12 @@
        (with-meta {:bi/step-type :bi/value-step :body '~body}))))
 
 (defn get-scoped
-  "Access map key like clj/get, but with arity overloading for $."
+  "Access map key like clj/get, but with arity overloading for $.
+
+   Don't do a set-context! here; it will mess up 'distribution'.
+   For example, setting $ to the value of 'c' in a.b.(c + f) is wrong."
   ([k] (get-scoped @$ k))
-  ([obj k] (set-context! (get obj k))))
+  ([obj k] (get obj k)))
 
 #?(:clj
 (defmacro primary-m [body]

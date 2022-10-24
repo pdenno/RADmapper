@@ -26,7 +26,7 @@
              bi/value-step
              {:typ :ValueStep, :body 1}]
            (rew/rewrite-value-step [{:typ :Array, :exprs ["a" "b" "c"]}
-                                    'op/get-step
+                                    :op/get-step
                                     {:typ :ApplyFilter, :body 1}])))))
 
 ;;; (not= #"abc" #"abc") so don't bother testing things containing regular expressions.
@@ -41,7 +41,7 @@
       (run-test "$sum($v.field)" '(bi/$sum (bi/run-steps (bi/init-step $v) (bi/get-step "field"))))
       (run-test "$sum(a.b)"      '(bi/$sum (bi/run-steps (bi/get-step "a") (bi/get-step "b"))))
       (run-test "(A * B)"        '(bi/primary (bi/multiply (bi/get-scoped "A") (bi/get-scoped "B"))))
-      (run-test "4 ~> $f()"      '(bi/thread 4 (fn [_x1] ($f _x1))))
+      (run-test "4 ~> $f()"      '(bi/thread 4 (fn [_x1] (bi/fncall _x1 {:args [], :func $f}))))
       (run-test "$" '(bi/deref$))
       (run-test "$foo" '$foo))
 
@@ -74,8 +74,9 @@
                                      (bi/get-step "f"))))
       (run-test "a + b * $f(c + d)"
                 '(bi/add (bi/get-step "a")
-                       (bi/multiply (bi/get-step "b")
-                             ($f (bi/add (bi/get-step "c") (bi/get-step "d"))))))
+                         (bi/multiply (bi/get-step "b")
+                                      (bi/fncall {:args [(bi/add (bi/get-step "c") (bi/get-step "d"))],
+                                                  :func $f}))))
 
       (run-test "$var.a + b.c.(P * Q)"
                 '(bi/add (bi/run-steps
@@ -145,7 +146,12 @@
                 :keep-meta? true)
 
       (run-test "$fn1($fn2($v).a.b)"
-                '($fn1 (bi/run-steps (bi/init-step ($fn2 $v)) (bi/get-step "a") (bi/get-step "b"))))
+                '(bi/fncall {:args [(bi/run-steps
+                                     (bi/init-step
+                                      (bi/fncall {:args [$v], :func $fn2}))
+                                     (bi/get-step "a")
+                                     (bi/get-step "b"))],
+                             :func $fn1}))
 
       (run-test "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"
                 '(bi/$sum
@@ -166,7 +172,12 @@
 
     ;; ToDo: I need to look at JSONata use of \; on this one.
     (run-test  "( $x := 1; $f($x) $g($x) )"
-               '(bi/primary (let [$x 1] ($f $x) ($g $x))))
+               '(bi/primary
+                 (let [$x 1]
+                   (bi/fncall {:args [$x],
+                               :func $f})
+                   (bi/fncall {:args [$x],
+                               :func $g}))))
 
     ;; A side-effected dummy binding is used for the special $.
     (run-test  "( $x   :=  'foo';
@@ -179,7 +190,7 @@
                        _x1 (bi/set-context! (-> {} (assoc "a" 1)))
                        $y "bat"
                        $yy "ybat"]
-                   ($f $x $y))))))
+                   (bi/fncall {:args [$x $y], :func $f}))))))
 
 (deftest options-map
   (testing "rewriting an options map"

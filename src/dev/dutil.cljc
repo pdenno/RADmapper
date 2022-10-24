@@ -106,7 +106,9 @@
   (-> (ev/processRM :ptag/exp exp {:rewrite? true}) remove-meta nicer-sym))
 
 (defn examine [exp]
-  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) nicer))
+  (-> (ev/processRM :ptag/exp exp {:rewrite? true})
+      (ev/rad-form nil)
+      nicer))
 
 (defn examine- [exp]
   (-> (ev/processRM :ptag/exp exp {:rewrite? true}) nicer-))
