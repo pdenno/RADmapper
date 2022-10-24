@@ -1,7 +1,6 @@
 (ns rad-mapper.ast
   "Define syntax trees for interoperable exchange of mappings, among other purposes."
   (:require
-   [failjure.core          :as fj]
    [rad-mapper.query       :as qu]
    [rad-mapper.evaluate    :as ev]))
 
@@ -125,7 +124,7 @@
   [obj]
   (cond (map? obj)            (assoc obj :table/toplevel-exp? true)
         (vector? obj)  (mapv #(assoc %   :table/toplevel-exp? true) obj)
-        :else (fj/fail "Toplevel is a primitive type?: %s" obj)))
+        :else (throw (ex-info "Toplevel is a primitive type?:" {:obj obj}))))
 
 #?(:clj
 (def scott-result (ev/processRM
