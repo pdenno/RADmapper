@@ -418,6 +418,7 @@
                   0
                   (subvec tvec 0 pos)))))
 
+#?(:clj
 (defmacro defparse [tag [pstate & keys-form] & body]
   `(defmethod parse ~tag [~'tag ~pstate ~@(or keys-form '(& _))]
      (when *debugging?*
@@ -432,6 +433,7 @@
        (do (when *debugging?*
              (log/info (cl-format nil "~A<-- ~A   ~S" (util/nspaces (* 3 (-> ~pstate :tags count))) ~tag (:result ~pstate))))
            (ps-assert ~pstate)))))
+)
 
 (defn store
   "This and recall are used to keep parsed content tucked away on the parse state object."
