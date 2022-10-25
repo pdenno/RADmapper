@@ -9,6 +9,13 @@
    [taoensso.timbre :as log])
   #?(:cljs (:require-macros [rad-mapper.parse :refer [defparse]])))
 
+;;; from utils.cljc
+(defn nspaces
+  "Return a string of n spaces."
+  [n]
+  (reduce (fn [s _] (str s " ")) "" (range n)))
+
+
 ;;; The 'defparse' parsing functions pass around complete state.
 ;;; The lexer mostly produces maps where the :tkn is a string.
 ;;; The parser uses these :tkn "string things" to produce map grammar map structures where ":tk/things",

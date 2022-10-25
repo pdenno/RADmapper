@@ -8,7 +8,14 @@
    [rad-mapper.builtins :as bi]
    [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
    [rad-mapper.parse    :as par])
-   #?(:cljs (:require-macros [rad-mapper.rewrite :refer [defrewrite]])))
+  #?(:cljs (:require-macros [rad-mapper.rewrite :refer [defrewrite]])))
+
+;;; from utils.cljc
+(defn nspaces
+  "Return a string of n spaces."
+  [n]
+  (reduce (fn [s _] (str s " ")) "" (range n)))
+
 
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))

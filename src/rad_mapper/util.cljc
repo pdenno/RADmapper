@@ -6,7 +6,8 @@
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
    [clojure.walk                 :as walk :refer [postwalk]]
-   [taoensso.timbre              :as log]))
+   [taoensso.timbre              :as log])
+  #?(:clj (:import [datahike.db DB])))
 
 ;;; ================== CLJ/CLJS/SCI Interop =========================
 (defn regex? [o]
@@ -17,13 +18,15 @@
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
+#?(:clj
+(defn db-atm? [o]
+  (and (instance? clojure.lang.Atom o)
+       (instance? datahike.db.DB @o))))
+
+#?(:cljs (defn db-atm? [_o] true)) ; ToDo: Implement this.
+
 #_(def log-info ^:sci/macro
   (fn [_&form _&env body]))
-
-(defn db-atm? [o]
-#?(:clj  (and (instance? clojure.lang.Atom o)
-              (instance? datahike.db.DB @o))
-   :cljs true)) ; ToDo: Implement this.
 
 ;;; ToDo: Why is SCI able to use this? Util isn't a sci-used ns.
 ;;; https://stackoverflow.com/questions/53321244/clojurescript-equivalent-of-re-matcher-and-re-groups

@@ -3,7 +3,13 @@
    processRM is a top-level function for this."
   (:require
    [clojure.pprint      :refer [cl-format]]
-   [rad-mapper.util     :as util]))
+   #_[rad-mapper.util     :as util]))
+
+;;; from utils.cljc
+(defn nspaces
+  "Return a string of n spaces."
+  [n]
+  (reduce (fn [s _] (str s " ")) "" (range n)))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
@@ -11,7 +17,7 @@
 ;;;       It is necessary when using dynamic binding or want state in an atom to be seen.
 (defmacro defrewrite [tag [obj & keys-form] & body]
   `(defmethod rewrite-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
-     (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
+     (when *debugging?* (cl-format *out* "~A==> ~A~%" (nspaces (count @tags)) ~tag))
      (swap! tags #(conj % ~tag))
      (swap! locals #(into [{}] %))
      (let [res# (do ~@body)
@@ -19,5 +25,5 @@
      (swap! tags   #(-> % rest vec))
      (swap! locals #(-> % rest vec))
      (do (when *debugging?*
-           (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
+           (cl-format *out* "~A<-- ~A returns ~S~%" (nspaces (count @tags)) ~tag result#))
          result#))))

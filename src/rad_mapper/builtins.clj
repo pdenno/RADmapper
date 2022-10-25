@@ -32,3 +32,29 @@
        (~abbrv-params (~fn-name ~@abbrv-args))
        ([~@(vals param-map)]
         (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
+
+(defmacro thread-m [x y]
+  `(let [xarg# ~x]
+     (do (set-context! xarg#)
+         (let [yarg# ~y]
+           (if (fn? yarg#)
+             (yarg# xarg#)
+             (throw (ex-info "The RHS argument to the threading operator is not a function."
+                             {:rhs-operator yarg#})))))))
+
+(defmacro value-step-m
+  [body]
+  `(-> (fn [& ignore#] ~body)
+       (with-meta {:bi/step-type :bi/value-step :body '~body})))
+
+(defmacro primary-m [body]
+  `(-> (fn [& ignore#] ~body)
+       (with-meta {:bi/step-type :bi/primary})))
+
+(defmacro init-step-m [body]
+  `(-> (fn [_x#] ~body)
+       (with-meta {:bi/step-type :bi/init-step :bi/body '~body})))
+
+(defmacro map-step-m [body]
+  `(-> (fn [_x#] ~body)
+       (with-meta {:bi/step-type :bi/map-step :body '~body})))

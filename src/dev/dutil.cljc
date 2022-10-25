@@ -8,22 +8,49 @@
    [sci.core                         :as core]  ; Useful in development
    [rad-mapper.builtins              :as bi]    ; Useful in development
    [rad-mapper.evaluate              :as ev]
-   [rad-mapper.util                  :as util]  ; Useful in development
-   [taoensso.timbre                  :as log :refer-macros [log info debug error]]))
+   #_[rad-mapper.util                  :as util]  ; Useful in development
+   [taoensso.timbre                  :as log]
+   #_[taoensso.timbre                  :as log :refer-macros [log info debug error]])
+  #?(:cljs (:require-macros [dev.dutil :refer [run-test]])))
+
+;;; From util.cljc
+(defn custom-output-fn
+  " - I don't want :hostname_ and :timestamp_ in the log output preface text..
+    - I don't want any preface text in rad-mapper.parse output."
+  ([data] (custom-output-fn nil data))
+  ([opts data]
+   (if (=  (:?ns-str data) "rad-mapper.parse")
+     (apply str (:vargs data)) ; So it can do simple indented call tracing.
+     (taoensso.timbre/default-output-fn opts (dissoc data :hostname_ :timestamp_)))))
+
+
+;;; From util.cljc
+(defn config-log
+  "Configure Timbre: set reporting levels and specify a custom :output-fn."
+  [min-level]
+  (if (#{:trace :debug :info :warn :error :fatal :report} min-level)
+    (log/set-config!
+     (-> log/*config*
+         (assoc :output-fn #'custom-output-fn)
+         (assoc :min-level [[#{"datahike.*"} :error]
+                            [#{"datascript.*"} :error]
+                            [#{"*"} min-level]])))
+    (log/error "Invalid timbre reporting level:" min-level)))
+
 
 (defn start
   "Without the start here, (and named shadow-cljs.edn build :modules {:app {:init-fn dev.dutil/start}}
    this file won't be watched!"
   []
   #?(:cljs (js/console.log "dutil.cljc: Loaded console message. Setting log min-level = :debug"))
-  (util/config-log :debug)
+  (config-log :debug)
   (log/debug "Loaded!"))
 
 (defn ^:dev/after-load reload
   "To demonstrate debugging with browser"
   []
   #?(:cljs (js/console.log "dutil: reloading"))
-  (util/config-log :debug)
+  (config-log :debug)
   (log/debug "Reloaded!"))
 
 (defn clean-form
@@ -112,14 +139,6 @@
 
 (defn examine- [exp]
   (-> (ev/processRM :ptag/exp exp {:rewrite? true}) nicer-))
-
-(defmacro run-test
-  "Print the test form using testing, run the test."
-  [form-string expect & {:keys [rewrite? keep-meta? _debug? _debug-parse?]}]
-  `(testing ~(str "\n(run \"" form-string "\")")
-     (is (= ~expect (run ~form-string
-                      :rewrite? ~rewrite?
-                      :keep-meta? ~keep-meta?)))))
 
 ;;; Adapted from owl-db-tools/resolve-obj, which uses :resource/iri as keys exclusively.
 (defn resolve-tree

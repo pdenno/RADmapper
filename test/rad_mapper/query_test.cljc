@@ -9,8 +9,12 @@
    [rad-mapper.builtins           :as bi]
    [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
-   [rad-mapper.util               :as util]
+   #_[rad-mapper.util               :as util]
    [dev.dutil :refer [run examine run-test run-rew remove-meta] :refer-macros [run-test]]))
+
+(defn read-str [s]
+  #?(:clj  (read-string s)
+     :cljs (cljs.reader/read-string s)))
 
 ;;; ToDo: I think I intended to test whether some data (from express?) results in this?
 (def test-schema
@@ -34,7 +38,7 @@
   "Get maps of everything in the DOLCE (dol) namespace. "
   (->> "data/testing/onto/dolce-1.edn"
        slurp
-       util/read-str
+       read-str
        (mapv #(dissoc % :rdfs/subClassOf :owl/equivalentClass)))))
 
 #?(:clj
@@ -476,7 +480,7 @@
          (-> (pull-resource :dol/perdurant conn)
              (dissoc :rdfs/comment)
              str
-             util/read-str
+             read-str
              (update :rdfs/subClassOf set)))))))
 
 (def owl-full-express-extra

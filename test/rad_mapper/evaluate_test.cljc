@@ -5,7 +5,8 @@
    [rad-mapper.builtins  :as bi]
    [rad-mapper.evaluate  :as ev]
    #?(:cljs [dev.dutil :as dev :refer [examine run] :refer-macros [run-test]]
-      :clj  [dev.dutil :as dev :refer [examine run run-test]])))
+      :clj  [dev.dutil :as dev :refer [examine run run-test]]))
+  #?(:cljs (:require-macros [rad-mapper.builtins :as bi])))
 
 (deftest today
   (run-test "-5"-5)
