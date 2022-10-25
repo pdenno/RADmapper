@@ -7,32 +7,14 @@
    [clojure.spec.alpha  :as s]
    [rad-mapper.builtins :as bi]
    [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
-   [rad-mapper.parse    :as par]
-   [taoensso.timbre     :as log])
-  #?(:cljs (:require-macros [rad-mapper.rewrite :refer [defrewrite]])))
+   [rad-mapper.parse    :as par])
+   #?(:cljs (:require-macros [rad-mapper.rewrite :refer [defrewrite]])))
 
 (def ^:dynamic *debugging?* false)
 (def tags (atom []))
 (def locals (atom [{}]))
 (declare rewrite)
 (def diag (atom nil))
-
-;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
-;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
-;;; Note: The need for the doall below eluded me for a long time.
-;;;       It is necessary when using dynamic binding or want state in an atom to be seen.
-(defmacro defrewrite [tag [obj & keys-form] & body]
-  `(defmethod rewrite-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
-     (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
-     (swap! tags #(conj % ~tag))
-     (swap! locals #(into [{}] %))
-     (let [res# (do ~@body)
-           result# (if (seq? res#) (doall res#) res#)] ; See note above.
-     (swap! tags   #(-> % rest vec))
-     (swap! locals #(-> % rest vec))
-     (do (when *debugging?*
-           (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
-         result#))))
 
 (defn type? [obj type]
   (cond (keyword? type) (= (:typ obj) type)
@@ -87,6 +69,24 @@
         (symbol? obj)                         obj ; Overambitious rewriting, probably.
         (nil? obj)                            obj ; for optional things like (-> m :where rewrite)
         :else                                 (throw (ex-info "Don't know how to rewrite obj:" {:obj obj}))))
+
+;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
+;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
+;;; Note: The need for the doall below eluded me for a long time.
+;;;       It is necessary when using dynamic binding or want state in an atom to be seen.
+#?(:clj
+(defmacro defrewrite [tag [obj & keys-form] & body]
+  `(defmethod rewrite-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
+     (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
+     (swap! tags #(conj % ~tag))
+     (swap! locals #(into [{}] %))
+     (let [res# (do ~@body)
+           result# (if (seq? res#) (doall res#) res#)] ; See note above.
+     (swap! tags   #(-> % rest vec))
+     (swap! locals #(-> % rest vec))
+     (do (when *debugging?*
+           (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
+         result#)))))
 
 (defrewrite :toplevel [m] (->> m :top rewrite))
 
