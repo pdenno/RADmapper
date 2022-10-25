@@ -5,7 +5,8 @@
    [clojure.data.xml      :as x]
    [clojure.java.io       :as io]
    [clojure.walk          :as walk]
-   [datahike.pull-api     :as dp]
+   #?(:clj  [datahike.pull-api     :as dp]
+      :cljs [datascript.pull-api   :as dp])
    [taoensso.timbre       :as log]))
 
 ;;; This seems to cause problems in recursive resolution. (See resolve-db-id)"

@@ -18,8 +18,10 @@
    [clojure.spec.alpha           :as s]
    [clojure.string               :as str]
    [com.wsscode.pathom.connect   :as pc]
-   [datahike.api                 :as d]
-   [datahike.pull-api            :as dp]
+   #?(:clj  [datahike.api        :as d]
+      :cljs [datascript.api      :as d])
+   #?(:clj  [datahike.pull-api   :as dp]
+      :cljs [datascript.pull-api :as dp])
    [mount.core                   :refer [defstate]]
    [rad-mapper.db-util           :as du :refer [xpath xpath- xml-type?]]
    [rad-mapper.util              :as util]
