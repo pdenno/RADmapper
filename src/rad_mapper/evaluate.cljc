@@ -90,24 +90,18 @@
                   'thread     rad-mapper.builtins/thread}})))
 
 #?(:clj (def sw (java.io.StringWriter.)))
-(def diag (atom nil))
 
 (defn user-eval
   "Evaluate the argument form."
   [form opts]
   (let [min-level (util/default-min-log-level)
         run-sci?   (or (util/cljs?) (:sci? opts))
-        full-form (rad-form form run-sci?)
-        opts      (-> opts ; These for debugging
-                      #_(assoc :debug-eval? false)
-                      #_(assoc :sci? (or (util/cljs?) (:sci? opts)))
-                      #_(assoc :sci? true))]
+        full-form (rad-form form run-sci?)]
     (when (or (:debug-eval? opts) (= min-level :debug))
       (util/config-log :info) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox).
       (log/info (cl-format nil "*****  Running ~S *****" (if run-sci? "SCI" "eval")))
       (-> full-form pretty-form pprint))
     (try
-      (reset! diag full-form)
       ;;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
       (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins) (get '$)) nil]
         (sci/binding [sci/out *out*]
@@ -118,6 +112,17 @@
                            (catch Throwable e
                              (ex-info "Failure in clojure.eval:" {:error e}))))
                :cljs :never-happens))))
+      (finally (util/config-log min-level)))))
+
+(defn user-eval-devl
+  "Evaluate the argument form. For use in REPL. Form is anything executable in ctx."
+  [form]
+  (let [min-level (util/default-min-log-level)]
+    (util/config-log :info) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox). Use println for now.
+    (log/info (cl-format nil "*****  Running SCI *****"))
+    (try
+      (sci/binding [sci/out *out*]
+        (sci/eval-form ctx form))
       (finally (util/config-log min-level)))))
 
 (defn processRM

@@ -23,7 +23,8 @@
   (and (instance? clojure.lang.Atom o)
        (instance? datahike.db.DB @o))))
 
-#?(:cljs (defn db-atm? [_o] true)) ; ToDo: Implement this.
+#?(:cljs (defn db-atm? [o]
+           (not (vector? o)))) ; ToDo: better than this.
 
 #_(def log-info ^:sci/macro
   (fn [_&form _&env body]))

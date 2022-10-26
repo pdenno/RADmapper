@@ -107,13 +107,10 @@
     (with-meta obj (merge (meta obj) {:bi/container? true}))
     obj))
 
-(def diag (atom nil))
-
 (defn cmap
   "If the object isn't a container, run the function on it,
    otherwise, mapv over the argument and containerize the result."
   [f arg]
-  (reset! diag f)
   (if (container? arg)
     (->> (mapv #(binding [$ (atom %)] (f %)) arg)
          containerize)
@@ -1699,7 +1696,7 @@
 
 ;;;---------- query ---------------------------------------
 (defn substitute-in-form
-  "Return a map for a datalog queryy [:find...] form that substitutes values as
+  "Return a map for a datalog query [:find...] form that substitutes values as
    though syntax quote were being used."
   [body param-val-map]
   (letfn [(tp-aux [x]
@@ -1707,8 +1704,9 @@
                   (seq? x)                     (map  tp-aux x),
                   (contains? param-val-map x)  (param-val-map x),
                   :else x))]
-    (let [vars (->> (reduce (fn [r x] (into r x)) body)
-                    (filter #(str/starts-with? % "?"))
+    (let [vars (->> (flatten body) ; (reduce (fn [r x] (into r x)) [] body)
+                    (filter #(when (symbol? %)
+                               (str/starts-with? (name %) "?")))
                     distinct
                     vec)]
     `{:vars  ~vars
@@ -1719,7 +1717,7 @@
   "Return the DB variables from the query form in the correct order
    (the order in which they appear)."
   [qform]
-  (if-let [db-forms (filter #(== 4 (count %)) qform)]
+  (if-let [db-forms (not-empty (filter #(== 4 (count %)) qform))]
     (->> db-forms (map first) distinct)
     '[$]))
 
@@ -1759,7 +1757,7 @@
   (let [dbs (map deref db-atms)
         e-qvar? (entity-qvars body)
         qmap (substitute-in-form body param-subs)]
-    (-> (->> (apply (partial d/q (-> qmap rewrite-qform)) dbs) ; This is possible because body is data to d/q.
+    (-> (->> (apply (partial d/q (rewrite-qform qmap)) dbs) ; This is possible because body is data to d/q.
              ;; Remove binding sets that involve a schema entity.
              (remove (fn [bset] (some (fn [bval]
                                         (and (keyword? bval)

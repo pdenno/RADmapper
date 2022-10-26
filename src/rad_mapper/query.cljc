@@ -34,7 +34,6 @@
 ;;;       That would be an entirely different function, though.
 (defn learn-schema
   "Return DH/DS schema objects for the data provided.
-
    Limitation: It can't learn from binding sets; the attributes of those are not the
    data's attributes, and everything will appear as multiplicity 1."
   [data & {:keys [known-schema datahike?] :or {known-schema {} datahike? true}}]
@@ -52,15 +51,16 @@
                   (swap! learned #(-> %
                                       (assoc-in [k :db/cardinality] this-card)
                                       (assoc-in [k :db/valueType] this-typ))))))
-            (lsw-aux [obj]
+             (lsw-aux [obj]
               (cond (map? obj) (doall (map (fn [[k v]]
                                              (update-learned! k v)
                                              (when (coll? v) (lsw-aux v)))
                                            obj))
                     (coll? obj) (doall (map lsw-aux obj))))]
       (lsw-aux data)
-      (cond->> @learned
-        datahike? (reduce-kv (fn [res k v] (conj res (assoc v :db/ident k))) [])))))
+      (if datahike? ; DH uses a vec and attr :db/ident, DS doesn't use :db/valueType.
+          (reduce-kv (fn [res k v] (conj res (assoc v :db/ident k))) []  @learned)
+          (reduce-kv (fn [res k v] (assoc res k (dissoc v :db/valueType))) {} @learned)))))
 
 (defn json-like
   "Return the object with its map keys replaced with strings.
@@ -93,6 +93,8 @@
       (d/transact conn-atm data)
       conn-atm))))
 
+(def diag (atom nil))
+
 #?(:cljs
 (defn db-for!
   "Datascript version: Create a database for the argument data and return a connection to it.
@@ -102,6 +104,7 @@
   [data & {:keys [known-schema] :or {known-schema {}}}]
   (let [data (-> (if (vector? data) data (vector data)) keywordize-keys)
         schema   (learn-schema data :known-schema known-schema :datahike? false)
+        zippy    (reset! diag schema)
         conn-atm (d/create-conn schema)]
     (d/transact conn-atm data)
     conn-atm)))
