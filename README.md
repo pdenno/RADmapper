@@ -4,6 +4,8 @@ Exploratory implementation of an interoperable exchange form for mapping
 This library is an implementation of a language designed to serve as an *interoperable exchange form* for expressing the intent of many mapping and data restructuring needs.
 As an interoperable exchange form, it is intended that the language can be translated (by humans and machine) into mapping specification in other languages.
 For example, it should be possible to translate statements in the exchange form into mapping specification used by commercial mapping tools.
+The strategy for interoperability is to provide, in addition to a typical programming language grammar, a canonical serialization of abstract syntax trees (ASTs) of RADmapper code.
+The ASTs can be, for example,  consumed by other tools for translating into other languages or reasoned about in joint (human/AI) cognitive work.
 The work is done in cooperation with the [Open Application Group](https://oagi.org/) (OAGi).
 
 The language borrows predominantly from [JSONata](https://jsonata.org/) language, but also includes provisions for 
@@ -23,10 +25,5 @@ To support networks of data, the mapping language borrows ideas from the Object 
 mapping language, and Datalog.
 
 ## Status
-The code is a Clojure library. Currently it implements a good portion of JSONata syntax and mapping from JSON, XML and Excel spreadsheets.
-Short-term To Do List:
-
-- Implement all of the JSONata built-in functions.
-- Replace 'eval' with the Small Clojure Interpreter (SCI).
-- Implement Datalog functionality and demonstrations.
-- Create a UI like try.jsonata.org. (It would be developed in another repository but use this one.)
+The code is a Clojure library. Currently it implements nearly all of JSONata, and mapping from JSON, XML and Excel spreadsheets.
+A Dockerized exerciser will be available shortly.
