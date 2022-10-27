@@ -26,5 +26,10 @@ To support networks of data, the mapping language borrows ideas from the Object 
 mapping language, and Datalog.
 
 ## Status
-The code is a Clojure library. Currently it implements nearly all of JSONata, and mapping from JSON, XML and Excel spreadsheets.
-A Dockerized exerciser will be available shortly.
+The code is a Clojure library. Currently it implements 
+  - nearly all of the JSONata syntax and built-in functions,
+  - constructs for datalog-like query of multiple data sources,
+  - higher-order functions for templating queries and expression,
+  - mapping from JSON, XML, and Excel spreadsheets.
+A draft of the [user guide](https://github.com/pdenno/interop-mapping/blob/main/interop-mapping.pdf) is updated occassionally.
+A Dockerized [exerciser](https://github.com/pdenno/RADmapperExerciser) will be available shortly.
