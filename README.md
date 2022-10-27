@@ -5,7 +5,8 @@ This library is an implementation of a language designed to serve as an *interop
 As an interoperable exchange form, it is intended that the language can be translated (by humans and machine) into mapping specification in other languages.
 For example, it should be possible to translate statements in the exchange form into mapping specification used by commercial mapping tools.
 The strategy for interoperability is to provide, in addition to a typical programming language grammar, a canonical serialization of abstract syntax trees (ASTs) of RADmapper code.
-The ASTs can be, for example,  consumed by other tools for translating into other languages or reasoned about in joint (human/AI) cognitive work.
+The canonical serialization of ASTs can be viewed as the exchange form, and the programming language as a means of expressing and validating mapping requirements.
+The ASTs can be, for example,  consumed by other tools for translating into other languages or reasoned about in joint (human/AI) cognitive work; we will demonstrate this in our research.
 The work is done in cooperation with the [Open Application Group](https://oagi.org/) (OAGi).
 
 The language borrows predominantly from [JSONata](https://jsonata.org/) language, but also includes provisions for 
