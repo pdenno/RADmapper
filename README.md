@@ -31,5 +31,7 @@ The code is a Clojure library. Currently it implements
   - constructs for datalog-like query of multiple data sources,
   - higher-order functions for templating queries and expression,
   - mapping from JSON, XML, and Excel spreadsheets.
+  - 
 A draft of the [user guide](https://github.com/pdenno/interop-mapping/blob/main/interop-mapping.pdf) is updated occassionally.
+
 A Dockerized [exerciser](https://github.com/pdenno/RADmapperExerciser) will be available shortly.
