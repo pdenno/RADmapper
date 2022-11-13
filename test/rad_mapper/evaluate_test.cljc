@@ -4,9 +4,9 @@
    [clojure.test        :refer  [deftest is testing]]
    [rad-mapper.builtins  :as bi]
    [rad-mapper.evaluate  :as ev]
-   #?(:cljs [dev.dutil :as dev :refer [examine run] :refer-macros [run-test]]
-      :clj  [dev.dutil :as dev :refer [examine run run-test]]))
-  #?(:cljs (:require-macros [rad-mapper.builtins :as bi])))
+   [dev.dutil-util :refer [run]]
+   #?(:clj [dev.dutil-macros :refer [run-test]]))
+#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
 
 (deftest today
   (run-test "-5"-5)
@@ -293,17 +293,3 @@
 
     (run-test "[{'phone' : {'mobile' : '123-456-7890'}}].phone.mobile"
               "123-456-7890")))
-
-(defn tryme []
-  (bi/reset-env)
-  (bi/again?
-   (bi/run-steps
-    (bi/init-step-m
-     (->
-      {}
-      (assoc
-       "a"
-       (-> {} (assoc "b" (-> {} (assoc "c" 30) (assoc "f" 3)))))))
-    (bi/get-step "a")
-    (bi/get-step "b")
-    (bi/primary-m (bi/add (bi/get-scoped "c") (bi/get-scoped "f"))))))

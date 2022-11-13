@@ -8,7 +8,7 @@
    [rad-mapper.util :as util]
    [taoensso.timbre :as log]
    [rad-mapper.parse-macros :refer [defparse *debugging?* parse parse-dispatch]])
-#?(:cljs (:require-macros [rad-mapper.parse :refer [defparse]])))
+#?(:cljs (:require-macros [rad-mapper.parse-macros :refer [defparse]])))
 
 ;;; from utils.cljc
 (defn nspaces
@@ -189,10 +189,10 @@
                          (and (= c0 \.) (= c1 \.)) {:raw ".."},
                          (and (= c0 \!) (= c1 \=)) {:raw "!="},
                          (and (= c0 \~) (= c1 \>)) {:raw "~>"},
-                         (and (= c0 \{) (= c1 \|)) {:raw "{|"},
-                         (and (= c0 \|) (= c1 \})) {:raw "|}"})]
+                         (and (= c0 \<) (= c1 \|)) {:raw "<|"},
+                         (and (= c0 \|) (= c1 \>)) {:raw "|>"})]
       (cond-> res
-        (#{":=" "<=" ">=" "==" ".." "{|" "|}" "!=" "~>"} (:raw res)) (assoc :tkn (:raw res))
+        (#{":=" "<=" ">=" "==" ".." "<|" "|>" "!=" "~>"} (:raw res)) (assoc :tkn (:raw res))
         true (assoc :ws ws)))))
 
 (defn position-break
@@ -945,11 +945,11 @@
 
 #_(defparse :ptag/param-or-options-map
   [ps]
-  (if (= "{|" (:tkn ps))
+  (if (= "<|" (:tkn ps))
     (parse :ptag/options-map ps)
     (parse :ptag/jvar ps)))
 
-;;; ToDo: Is this really what I want? An options map stuck in with formal parameters???    
+;;; ToDo: Is this really what I want? An options map stuck in with formal parameters???
 ;;; <query-def> ::= 'query (  '(' <jvar>? [',' <jvar|options>]* ')' )? '{' <query-patterns> '}'
 (s/def ::QueryDef (s/keys :req-un [::params ::patterns]))
 (defparse :ptag/query-def
@@ -1023,11 +1023,11 @@
 
 ;;; The next four 'options' rules are just for query and express keyword parameters (so far).
 (s/def ::OptionsMap (s/keys :req-un [::kv-pairs]))
-;;; <options-struct> '{|' <options-kv-pair>* '|}'
+;;; <options-struct> '<|' <options-kv-pair>* '|>'
 (defparse :ptag/options-map
   [ps]
   (as-> ps ?ps
-    (parse-list ?ps "{|" "|}" \, :ptag/option-kv-pair)
+    (parse-list ?ps "<|" "|>" \, :ptag/option-kv-pair)
     (assoc ?ps :result {:typ :OptionsMap :kv-pairs (:result ?ps)})))
 
 (s/def ::OptionKeywordPair (s/keys :req-un [::key ::val]))

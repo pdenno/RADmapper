@@ -5,11 +5,11 @@
     [clojure.pprint               :refer [cl-format pprint]]
     [clojure.spec.alpha           :as s :refer [check-asserts]]
     [rad-mapper.builtins          :as bi]
-    [rad-mapper.builtins-macros   :as bm]    
+    [rad-mapper.builtins-macros   :as bm]
     [rad-mapper.parse-macros      :as pm]
     [rad-mapper.parse             :as par]
     [rad-mapper.rewrite           :as rew]
-    [rad-mapper.rewrite-macros    :as rewm]    
+    [rad-mapper.rewrite-macros    :as rewm]
     [rad-mapper.util              :as util]
     [sci.core                     :as sci]
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
@@ -74,21 +74,25 @@
       `(do (rad-mapper.builtins/reset-env) (rad-mapper.builtins/again? ~(ni form))))))
 
 (def ctx
-  (let [publics     (ns-publics 'rad-mapper.builtins)
-        bns         (sci/create-ns 'rad-mapper.builtins)
-        pns         (sci/create-ns 'pprint-ns)
-        tns         (sci/create-ns 'timbre-ns)
-        builtins-ns (update-vals publics #(sci/copy-var* % bns))
-        pprint-ns   {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
-        timbre-ns   {#_#_'debug     (sci/copy-var* #'taoensso.timbre/debug tns) ; a macro
-                     #_#_'info      (sci/copy-var* #'taoensso.timbre/info tns)  ; a macro
-                     #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
-                     '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
-                     '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}]
+  (let [publics        (ns-publics 'rad-mapper.builtins)
+        publics-m      (ns-publics 'rad-mapper.builtins-macros)
+        bns            (sci/create-ns 'rad-mapper.builtins)
+        bns-m          (sci/create-ns 'rad-mapper.builtins-macros)
+        pns            (sci/create-ns 'pprint-ns)
+        tns            (sci/create-ns 'timbre-ns)
+        builtins-ns    (update-vals publics   #(sci/copy-var* % bns))
+        builtins-m-ns  (update-vals publics-m #(sci/copy-var* % bns-m))
+        pprint-ns      {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
+        timbre-ns      {#_#_'debug     (sci/copy-var* #'taoensso.timbre/debug tns) ; a macro
+                        #_#_'info      (sci/copy-var* #'taoensso.timbre/info tns)  ; a macro
+                        #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
+                        '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
+                        '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}]
     (sci/init
-     {:namespaces {'rad-mapper.builtins  builtins-ns,
-                   'taoensso.timbre      timbre-ns,
-                   'clojure-pprint       pprint-ns}
+     {:namespaces {'rad-mapper.builtins              builtins-ns,
+                   'rad-mapper.builtins-macros       builtins-m-ns,
+                   'taoensso.timbre                  timbre-ns,
+                   'clojure-pprint                   pprint-ns}
       ; ToDo: SCI doesn't seem to want namespaced entries for macros.
       :bindings  {'init-step  rad-mapper.builtins/init-step
                   'map-step   rad-mapper.builtins/map-step
@@ -109,7 +113,7 @@
       (-> full-form pretty-form pprint))
     (try
       ;;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
-      (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins) (get '$)) nil]
+      (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins-macros) (get '$)) nil]
         (sci/binding [sci/out *out*]
           (if run-sci?
             (sci/eval-form ctx full-form)

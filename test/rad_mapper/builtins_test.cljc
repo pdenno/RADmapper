@@ -8,8 +8,9 @@
    [rad-mapper.builtins :as bi]
    [rad-mapper.builtins-macros :as bm]
    [rad-mapper.query :as qu]
-   #?(:clj [dev.dutil-macros :refer [run run-test]]))
-#?(:cljs (:require-macros [dev.dutil-macros])))
+   [dev.dutil-util :refer [run]]
+   #?(:clj [dev.dutil-macros :refer [run-test]]))
+#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
 
 (deftest jflatten-test
   (testing "Testing that JSONata flattening rules are obeyed."
@@ -137,8 +138,8 @@
 
 (deftest rm-fns
   (testing "RADmapper functions"
-    (run-test "( $db := [{'id' : 'find-me', 'attr1' : 1, 'attr2' : 'two', 'anotherAttr' : 'another-value'}];
-                 $id := query( {|keepDBid : true|} ){[?e :id 'find-me']}.?e;
+    (run-test "( $db := $db([{'id' : 'find-me', 'attr1' : 1, 'attr2' : 'two', 'anotherAttr' : 'another-value'}]);
+                 $id := query( <|keepDBid : true|> ){[?e :id 'find-me']}.?e;
                  $pull($id, $db) )"
               '[{:id "find-me" :attr1' 1 :attr2 "two" :anotherAttr "another-value"}])))
 
@@ -281,4 +282,3 @@
       (bi/init-step-m (bi/fncall {:args [$db], :func $q}))
       (bi/get-step (with-meta '?e {:qvar? true})))]
     (bi/$pull $id $db)))))
-

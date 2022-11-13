@@ -9,8 +9,10 @@
    [rad-mapper.builtins           :as bi]
    [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
-   #_[rad-mapper.util               :as util]
-   [dev.dutil :refer [run examine run-test run-rew remove-meta] :refer-macros [run-test]]))
+   [dev.dutil :refer [run-rew]]
+   [dev.dutil-util :refer [run remove-meta]]
+   #?(:clj [dev.dutil-macros :refer [run-test]]))
+#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
 
 (defn read-str [s]
   #?(:clj  (read-string s)

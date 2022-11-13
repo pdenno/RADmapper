@@ -266,3 +266,11 @@
   [s]
   #?(:cljs (seq (clojure.string/split-lines s))
      :clj  (line-seq s)))
+
+;;;=============================================================================
+;;; Utils for macros (It seems the CLJS macros file cannot have functions in it.
+;;;=============================================================================
+
+;;; --- rewrite
+(defn rewrite-dispatch [tag _ & _] tag)
+(defmulti rewrite-meth #'rewrite-dispatch)

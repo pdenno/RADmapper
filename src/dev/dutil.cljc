@@ -8,7 +8,8 @@
    [rad-mapper.builtins              :as bi]    ; Useful in development
    [rad-mapper.evaluate              :as ev]
    [taoensso.timbre                  :as log]
-   #?(:clj [dev.dutil-macros         :as dm]))
+   [dev.dutil-util                   :as dm :refer [diag remove-meta clean-form nicer-sym run]]
+   #?(:clj [dev.dutil-macros         :refer [run-test]]))
   #?(:cljs (:require-macros [dev.dutil-macros])))
 
 ;;; From util.cljc
