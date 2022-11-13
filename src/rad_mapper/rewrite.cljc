@@ -7,8 +7,9 @@
    [clojure.spec.alpha  :as s]
    [rad-mapper.builtins :as bi]
    [rad-mapper.util     :as util :refer [dgensym! reset-dgensym!]]
-   [rad-mapper.parse    :as par])
-  #?(:cljs (:require-macros [rad-mapper.rewrite :refer [defrewrite]])))
+   [rad-mapper.parse    :as par  :refer [builtin-fns]]
+   #?(:clj  [rad-mapper.rewrite-macros :refer [defrewrite rewrite-meth tags locals *debugging?*]])
+   #?(:cljs (:require-macros [rad-mapper.rewrite-macros]))))
 
 ;;; from utils.cljc
 (defn nspaces
@@ -16,10 +17,6 @@
   [n]
   (reduce (fn [s _] (str s " ")) "" (range n)))
 
-
-(def ^:dynamic *debugging?* false)
-(def tags (atom []))
-(def locals (atom [{}]))
 (declare rewrite)
 (def diag (atom nil))
 
@@ -32,10 +29,6 @@
   "Remove map values that are nil."
   [m]
   (reduce-kv (fn [m k v] (if (= nil v) m (assoc m k v))) {} m))
-
-(defn rewrite-dispatch [tag _ & _] tag)
-
-(defmulti rewrite-meth #'rewrite-dispatch)
 
 (def tkn2sym
   "Rewrite parser tokens as the function symbol, boolean value, or operator that they represent.
@@ -81,8 +74,7 @@
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
 ;;; Note: The need for the doall below eluded me for a long time.
 ;;;       It is necessary when using dynamic binding or want state in an atom to be seen.
-#?(:clj
-(defmacro defrewrite [tag [obj & keys-form] & body]
+#_(defmacro defrewrite [tag [obj & keys-form] & body]
   `(defmethod rewrite-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
      (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
      (swap! tags #(conj % ~tag))
@@ -93,7 +85,7 @@
      (swap! locals #(-> % rest vec))
      (do (when *debugging?*
            (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
-         result#)))))
+         result#))))
 
 (defrewrite :toplevel [m] (->> m :top rewrite))
 
@@ -127,21 +119,27 @@
         `(deref bi/$$)
         :else (-> m :jvar-name symbol)))
 
-(def ^:dynamic inside-delim?
+(def ^:dynamic *inside-delim?*
   "When true, modify rewriting behavior inside 'delimited expressions'."
   false)
 
-(def ^:dynamic inside-step?
-  "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than inside-delim?
+(def ^:dynamic *inside-step?*
+  "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than *inside-delim?*
+  false)
+
+(def ^:dynamic *inside-pattern?*
+  "When true, modify rewriting of qvars."
   false)
 
 (defrewrite :Field [m]
-  (cond inside-delim? (:field-name m),
-        inside-step?  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than inside-delim?
+  (cond *inside-delim?* (:field-name m),
+        *inside-step?*  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than *inside-delim?*
         :else `(~'bi/get-step  ~(:field-name m))))
 
 (defrewrite :Qvar [m]
-  (-> m :qvar-name symbol (with-meta {:qvar? true})))
+  (let [qvar (-> m :qvar-name symbol (with-meta {:qvar? true}))]
+    (if *inside-pattern?* qvar
+       `(~'bi/get-step (with-meta '~qvar {:qvar? true})))))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
@@ -199,27 +197,20 @@
 (defrewrite :ExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))
 
-(def ^:dynamic in-regex-fn?
+(def ^:dynamic *in-regex-fn?*
   "While rewriting built-in functions that take regular expressions rewrite
    the regex as a clojure regex, not a function, as used in 'str' ~> /pattern/."
   false)
 
-#_(defrewrite :FnCall [m]
-  (let [fname (-> m :fn-name)]
-    (if (par/builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
-      (binding [in-regex-fn? (#{"$match" "$split" "$contains" "$replace"} fname)]
-        `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
-      `(~(symbol fname) ~@(-> m :args rewrite)))))
-
 (defrewrite :FnCall [m]
   (let [fname (-> m :fn-name)]
-    (if (par/builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
-      (binding [in-regex-fn? (#{"$match" "$split" "$contains" "$replace"} fname)]
+    (if (builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
+      (binding [*in-regex-fn?* (#{"$match" "$split" "$contains" "$replace"} fname)]
         `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
       `(bi/fncall   {:func ~(symbol fname)      :args [~@(-> m :args rewrite)]}))))
 
 (defrewrite :RegExp [m]
-    (if in-regex-fn?
+    (if *in-regex-fn?*
       (make-regex (:base m) (:flags m))
       (let [s (dgensym!)]
         `(fn [~s] (bi/match-regex ~s ~(make-regex (:base m) (:flags m)))))))
@@ -241,7 +232,11 @@
 (defrewrite :QueryDef [m]
   (let [pats (->> m :patterns (filter #(= (:typ %) :QueryPattern)))]
     (if (or (not-any? #(:db %) pats) (every?  #(:db %) pats))
-      `(~'bi/query '~(mapv rewrite (:params m)) '~(mapv rewrite (:patterns m)))
+      `(~'bi/query
+        '~(mapv rewrite (:params m))
+        '~(binding [*inside-pattern?* true]
+            (mapv rewrite (:patterns m)))
+        ~(-> m :options rewrite))
       (throw (ex-info "Either (none of / all of) the non-predicate query patterns must specify a DB." {})))))
 
 (defrewrite :QueryPattern [m]
@@ -284,10 +279,11 @@
     ~(-> m :exp2 rewrite)))
 
 (defrewrite :OptionsMap [m]
-  (reduce (fn [res pair]
-            (assoc res (-> pair :key keyword) (-> pair :val rewrite)))
-          {}
-          (:kv-pairs m)))
+  (-> (reduce (fn [res pair]
+                (assoc res (-> pair :key keyword) (-> pair :val rewrite)))
+              {}
+              (:kv-pairs m))
+      (with-meta {:bi/options? true})))
 
 ;;;----------------------------- Rewriting binary operations (the remainder of this file) -------------
 
@@ -370,8 +366,8 @@
 ;;; Path are created in gather-steps.
 (defrewrite :Path [m]
   `(bi/run-steps
-    ~@(binding [inside-step? false
-                inside-delim? false]
+    ~@(binding [*inside-step?* false
+                *inside-delim?* false]
         (->> m
              :path
              (remove #(or (symbol? %) (keyword? %)))
@@ -381,7 +377,7 @@
 ;;; Where any of the :exps are JvarDecl, they need to wrap the things that follow in a let.
 ;;; Essentially, this turns a sequence into a tree.
 (defrewrite :Primary [m]
-  (binding [inside-step? true]
+  (binding [*inside-step?* true]
     (let [segs (util/split-by (complement #(= :JvarDecl (:typ %))) (:exps m)) ; split a let
           map-vec (loop [segs segs
                          res []]
@@ -417,12 +413,12 @@
 (defrewrite :ApplyFilter [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
-        body (binding [inside-step? true] (-> m :body rewrite))]
+        body (binding [*inside-step?* true] (-> m :body rewrite))]
     `(bi/filter-step
       (fn [~sym] (binding [bi/$ (atom ~sym)] ~body)))))
 
 (defrewrite :ValueStep [m]
-  (let [body (binding [inside-step? true] (-> m :body rewrite))]
+  (let [body (binding [*inside-step?* true] (-> m :body rewrite))]
     `(bi/value-step [~body])))
 
 (defrewrite :ApplyReduce [m] ; ToDo: Not used?

@@ -6,15 +6,15 @@
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
    [rad-mapper.util :as util]
-   [taoensso.timbre :as log])
-  #?(:cljs (:require-macros [rad-mapper.parse :refer [defparse]])))
+   [taoensso.timbre :as log]
+   [rad-mapper.parse-macros :refer [defparse *debugging?* parse parse-dispatch]])
+#?(:cljs (:require-macros [rad-mapper.parse :refer [defparse]])))
 
 ;;; from utils.cljc
 (defn nspaces
   "Return a string of n spaces."
   [n]
   (reduce (fn [s _] (str s " ")) "" (range n)))
-
 
 ;;; The 'defparse' parsing functions pass around complete state.
 ;;; The lexer mostly produces maps where the :tkn is a string.
@@ -37,7 +37,6 @@
 ;;; ToDo:
 ;;;   - Rethink the lexer/parser dichotomy. See Lezer, for example. My continue-tag stuff and regex is pretty bad!
 
-(def ^:dynamic *debugging?* false)
 (util/config-log (if *debugging?* :debug :info))
 
 (def block-size "Number of lines to tokenize together. Light testing suggests 5 is about fastest." 5)
@@ -49,7 +48,7 @@
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \? \`})
 
 (def long-syntactic? ; chars that COULD start a multi-character syntactic elements.
-  #{\<, \>, \=, \., \:, \/, \', \" \?, \~, \!}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
+  #{\<, \>, \=, \., \:, \/, \', \" \?, \~, \{, \| \!}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
 (def other? #{\(, \), \{, \}, \[, \], \:, \,, \;})
 
@@ -71,9 +70,9 @@
 (def datetime-fns (fn-maps ["$fromMillis" "$millis" "$now" "$toMillis"]))
 (def higher-fns   (fn-maps ["$filter" "$map" "$reduce" "$sift" "$single"]))
 ;;; Non-JSONata functions
-(def file-fns     (fn-maps ["$read" "$readSpreadsheet"]))
+(def rm-fns       (fn-maps ["$db" "$pull" "$read" "$readSpreadsheet"]))
 
-(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns file-fns))
+(def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns rm-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" \$]) set))
 (def builtin-un-op #{\+, \- :not})
 
@@ -189,9 +188,11 @@
                          (and (= c0 \=) (= c1 \=)) {:raw "=="},
                          (and (= c0 \.) (= c1 \.)) {:raw ".."},
                          (and (= c0 \!) (= c1 \=)) {:raw "!="},
-                         (and (= c0 \~) (= c1 \>)) {:raw "~>"})]
+                         (and (= c0 \~) (= c1 \>)) {:raw "~>"},
+                         (and (= c0 \{) (= c1 \|)) {:raw "{|"},
+                         (and (= c0 \|) (= c1 \})) {:raw "|}"})]
       (cond-> res
-        (#{":=" "<=" ">=" "==" ".." "!=" "~>"} (:raw res)) (assoc :tkn (:raw res))
+        (#{":=" "<=" ">=" "==" ".." "{|" "|}" "!=" "~>"} (:raw res)) (assoc :tkn (:raw res))
         true (assoc :ws ws)))))
 
 (defn position-break
@@ -425,8 +426,7 @@
                   0
                   (subvec tvec 0 pos)))))
 
-#?(:clj
-(defmacro defparse [tag [pstate & keys-form] & body]
+#_(defmacro defparse [tag [pstate & keys-form] & body]
   `(defmethod parse ~tag [~'tag ~pstate ~@(or keys-form '(& _))]
      (when *debugging?*
        (log/info (cl-format nil "~A==> ~A" (util/nspaces (* 3 (-> ~pstate :tags count))) ~tag)))
@@ -440,7 +440,6 @@
        (do (when *debugging?*
              (log/info (cl-format nil "~A<-- ~A   ~S" (util/nspaces (* 3 (-> ~pstate :tags count))) ~tag (:result ~pstate))))
            (ps-assert ~pstate)))))
-)
 
 (defn store
   "This and recall are used to keep parsed content tucked away on the parse state object."
@@ -451,10 +450,6 @@
   "This and store are used to keep parsed content tucked away on the parse state object."
   [ps key]
   (-> ps :local first key))
-
-(defn parse-dispatch [tag & _] tag)
-
-(defmulti parse #'parse-dispatch)
 
 (defn make-pstate
   "Make a parse state map and start tokenizing."
@@ -948,6 +943,13 @@
                         :vars (recall ?ps :jvars)
                         :body (recall ?ps :body)})))
 
+#_(defparse :ptag/param-or-options-map
+  [ps]
+  (if (= "{|" (:tkn ps))
+    (parse :ptag/options-map ps)
+    (parse :ptag/jvar ps)))
+
+;;; ToDo: Is this really what I want? An options map stuck in with formal parameters???    
 ;;; <query-def> ::= 'query (  '(' <jvar>? [',' <jvar|options>]* ')' )? '{' <query-patterns> '}'
 (s/def ::QueryDef (s/keys :req-un [::params ::patterns]))
 (defparse :ptag/query-def
@@ -956,14 +958,15 @@
     (eat-token ?ps :tk/query)
     (if (= \( (:head ?ps))
       (as-> ?ps ?ps1
-        (parse-list ?ps1 \( \) \, :ptag/jvar)
+        (parse-list ?ps1 \( \) \, :ptag/jvar|options) ; was :ptag/jvar.
         (store ?ps1 :params))
       ?ps)
     (eat-token ?ps \{)
     (parse :ptag/query-patterns ?ps)
     (eat-token ?ps \})
     (assoc ?ps :result {:typ :QueryDef
-                        :params (recall ?ps :params)
+                        :params   (->> (recall ?ps :params) (filterv jvar?))
+                        :options  (->> (recall ?ps :params) (filter (complement jvar?)) first)
                         :patterns (:result ?ps)})))
 
 ;;; ToDo: We don't care where you put the options.
@@ -1020,11 +1023,11 @@
 
 ;;; The next four 'options' rules are just for query and express keyword parameters (so far).
 (s/def ::OptionsMap (s/keys :req-un [::kv-pairs]))
-;;; <options-struct> '{' <options-kv-pair>* '}'
+;;; <options-struct> '{|' <options-kv-pair>* '|}'
 (defparse :ptag/options-map
   [ps]
   (as-> ps ?ps
-    (parse-list ?ps \{ \} \, :ptag/option-kv-pair)
+    (parse-list ?ps "{|" "|}" \, :ptag/option-kv-pair)
     (assoc ?ps :result {:typ :OptionsMap :kv-pairs (:result ?ps)})))
 
 (s/def ::OptionKeywordPair (s/keys :req-un [::key ::val]))

@@ -5,8 +5,11 @@
     [clojure.pprint               :refer [cl-format pprint]]
     [clojure.spec.alpha           :as s :refer [check-asserts]]
     [rad-mapper.builtins          :as bi]
+    [rad-mapper.builtins-macros   :as bm]    
+    [rad-mapper.parse-macros      :as pm]
     [rad-mapper.parse             :as par]
     [rad-mapper.rewrite           :as rew]
+    [rad-mapper.rewrite-macros    :as rewm]    
     [rad-mapper.util              :as util]
     [sci.core                     :as sci]
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
@@ -34,18 +37,22 @@
                       :else form)))]
       (ni form))))
 
+(def macro-subs
+  "When rewriting produces any of the symbols corresponding to the keys of the map,
+   AND evaluation with Clojure eval is intended, use the corresponding value of the map."
+  {"init-step"   'rad-mapper.builtins-macros/init-step-m,
+   "map-step"    'rad-mapper.builtins-macros/map-step-m,
+   "value-step"  'rad-mapper.builtins-macros/value-step-m,
+   "primary"     'rad-mapper.builtins-macros/primary-m,
+   "thread"      'rad-mapper.builtins-macros/thread-m})
+
 (defn macro?
-  "Return a ns-qualified -macro symbol substituting for the argument symbol, where
-   such a macro is intended (See the map in the body of this function.)"
+  "Return a ns-qualified -macro symbol substituting for the argument symbol created from rewriting.
+   This is used where a macro is intended (i.e. when using clojure eval, not SCI, for the evaluation)."
   [sym]
   (let [n (name sym)]
     (when (#{"rad-mapper.builtins" "bi"} (namespace sym))
-      (get {"init-step"   'rad-mapper.builtins/init-step-m,
-            "map-step"    'rad-mapper.builtins/map-step-m,
-            "value-step"  'rad-mapper.builtins/value-step-m,
-            "primary"     'rad-mapper.builtins/primary-m,
-            "thread"      'rad-mapper.builtins/thread-m}
-           n))))
+      (get macro-subs n))))
 
 (defn rad-form
   "Walk the form replacing the namespace alias 'bi' with 'rad-mapper.builtins' except where the var is an :sci/macro.
@@ -93,10 +100,9 @@
 
 (defn user-eval
   "Evaluate the argument form."
-  [form opts]
+  [full-form opts]
   (let [min-level (util/default-min-log-level)
-        run-sci?   (or (util/cljs?) (:sci? opts))
-        full-form (rad-form form run-sci?)]
+        run-sci?   (or (util/cljs?) (:sci? opts))]
     (when (or (:debug-eval? opts) (= min-level :debug))
       (util/config-log :info) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox).
       (log/info (cl-format nil "*****  Running ~S *****" (if run-sci? "SCI" "eval")))
@@ -131,31 +137,30 @@
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
-   (let [rewrite? (or (:rewrite? opts) (:execute? opts))
+   #_(assert (every? #(#{:rewrite? :executable? :execute? :sci? :debug-eval? :debug-parse? :debug-rewrite?} %)
+                     (keys opts)))
+   (let [rewrite?    (or (:execute? opts) (:executable? opts) (:rewrite? opts))
+         executable? (or (:execute? opts) (:executable? opts))
          ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
-     (binding [rew/*debugging?* (:debug? opts)
-               par/*debugging?* (:debug-parse? opts)]
+     (binding [rewm/*debugging?* (:debug-rewrite? opts)
+               pm/*debugging?* (:debug-parse? opts)]
        ;; Note that s/check-asserts = true can produce non-JSONata like behavior by means of
        ;; throwing an error where JSONata might just return ** No Match **
-       (if (or rew/*debugging?* par/*debugging?*) (s/check-asserts true) (s/check-asserts false))
+       (if (or rewm/*debugging?* pm/*debugging?*) (s/check-asserts true) (s/check-asserts false))
        #?(:clj  (with-open [rdr (-> str char-array clojure.java.io/reader)]
                   (as-> (par/make-pstate rdr) ?ps
-                    (par/parse tag ?ps)
+                    (pm/parse tag ?ps)
                     (dissoc ?ps :line-seq) ; dissoc so you can print it.
                     (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
                     (reset! ps-atm ?ps)))
           :cljs (as-> (par/make-pstate str) ?ps
-                  (par/parse tag ?ps)
+                  (pm/parse tag ?ps)
                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
                   (reset! ps-atm ?ps)))
-       (if (= :ok (:parse-status @ps-atm))
-         (as-> (:result @ps-atm) ?r
-           (if rewrite?
-             (->> (if (:skip-top? opts) ?r {:typ :toplevel :top ?r}) rew/rewrite)
-             ?r)
-           (if (:execute? opts) (user-eval ?r opts) ?r)
-           (if (:rewrite-error? ?r)
-             (throw (ex-info "Error in rewriting:" {:string  (with-out-str (pprint ?r))}))
-             ?r))
-         (case (:parse-status @ps-atm)
-           :premature-end (log/error "Parse ended prematurely")))))))
+       (case (:parse-status @ps-atm)
+         :premature-end (log/error "Parse ended prematurely")
+         :ok (cond-> {:typ :toplevel :top (:result @ps-atm)}
+               (not rewrite?)      (:top)
+               rewrite?            (rew/rewrite)
+               executable?         (rad-form (:sci? opts))
+               (:execute? opts)    (user-eval opts)))))))

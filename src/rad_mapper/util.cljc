@@ -1,13 +1,16 @@
 (ns rad-mapper.util
   (:require
-   [cemerick.url                 :as url]
-   #?(:clj  [clojure.data.xml    :as x]) ; ToDo: Investigate. Not cljs version?
-   #?(:cljs [cljs.reader]) ; ToDo: Investigate. Not cljs version?
+   [cemerick.url                 :as url]  ; clj-kondo is wrong; it is used.
+   #?(:clj  [clojure.data.xml    :as xml]) ; ToDo: Investigate. Not cljs version?
+   #?(:cljs [cljs.reader])                 ; ToDo: Investigate. Not cljs version?
+   #?(:clj [clojure.java.io])
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
    [clojure.walk                 :as walk :refer [postwalk]]
-   [taoensso.timbre              :as log])
-  #?(:clj (:import [datahike.db DB])))
+   #?(:clj  [datahike.db.utils  :refer [db?]]
+      :cljs [datascript.core    :refer [db?]])
+   [taoensso.timbre              :as log]))
+
 
 ;;; ================== CLJ/CLJS/SCI Interop =========================
 (defn regex? [o]
@@ -18,16 +21,7 @@
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
-#?(:clj
-(defn db-atm? [o]
-  (and (instance? clojure.lang.Atom o)
-       (instance? datahike.db.DB @o))))
-
-#?(:cljs (defn db-atm? [o]
-           (not (vector? o)))) ; ToDo: better than this.
-
-#_(def log-info ^:sci/macro
-  (fn [_&form _&env body]))
+(defn db-atm? [o] (db? @o))
 
 ;;; ToDo: Why is SCI able to use this? Util isn't a sci-used ns.
 ;;; https://stackoverflow.com/questions/53321244/clojurescript-equivalent-of-re-matcher-and-re-groups
@@ -94,7 +88,7 @@
     (str base-str (->> (map str used-names) (filter #(re-matches regex %)) count inc))))
 
 (defn explicit-root-ns
-  "Return argument x/element-nss map modified so that that the empty-string namespace is 'root' or whatever
+  "Return argument xml/element-nss map modified so that that the empty-string namespace is 'root' or whatever
    If the schema uses 'xs' for 'http://www.w3.org/2001/XMLSchema', change it to xsd"
   [nspaces & {:keys [root-name] :or {root-name "ROOT"}}]
   #_(when (-> nspaces :p->u (contains? root-name))
@@ -121,7 +115,7 @@
 (defn alienate-xml
   "Replace namespaced xml map keywords with their aliases."
   [xml]
-  (let [ns-info (-> xml x/element-nss explicit-root-ns)]
+  (let [ns-info (-> xml xml/element-nss explicit-root-ns)]
     (letfn [(equivalent-tag [tag]
               (let [[success? ns-name local-name] (->> tag str (re-matches #"^:xmlns\.(.*)/(.*)$"))]
                 (if success?
@@ -174,8 +168,8 @@
 (defn read-xml
   "Return a map of the XML file read."
   [pathname]
-  (let [xml (-> pathname clojure.java.io/reader x/parse)]
-     {:xml/ns-info (explicit-root-ns (x/element-nss xml))
+  (let [xml (-> pathname clojure.java.io/reader xml/parse)]
+     {:xml/ns-info (explicit-root-ns (xml/element-nss xml))
       :xml/content (-> xml alienate-xml clean-whitespace detagify vector)
       :schema/pathname pathname})))
 

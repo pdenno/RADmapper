@@ -1,35 +1,40 @@
 (ns rad-mapper.builtins-test
   "Test built-in functions"
   (:require
+   [clojure.test :refer [deftest is testing]]
+   #_[dev.dutil :refer [examine]] ; ToDo: This cannot be used. Why?
+   [rad-mapper.parse]
+   [rad-mapper.rewrite]
    [rad-mapper.builtins :as bi]
-   #?(:cljs [dev.dutil :refer [run examine] :refer-macros [run-test]]
-      :clj  [dev.dutil :refer [run run-test]])  ; Keep run, examine for REPL.
-   [clojure.test :refer [deftest is testing]]))
+   [rad-mapper.builtins-macros :as bm]
+   [rad-mapper.query :as qu]
+   #?(:clj [dev.dutil-macros :refer [run run-test]]))
+#?(:cljs (:require-macros [dev.dutil-macros])))
 
-(deftest jflatten
+(deftest jflatten-test
   (testing "Testing that JSONata flattening rules are obeyed."
 
     (testing "Rule 1"
-      (is (nil? (bi/jflatten (bi/containerize [])))))
+      (is (nil? (bm/jflatten (bm/containerize [])))))
 
     (testing "Rule 1; drop map keys when the value is empty"
       (is (= [{"match" "foo", "index" 2}]
-             (bi/jflatten
-              (bi/containerize
+             (bm/jflatten
+              (bm/containerize
                {"match" "foo", "index" 2, "groups" []})))))
 
     (testing "Rule 2"
-      (is (= 1 (bi/jflatten (bi/containerize [1])))))
+      (is (= 1 (bm/jflatten (bm/containerize [1])))))
 
     (testing "Rule 3 (The adapted core/flatten function doesn't flatten JSON.)"
       (is (= [1 2 3 [4 5] 6]
-             (bi/jflatten
+             (bm/jflatten
               (with-meta [1 2 3 [4 5] 6] {:bi/type :bi/json-array})))))
 
     (testing "Rule 4"
       (is (= [1 2 3 4 5 6]
-             (bi/jflatten
-              (bi/containerize
+             (bm/jflatten
+              (bm/containerize
                [1 [[2]] [3] [[[4 [5] [[6]]]]]])))))))
 
 ;;; ==============  Builtin-functions =============================
@@ -129,6 +134,13 @@
 
     (testing "$trim"
       (run-test "$trim(' Hello \n World ')" "Hello World"))))
+
+(deftest rm-fns
+  (testing "RADmapper functions"
+    (run-test "( $db := [{'id' : 'find-me', 'attr1' : 1, 'attr2' : 'two', 'anotherAttr' : 'another-value'}];
+                 $id := query( {|keepDBid : true|} ){[?e :id 'find-me']}.?e;
+                 $pull($id, $db) )"
+              '[{:id "find-me" :attr1' 1 :attr2 "two" :anotherAttr "another-value"}])))
 
 (deftest numerical-fns
   (testing "Numerical functions"
@@ -247,3 +259,26 @@
                 "11/07/2017 03:12PM") ; ToDo: Should be 'pm' not 'PM' and 3:12, not 03:12
       (run-test "$fromMillis(1510067557121, '[H01]:[m01]:[s01] [z]', '-0500')"
                 "10:12:37 -0500"))))) ; ToDo: Example shows "10:12:37 GMT-05:00"
+
+#_(defn tryme []
+   (bi/reset-env)
+ (bi/again?
+  (bi/primary-m
+   (let
+    [$db
+     (with-meta
+      [(->
+        {}
+        (assoc "id" "find-me")
+        (assoc "attr1" 1)
+        (assoc "attr2" "two")
+        (assoc "anotherAttr" "another-value"))]
+      #:bi{:json-array? true})
+     $q
+     (bi/query '[] '[[?e :id "find-me"]] {:keepDBid true})
+     $id
+     (bi/run-steps
+      (bi/init-step-m (bi/fncall {:args [$db], :func $q}))
+      (bi/get-step (with-meta '?e {:qvar? true})))]
+    (bi/$pull $id $db)))))
+

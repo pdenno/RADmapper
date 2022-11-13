@@ -1,22 +1,20 @@
 ;;; https://github.com/borkdude/clj-kondo/blob/master/doc/config.md
 {:lint-as {#_#_rad-mapper.builtins/defn*      clojure.core/defn
-           mount.core/defstate            clj-kondo.lint-as/def-catch-all           
-           rad-mapper.builtins/step->     clojure.core/defmacro
-           rad-mapper.builtins/defn*      clojure.core/defn
-           rad-mapper.builtins/defn$      clojure.core/defn
-           rad-mapper.parse/defparse      clojure.core/defn
-           rad-mapper.schema-db/defparse  clojure.core/defn
-           rad-mapper.rewrite/defrewrite  clojure.core/defn
+           mount.core/defstate              clj-kondo.lint-as/def-catch-all           
+           rad-mapper.builtins/init-step    clojure.core/defmacro
+           rad-mapper.builtins/init-step-m  clojure.core/defmacro           
+           rad-mapper.builtins/map-step     clojure.core/defmacro
+           rad-mapper.builtins/map-step-m   clojure.core/defmacro
+           rad-mapper.builtins/primary      clojure.core/defmacro
+           rad-mapper.builtins/primary-m    clojure.core/defmacro           
+           rad-mapper.builtins/defn*        clojure.core/defn
+           rad-mapper.builtins/defn$        clojure.core/defn
+           rad-mapper.parse/defparse        clojure.core/defn
+           rad-mapper.schema-db/defparse    clojure.core/defn
+           rad-mapper.rewrite/defrewrite    clojure.core/defn
 
            com.wsscode.pathom.connect/defresolver       clj-kondo.lint-as/def-catch-all
            com.wsscode.pathom.connect/defmutation       clj-kondo.lint-as/def-catch-all
-
-           failjure.core/attempt-all      clojure.core/let
-           failjure.core/if-let-okay?     clojure.core/if-let
-           failjure.core/if-let-failed?   clojure.core/if-let
-           failjure.core/when-let-okay?   clojure.core/when-let
-           failjure.core/when-let-failed? clojure.core/when-let
-           failjure.core/when-failed      clojure.core/fn
 
            com.wsscode.pathom3.connect.operation/defmutation clojure.core/defn
            com.wsscode.pathom3.connect.operation/defresolver clojure.core/defn

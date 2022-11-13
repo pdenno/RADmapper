@@ -5,53 +5,43 @@
    but are not available directly to the user except through the operators (e.g. the dot, and &
    respectively for navigation to a property and concatenation)."
   (:require
-   [cemerick.url                 :as url]
+   [cemerick.url                      :as url]
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
-   [clojure.spec.alpha           :as s]
-   [clojure.pprint               :refer [cl-format]]
-   [clojure.string               :as str :refer [index-of]]
-   [clojure.walk                 :as walk :refer [keywordize-keys]]
+   [clojure.spec.alpha                :as s]
+   [clojure.pprint                             :refer [cl-format]]
+   [clojure.string                    :as str  :refer [index-of]]
+   [clojure.walk                      :as walk :refer [keywordize-keys]]
    #?(:clj  [dk.ative.docjure.spreadsheet :as ss])
    #?(:clj  [datahike.api                 :as d]
       :cljs [datascript.core              :as d])
-   [rad-mapper.query             :as qu]
-   [rad-mapper.util              :as util]
-   [taoensso.timbre              :as log :refer-macros[error debug info log!]])
-  #?(:clj
-     (:import java.text.DecimalFormat
-              java.text.DecimalFormatSymbols
-              java.math.BigDecimal
-              java.math.MathContext
-              java.math.RoundingMode
-              java.time.format.DateTimeFormatter
-              java.time.Instant
-              java.time.LocalDateTime
-              java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
-              java.time.ZoneId
-              java.time.ZoneOffset))
-  #?(:cljs (:require-macros [rad-mapper.builtins :refer [defn* defn$]])))
+   #?(:clj  [datahike.pull-api    :as dp]
+      :cljs [datascript.pull-api  :as dp])
+   [rad-mapper.query              :as qu]
+   [rad-mapper.util               :as util]
+   [taoensso.timbre               :as log :refer-macros[error debug info log!]]
+   [rad-mapper.builtins-macros
+    :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m 
+            jflatten containerize containerize? container? flatten-except-json]])
+   #?(:cljs (:require-macros [rad-mapper.builtins-macros]))
+   #?(:clj
+      (:import java.text.DecimalFormat
+               java.text.DecimalFormatSymbols
+               java.math.BigDecimal
+               java.math.MathContext
+               java.math.RoundingMode
+               java.time.format.DateTimeFormatter
+               java.time.Instant
+               java.time.LocalDateTime
+               java.time.ZonedDateTime ; /Where possible, it is recommended to use a simpler class without a time-zone./
+               java.time.ZoneId
+               java.time.ZoneOffset)))
 
 ;;; ToDo:
 ;;;  - Make sure meta isn't used where a closure would work.
 ;;;  - Clojure uses earmuffs as a clue to whether a var is dynamic. Should I use *$*?
 
-(def ^:dynamic $  "JSONata context variable" (atom :orig-val))
-;;;(def $ (sci/new-dynamic-var '$ (atom :a-value)))
-(def $$ "JSONata root context."    (atom :bi/unset))
-
-(def ^:dynamic *x* :foo)
-
 (declare aref)
-
-(defn set-context!
-  "Set the JSONata context variable to the argument.
-   If the root context has not yet been set, set that too.
-   Returns argument."
-  [val]
-  (reset! $ val)
-  (when (= @$$ :bi/unset) (reset! $$ val))
-  val)
 
 (s/def ::number number?)
 (s/def ::pos-number (s/and number? pos?))
@@ -83,30 +73,6 @@
    (set-context! context)
    (reset! $$ :bi/unset)))
 
-(defn flatten-except-json
-  "Adapted from core/flatten:
-   Takes any nested combination of sequential things (lists, vectors, etc.)
-   and returns their contents as a single, flat lazy sequence.
-   (flatten nil) returns an empty sequence.
-   EXCEPTION: If the thing is a vector with metadata :type :bi/json-array, it isn't flattened. "
-  [x]
-  (let [m (meta x)]
-    (letfn [(seq-except? [o]
-              (and (sequential? o)
-                   (not (-> o meta :bi/json-array?))))]
-      (-> (remove seq-except? (tree-seq seq-except? seq x))
-          vec
-          (with-meta m)))))
-
-(defn container?   [obj] (-> obj meta :bi/container?))
-(defn containerize [obj] (-> obj (with-meta (merge (meta obj) {:bi/container? true}))))
-(defn containerize?
-  "If obj is a vector, set  metadata :bi/container?."
-  [obj]
-  (if (vector? obj)
-    (with-meta obj (merge (meta obj) {:bi/container? true}))
-    obj))
-
 (defn cmap
   "If the object isn't a container, run the function on it,
    otherwise, mapv over the argument and containerize the result."
@@ -115,57 +81,6 @@
     (->> (mapv #(binding [$ (atom %)] (f %)) arg)
          containerize)
     (f arg)))
-
-(defn jflatten
-  "Accommodate JSONata's quirky equivalence in behavior of scalars and arrays containing one object.
-   Note that this is only applied for results of mapping (called 'containers'), not ordinary access.
-   - ordinary access            : {'nums'   : [[1], 2, 3]}.nums[0]
-   - container (because using $): [[1, 2, 3] 4].$
-
-   See http://docs.jsonata.org/processing section 'Sequences', which currenlty reads as follows:
-       The sequence flattening rules are as follows:
-
-    1) An empty sequence is a sequence with no values and is considered to be 'nothing' or 'no match'.
-       It won't appear in the output of any expression.
-       If it is associated with an object property (key/value) pair in a result object, then that object will not have that property.
-
-    2) A singleton sequence is a sequence containing a single value.
-       It is considered equivalent to that value itself, and the output from any expression, or sub-expression will be
-       that value without any surrounding structure.
-
-    3) A sequence containing more than one value is represented in the output as a JSON array.
-       This is still internally flagged as a sequence and subject to the next rule.
-       Note that if an expression matches an array from the input JSON, or a JSON array is explicitly constructed in
-       the query using the array constructor, then this remains an array of values rather than a sequence of values and
-       will not be subject to the sequence flattening rules.
-       However, if this array becomes the context of a subsequent expression, then the result of that will be a sequence.
-
-    4) If a sequence contains one or more (sub-)sequences, then the values from the sub-sequence are pulled up to
-       the level of the outer sequence. A result sequence will never contain child sequences (they are flattened)."
-  [obj]
-  (letfn [(elim-empty [o] ; rule-1
-            (let [m (meta o)]
-              (cond (map? o) (-> (reduce-kv
-                                  (fn [m k v]
-                                    (if (or (nil? v) (and (coll? v) (empty? v))) m (assoc m k (elim-empty v))))
-                                  {}
-                                  o)
-                                 (with-meta m)),
-                    (vector? o) (-> (->> o (remove nil?) (mapv elim-empty)) (with-meta m))
-                    :else o)))]
-    (cond (container? obj)
-          (let [len (count obj)]
-            (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
-                  (== 1 len) (-> obj first elim-empty) ; (-> Rule 2, Rule 1)
-                  :else (-> (elim-empty obj) flatten-except-json containerize))) ; Rule 1, Rule 3 JSON array.
-
-          (vector? obj) (let [m   (meta obj)
-                              obj (-> (->> obj (remove nil?) vec) (with-meta m))
-                              len (count obj)]
-                          (cond (== 0 len) nil ; Or should I call it ::no-match ? Rule 1
-                                ;;(== 1 len) (first obj)
-                                :else obj))
-          :else obj)))
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
@@ -189,7 +104,7 @@
   ([val] ; ToDo: Is this one ever used?
    (set-context! (containerize? val))))
 
-(defmacro defn*
+#_(defmacro defn*
   "Convenience macro for numerical operators. They can be passed functions."
   [fn-name doc-string [& args] & body]
   `(def ~fn-name
@@ -199,7 +114,7 @@
          ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
          ~@body))))
 
-(defmacro defn$
+#_(defmacro defn$
   "Define two function arities using the body:
      (1) the ordinary one, that has the usual arguments for the built-in, and,
      (2) a function where the missing argument will be assumed to be the context variable, $.
@@ -240,15 +155,14 @@
   [x y]
   (= (jflatten x) (jflatten y)))
 
-#?(:clj
-(defmacro thread-m [x y]
+#_(defmacro thread-m [x y]
   `(let [xarg# ~x]
      (do (set-context! xarg#)
          (let [yarg# ~y]
            (if (fn? yarg#)
              (yarg# xarg#)
              (throw (ex-info "The RHS argument to the threading operator is not a function."
-                             {:rhs-operator yarg#}))))))))
+                             {:rhs-operator yarg#})))))))
 
 (def thread ^:sci/macro
   (fn [_&form _&env x y]
@@ -324,8 +238,9 @@
                        (get obj k)))
                    obj)]
           (if (number? prix)   ; Array behavior. Caller will map over it.
-            (let [ix (-> prix Math/floor int)] ; Really! I checked!
-              (if (-> ob meta :bi/json-array?)
+            (let [ix (-> prix Math/floor int) ; Really! I checked!
+                  m (meta obj)]
+              (if (or (:bi/json-array? m) (:bi/b-set? m))
                 (aref ob ix)
                 (-> (cmap #(aref % ix) ob) jflatten)))
             (as-> ob ?o          ; Filter behavior.
@@ -349,11 +264,10 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-#?(:clj
-(defmacro value-step-m
+#_(defmacro value-step-m
   [body]
   `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/value-step :body '~body}))))
+       (with-meta {:bi/step-type :bi/value-step :body '~body})))
 
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
@@ -368,30 +282,27 @@
   ([k] (get-scoped @$ k))
   ([obj k] (get obj k)))
 
-#?(:clj
-(defmacro primary-m [body]
+#_(defmacro primary-m [body]
   `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/primary}))))
+       (with-meta {:bi/step-type :bi/primary})))
 
 (def primary ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [& ignore#] ~body)
          (with-meta {:bi/step-type :bi/primary}))))
 
-#?(:clj
-(defmacro init-step-m [body]
+#_(defmacro init-step-m [body]
   `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
+       (with-meta {:bi/step-type :bi/init-step :bi/body '~body})))
 
 (def init-step ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
 
-#?(:clj
-(defmacro map-step-m [body]
+#_(defmacro map-step-m [body]
   `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/map-step :body '~body}))))
+       (with-meta {:bi/step-type :bi/map-step :body '~body})))
 
 (def map-step ^:sci/macro
   (fn [_&form _&env body]
@@ -1682,6 +1593,16 @@
                    ;; ToDo This is all sort of silly. Can we access cells a better way?
                    (rewrite-sheet-for-mapper raw))))))))
 
+(defn $pull
+  "Pull all data about an entity using its entity ID."
+  [id conn-atm]
+  (dp/pull @conn-atm '[*] id))
+
+(defn $db
+  "Return a database for the data, a vector or maps."
+  [data]
+  (qu/db-for! data))
+
 ;;;============================= Mapping Context, query, express ======================
 
 ;;; Thoughts on schema
@@ -1726,7 +1647,7 @@
    Accepts map keys :find :keys :in and :where."
   [qmap]
   `[:find ~@(:vars qmap)
-    :syms ~@(:keys qmap) ; No :?qvar
+    :syms ~@(:keys qmap)
     :in ~@(into (dbs-from-qform (:where qmap)) (:in qmap)) ; ToDo: do we really want the :in like this?
     :where ~@(:where qmap)])
 
@@ -1742,48 +1663,49 @@
       (->> body
            (filter #(and (== 4 (count %)) (-> % second qvar?)))
            (map second)
-           ; (map keyword) ; No :?qvar
            set)
       (->> body
            (filter #(and (== 3 (count %)) (-> % first qvar?)))
            (map first)
-           ; (map keyword) ; No :?qvar
            set))))
 
+;;; ToDo: Did I make a mistake in the User's Guide by calling the entire returned value of query (a vector) a binding set?
+;;;       According to this code, I should have called it a "collection of bsets".
 (defn query-fn-aux
   "The function that returns a vector binding sets.
    Note that it attaches meta for the DB and body."
-  [db-atms body param-subs]
+  [db-atms body param-subs options]
   (let [dbs (map deref db-atms)
         e-qvar? (entity-qvars body)
         qmap (substitute-in-form body param-subs)]
-    (-> (->> (apply (partial d/q (rewrite-qform qmap)) dbs) ; This is possible because body is data to d/q.
+    (-> (as-> (apply (partial d/q (rewrite-qform qmap)) dbs) ?bsets ; This is possible because body is data to d/q.
              ;; Remove binding sets that involve a schema entity.
              (remove (fn [bset] (some (fn [bval]
                                         (and (keyword? bval)
                                              (= "db" (namespace bval))))
-                                      (vals bset))))
-             ;; ToDo: Add an option to query keepDBids. This should be the default, however.
-             (mapv (fn [bset] (reduce-kv (fn [m k v] (if (e-qvar? k) m (assoc m k v))) {} bset)))
-             vec) ; ToDo: The commented metadata might become useful?
+                                      (vals bset))) ?bsets)
+             (cond-> ?bsets
+               (-> options :keepDBid not) ; Remove entity qvar bindings unless this option.
+               (mapv (fn [bset] (reduce-kv (fn [m k v] (if (e-qvar? k) m (assoc m k v))) {} bset)) ?bsets))
+             (vec ?bsets))
         (with-meta {:bi/b-set? true}))))
 
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body."
-  [body]
+  [body options]
   (fn [& data|dbs] ; ToDo: Could I make this use $ if no data supplied?
     (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
-      (query-fn-aux db-atms body {}))))
+      (query-fn-aux db-atms body {} options))))
 
 (defn higher-order-query-fn
   "Return a function that can be called with parameters to return a function to m
    the parameterizes query defined by body and params. (It's just a closure...)"
-  [body params]
+  [body params options]
   (-> (fn [& args]
         (let [param-subs (zipmap params args)] ; the closure.
           (-> (fn [& data|dbs]
                 (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
-                  (query-fn-aux db-atms body param-subs)))
+                  (query-fn-aux db-atms body param-subs options)))
               (with-meta {:bi/fn-type :query-fn :bi/expected-arg-cnt (max 1 (-> body dbs-from-qform count))}))))
       (with-meta {:bi/fn-type :query-fn-template :bi/expected-arg-cnt (count params)})))
 
@@ -1805,10 +1727,10 @@
                        [?class :resource/namespace  ?class-ns]
                        [?class :resource/name       ?class-name]};
     $q($data,'owl/Class') )"
-  [params body]
+  [params body options]
   (if (empty? params)
-    (immediate-query-fn body)
-    (higher-order-query-fn body params)))
+    (immediate-query-fn body options)
+    (higher-order-query-fn body params options)))
 
 ;;;------------------ Express --------------------------------------------
 (declare sbind-body body&bset-ai-maps express-sub)
@@ -1946,7 +1868,7 @@
    bset into the $reduce result possible."
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn init]
-   (->> (map efn b-sets) ; The b-sets are executed for there meta! Crazy, huh?
+   (->> (map efn b-sets) ; The b-sets are executed for their meta! Crazy, huh?
         (mapcat #(-> % meta :bi/ai-map))
         (sort-by first)
         (reduce (fn [m [k v]] (assoc-in m k v)) init))))

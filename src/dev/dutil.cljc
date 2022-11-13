@@ -2,16 +2,14 @@
   "Tools for repl-based exploration of RADmapper code"
   (:require
    [clojure.pprint :refer [pprint]]
-   [clojure.test :refer [is testing]]
    #?(:clj   [datahike.pull-api      :as dp]
       :cljs  [datascript.pull-api    :as dp])
    [sci.core                         :as core]  ; Useful in development
    [rad-mapper.builtins              :as bi]    ; Useful in development
    [rad-mapper.evaluate              :as ev]
-   #_[rad-mapper.util                  :as util]  ; Useful in development
    [taoensso.timbre                  :as log]
-   #_[taoensso.timbre                  :as log :refer-macros [log info debug error]])
-  #?(:cljs (:require-macros [dev.dutil :refer [run-test]])))
+   #?(:clj [dev.dutil-macros         :as dm]))
+  #?(:cljs (:require-macros [dev.dutil-macros])))
 
 ;;; From util.cljc
 (defn custom-output-fn
@@ -22,7 +20,6 @@
    (if (=  (:?ns-str data) "rad-mapper.parse")
      (apply str (:vargs data)) ; So it can do simple indented call tracing.
      (taoensso.timbre/default-output-fn opts (dissoc data :hostname_ :timestamp_)))))
-
 
 ;;; From util.cljc
 (defn config-log
@@ -36,7 +33,6 @@
                             [#{"datascript.*"} :error]
                             [#{"*"} min-level]])))
     (log/error "Invalid timbre reporting level:" min-level)))
-
 
 (defn start
   "Without the start here, (and named shadow-cljs.edn build :modules {:app {:init-fn dev.dutil/start}}
@@ -53,84 +49,24 @@
   (config-log :debug)
   (log/debug "Reloaded!"))
 
-(defn clean-form
-  "Replace some namespaces with aliases"
-  [form]
-  (let [ns-alia {"rad-mapper.builtins" "bi"
-                 "bi"                  "bi"
-                 "java.lang.Math"      "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
-    (letfn [(ni [form]
-              (let [m (meta form)]
-                (cond (vector? form) (-> (->> form (map ni) doall vec) (with-meta m)),
-                      (seq? form)    (-> (->> form (map ni) doall) (with-meta m)),
-                      (map? form)    (-> (reduce-kv (fn [m k v] (assoc m k (ni v))) {} form) (with-meta m)),
-                      (symbol? form) (-> (let [nsa (-> form namespace ns-alia)]
-                                           (if-let [[_ s] (re-matches #"([a-zA-Z0-9\-]+)__.*" (name form))]
-                                             (symbol nsa s)
-                                             (->> form name (symbol nsa))))
-                                         (with-meta m)),
-                      :else form)))]
-      (ni form))))
-
 (defn nicer
   "Show macroexpand-1 pretty-printed form sans package names.
    Argument is a quoted form"
   [form & {:keys [pprint?] :or {pprint? true}}]
-        (cond-> (-> form clean-form) #_(-> form macroexpand-1 clean-form) ; ToDo: problem with macroexpand-1 in cljs?
+        (cond-> (-> form dm/clean-form) #_(-> form macroexpand-1 clean-form) ; ToDo: problem with macroexpand-1 in cljs?
           pprint? pprint))
 
 (defn nicer-
   "Show pretty-printed form sans package names.
    Argument is a quoted form"
   [form & {:keys [pprint?] :or {pprint? true}}]
-        (cond-> (-> form clean-form)
+        (cond-> (-> form dm/clean-form)
           pprint? pprint))
-
-(defn nicer-sym
-  "Forms coming back from ev/processRM have symbols prefixed by clojure.core
-   and other namespaces. On the quoted form in testing, I'd rather not see this.
-   This takes away those namespace prefixes."
-  [form]
-  (clean-form form))
-
-(defn remove-meta
-  "Remove metadata from an object and its substructure.
-   Changes records to maps too."
-  [obj]
-  (cond (map? obj) (reduce-kv (fn [m k v] (assoc m k (remove-meta v))) {} obj)
-        (vector? obj) (mapv remove-meta obj)
-        (seq? obj) (map remove-meta obj)
-        :else obj))
-
-;;; ToDo: Could probably require rewrite :refer [processRM] and avoid this.
-#_(defn rew-processRM
-  "Return rewrite/processRM function."
-  []
-  (-> (symbol "rad-mapper.rewrite" "processRM") resolve))
-
-(def diag (atom nil))
-
-(defn run
-  "Run the exp through whatever steps are specified; defaults to :execute and
-   removes any metadata from value returned and its substructure."
-  [exp & {:keys [rewrite? debug? debug-parse? debug-eval? keep-meta? sci?]}]
-  (let [execute? (not rewrite?)]
-    (cond->> (ev/processRM
-              :ptag/exp exp
-              {:rewrite? rewrite?
-               :execute? execute?
-               :sci?     sci?
-               :debug?   debug?
-               :debug-parse? debug-parse?
-               :debug-eval? debug-eval?})
-      true (reset! diag)
-      (not keep-meta?) remove-meta
-      true nicer-sym)))
 
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) remove-meta nicer-sym))
+  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) dm/remove-meta dm/nicer-sym))
 
 (defn examine [exp]
   (-> (ev/processRM :ptag/exp exp {:rewrite? true})

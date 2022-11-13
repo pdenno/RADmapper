@@ -99,7 +99,7 @@
     (testing "Problems with comments?" ; ToDo: Currently cljs won't pass this! (See directive in one-token-from-string.)
       #?(:clj
          (is (= [{:line 1, :col 1, :tkn 1}
-                 {:tkn 2, :line 2, :col 17}
+                 {:tkn 2, :line 2, :col 20}
                  {:tkn ::par/eof}]
                 (test-tokenize
                  " 1       /*Foo*/
@@ -124,6 +124,18 @@
               :op/get-step
               {:typ :Field, :field-name "e"}]}
            (ev/processRM :ptag/exp "a.b.c.d.e")))))
+
+(deftest options-map
+  (testing "Parsing an options map"
+    (is (= [{:line 1, :col 1, :tkn "{|"}
+            {:tkn 'entities, :line 1, :col 4}
+            {:tkn \:, :line 1, :col 13}
+            {:tkn :tk/true, :line 1, :col 15}
+            {:tkn "|}", :line 1, :col 20}
+            {:tkn ::par/eof}]
+           (test-tokenize "{| entities : true |}")))
+    (is (= {:typ :OptionsMap, :kv-pairs [{:typ :OptionKeywordPair, :key 'entities, :val :tk/true}]}
+           (ev/processRM :ptag/options-map "{| entities : true |}")))))
 
 (def q1
 "query(){[?class :rdf/type            'owl/Class']

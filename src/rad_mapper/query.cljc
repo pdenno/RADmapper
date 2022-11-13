@@ -93,8 +93,6 @@
       (d/transact conn-atm data)
       conn-atm))))
 
-(def diag (atom nil))
-
 #?(:cljs
 (defn db-for!
   "Datascript version: Create a database for the argument data and return a connection to it.
@@ -104,7 +102,6 @@
   [data & {:keys [known-schema] :or {known-schema {}}}]
   (let [data (-> (if (vector? data) data (vector data)) keywordize-keys)
         schema   (learn-schema data :known-schema known-schema :datahike? false)
-        zippy    (reset! diag schema)
         conn-atm (d/create-conn schema)]
     (d/transact conn-atm data)
     conn-atm)))

@@ -1,15 +1,24 @@
-(ns rad-mapper.rewrite
+(ns rad-mapper.rewrite-macros
   "Rewrite the parse tree as Clojure, a simple task except for precedence in binary operators.
    processRM is a top-level function for this."
   (:require
    [clojure.pprint      :refer [cl-format]]
-   #_[rad-mapper.util     :as util]))
+   [rad-mapper.parse    :as par :refer [builtin-fns]])) ; Needed because the it might be used in the body of defrewrite??? DID NOT HELP.
+
+(def ^:dynamic *debugging?* false)
 
 ;;; from utils.cljc
 (defn nspaces
   "Return a string of n spaces."
   [n]
   (reduce (fn [s _] (str s " ")) "" (range n)))
+
+(defn rewrite-dispatch [tag _ & _] tag)
+
+(defmulti rewrite-meth #'rewrite-dispatch)
+
+(def tags (atom []))
+(def locals (atom [{}]))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
