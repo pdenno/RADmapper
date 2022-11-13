@@ -127,15 +127,15 @@
 
 (deftest options-map
   (testing "Parsing an options map"
-    (is (= [{:line 1, :col 1, :tkn "{|"}
+    (is (= [{:line 1, :col 1, :tkn "<|"}
             {:tkn 'entities, :line 1, :col 4}
             {:tkn \:, :line 1, :col 13}
             {:tkn :tk/true, :line 1, :col 15}
-            {:tkn "|}", :line 1, :col 20}
+            {:tkn "|>", :line 1, :col 20}
             {:tkn ::par/eof}]
-           (test-tokenize "{| entities : true |}")))
+           (test-tokenize "<| entities : true |>")))
     (is (= {:typ :OptionsMap, :kv-pairs [{:typ :OptionKeywordPair, :key 'entities, :val :tk/true}]}
-           (ev/processRM :ptag/options-map "{| entities : true |}")))))
+           (ev/processRM :ptag/options-map "<| entities : true |>")))))
 
 (def q1
 "query(){[?class :rdf/type            'owl/Class']
@@ -172,6 +172,7 @@
            (ev/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
     (is (= {:typ :QueryDef,
             :params [],
+            :options nil,
             :patterns
             [{:typ :QueryPattern,
               :ent {:typ :Qvar, :qvar-name "?class"},
@@ -202,6 +203,7 @@
     ;; This tests parsing query as an immediate-use expression.
     (is (= '{:typ :ImmediateUse,
              :def {:typ :QueryDef,
+                   :options nil,
                    :params [{:typ :Jvar, :jvar-name "$name"}],
                    :patterns [{:typ :QueryPattern,
                                :ent {:typ :Qvar, :qvar-name "?e"},

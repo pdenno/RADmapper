@@ -2,7 +2,7 @@
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
    [clojure.test        :refer  [deftest is testing]]
-   [rad-mapper.builtins  :as bi]
+   [rad-mapper.builtin   :as bi]
    [rad-mapper.evaluate  :as ev]
    [dev.dutil-util :refer [run]]
    #?(:clj [dev.dutil-macros :refer [run-test]]))

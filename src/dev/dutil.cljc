@@ -4,13 +4,11 @@
    [clojure.pprint :refer [pprint]]
    #?(:clj   [datahike.pull-api      :as dp]
       :cljs  [datascript.pull-api    :as dp])
-   [sci.core                         :as core]  ; Useful in development
-   [rad-mapper.builtins              :as bi]    ; Useful in development
    [rad-mapper.evaluate              :as ev]
    [taoensso.timbre                  :as log]
    [dev.dutil-util                   :as dm :refer [diag remove-meta clean-form nicer-sym run]]
    #?(:clj [dev.dutil-macros         :refer [run-test]]))
-  #?(:cljs (:require-macros [dev.dutil-macros])))
+#?(:cljs (:require-macros [dev.dutil-macros])))
 
 ;;; From util.cljc
 (defn custom-output-fn

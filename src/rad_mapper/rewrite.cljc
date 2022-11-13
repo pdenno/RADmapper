@@ -3,11 +3,12 @@
    processRM is a top-level function for this."
   (:require
    #?(:clj [clojure.java.io])
-   [clojure.pprint      :refer [cl-format]]
-   [clojure.spec.alpha  :as s]
-   [rad-mapper.builtins :as bi]
-   [rad-mapper.util     :as util :refer [dgensym! reset-dgensym! rewrite-meth]]
-   [rad-mapper.parse    :as par  :refer [builtin-fns]]
+   [clojure.pprint             :refer [cl-format]]
+   [clojure.spec.alpha         :as s]
+   [rad-mapper.builtin         :as bi]
+   [rad-mapper.builtin-macros  :as bim]
+   [rad-mapper.util            :as util :refer [dgensym! reset-dgensym! rewrite-meth]]
+   [rad-mapper.parse           :as par  :refer [builtin-fns]]
    #?(:clj  [rad-mapper.rewrite-macros :refer [defrewrite tags locals *debugging?*]]))
    #?(:cljs (:require-macros [rad-mapper.rewrite-macros :refer [defrewrite]])))
 
@@ -83,10 +84,10 @@
   (letfn [(name-exp-pair [x]
             (binding [*assume-json-data?* true] ; This is for bi/jflatten, Rule 3.
               (cond (and (-> x :var :special?) (= "$" (-> x :var :jvar-name)))
-                    `(~(dgensym!) (bi/set-context! ~(-> x :init-val rewrite))),
+                    `(~(dgensym!) (bim/set-context! ~(-> x :init-val rewrite))),
                     ;; ToDo: Is setting $$ a legit user activity?
                     (and (-> x :var :special?) (= "$$" (-> x :var :jvar-name)))
-                    `(~(dgensym!) (reset! bi/$$ ~(-> x :init-val rewrite))),
+                    `(~(dgensym!) (reset! bim/$$ ~(-> x :init-val rewrite))),
                     :else
                     `(~(->> x :var rewrite)
                       ~(-> x :init-val rewrite)))))]
@@ -99,7 +100,7 @@
   (cond (and (:special? m) (= "$" (:jvar-name m)))
         '(bi/deref$)
         (and (:special? m) (= "$$" (:jvar-name m)))
-        `(deref bi/$$)
+        `(deref bim/$$)
         :else (-> m :jvar-name symbol)))
 
 (def ^:dynamic *inside-delim?*
@@ -398,7 +399,7 @@
   (let [sym (dgensym!)
         body (binding [*inside-step?* true] (-> m :body rewrite))]
     `(bi/filter-step
-      (fn [~sym] (binding [bi/$ (atom ~sym)] ~body)))))
+      (fn [~sym] (binding [bim/$ (atom ~sym)] ~body)))))
 
 (defrewrite :ValueStep [m]
   (let [body (binding [*inside-step?* true] (-> m :body rewrite))]

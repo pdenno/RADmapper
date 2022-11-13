@@ -1,4 +1,4 @@
-(ns rad-mapper.builtins-macros
+(ns rad-mapper.builtin-macros
   (:require
    [clojure.string :as str]))
 

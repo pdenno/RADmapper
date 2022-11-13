@@ -1,14 +1,13 @@
-(ns rad-mapper.builtins-test
+(ns rad-mapper.builtin-test
   "Test built-in functions"
   (:require
    [clojure.test :refer [deftest is testing]]
-   #_[dev.dutil :refer [examine]] ; ToDo: This cannot be used. Why?
    [rad-mapper.parse]
    [rad-mapper.rewrite]
-   [rad-mapper.builtins :as bi]
-   [rad-mapper.builtins-macros :as bm]
-   [rad-mapper.query :as qu]
-   [dev.dutil-util :refer [run]]
+   [rad-mapper.builtin-macros :as bm]
+   [rad-mapper.evaluate :as ev] ; Useful in debugging
+   [dev.dutil :refer [examine]] ; Useful in debugging
+   [dev.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
    #?(:clj [dev.dutil-macros :refer [run-test]]))
 #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
 
@@ -103,19 +102,24 @@
     (testing "$replace"
       (run-test "$replace('John Smith and John Jones', 'John', 'Mr')"
                 "Mr Smith and Mr Jones")
-      (run-test "$replace('John Smith and John Jones', 'John', 'Mr', 1)"
-                "Mr Smith and John Jones")
-      (run-test "$replace('abracadabra', /a.*?a/, '*')"
-                "*c*bra")
-      (run-test "$replace('John Smith', /(\\w+)\\s(\\w+)/, '$2, $1')"
-                "Smith, John")
-      (run-test "$replace('265USD', /([0-9]+)USD/, '$$$1')"
-                "$265")
-      (run-test "(
-                   $convert := function($m) { ($number($m.groups[0]) - 32) * 5/9 & 'C' };
-                   $replace('temperature = 68F today', /(\\d+)F/, $convert)
-                 )"
-                "temperature = 20.0C today"))  ;<================ JSONata returns "temperature = 20C today" (not 20.0)
+      (testing "example with limit"
+        (run-test "$replace('John Smith and John Jones', 'John', 'Mr', 1)"
+                  "Mr Smith and John Jones"))
+
+      (testing "examples with pattern"
+        (run-test "$replace('abracadabra', /a.*?a/, '*')"
+                  "*c*bra")
+        (run-test "$replace('John Smith', /(\\w+)\\s(\\w+)/, '$2, $1')"
+                  "Smith, John")
+      ;; I'd think this would return $$265.
+        (run-test "$replace('265USD', /([0-9]+)USD/, '$$$1')"
+                  "$265"))
+
+      (testing "example with pattern and replacement function"
+        (run-test "(  $convert := function($m) { ($number($m.groups[0]) - 32) * 5/9 & 'C' };
+                      $replace('temperature = 68F today', /(\\d+)F/, $convert))"
+                #?(:clj  "temperature = 20.0C today" ; ToDo: fix discrepancy
+                   :cljs "temperature = 20C today"))))
 
     (testing "$split"
       (run-test "$split('so many words', ' ')"    [ "so", "many", "words" ])
@@ -136,7 +140,7 @@
     (testing "$trim"
       (run-test "$trim(' Hello \n World ')" "Hello World"))))
 
-(deftest rm-fns
+#_(deftest rm-fns
   (testing "RADmapper functions"
     (run-test "( $db := $db([{'id' : 'find-me', 'attr1' : 1, 'attr2' : 'two', 'anotherAttr' : 'another-value'}]);
                  $id := query( <|keepDBid : true|> ){[?e :id 'find-me']}.?e;
@@ -160,6 +164,7 @@
     (run-test "$formatBase(100, 2)" "1100100")
     (run-test "$formatBase(2555, 16)" "9fb"))
 
+#?(:clj
   (testing "$formatNumber"
     (run-test "$formatNumber(12345.6, '#,###.00')"  "12,345.60")
     (run-test "$formatNumber(1234.5678, '00.000E0')" "12.346e2")
@@ -168,8 +173,9 @@
     (run-test "$formatNumber(-34.555, '#0.00;(#0.00)')" "(34.55)")  ; <=========== JSONata gets 34.56 Use ideas from bi/$round.
     (run-test "$formatNumber(0.14, '00%')" "14%")                   ; <=========== Typo? (JSONata had '01%') Not a Java picture.
     (run-test "$formatNumber(0.14, '###pm', {'per-mille': 'pm'})" "140pm")
-    #_(run-test "$formatNumber(1234.5678, '①①.①①①E①', {'zero-digit': '\u245f'})" "①②.③④⑥E②")) ; Needs investigation. Error in exerciser too.
+    #_(run-test "$formatNumber(1234.5678, '①①.①①①E①', {'zero-digit': '\u245f'})" "①②.③④⑥E②"))) ; Needs investigation. Error in exerciser too.
 
+#?(:clj
   (testing "$formatInteger"
     ;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
     (run-test "$formatInteger(123, '0000')" "0123")
@@ -178,7 +184,7 @@
     (run-test "$formatInteger(29, 'A')" "AC")
     (run-test "$formatInteger(57, 'I')" "LVII")
     ;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
-    #_(run-test "$formatInteger(1234, '#;##0;')" "1;234")) ; Needs investigation.
+    #_(run-test "$formatInteger(1234, '#;##0;')" "1;234"))) ; Needs investigation.
 
   (testing "$parseInteger"
     (run-test "$parseInteger('twelve thousand, four hundred and seventy-six', 'w')" 12476)
@@ -192,6 +198,7 @@
     (run-test "$parseInteger('nine hundred ninety nine quadrillion', 'w')" 999000000000000000)
     (run-test "$parseInteger('two million, six hundred fifty-three thousand, two hundred fifty four', 'w')" 2653254))
 
+#?(:clj
   (testing "$round"
     (run-test "$round(123.456)" 123)
     (run-test "$round(123.456, 2)" 123.46)
@@ -199,7 +206,7 @@
     (run-test "$round(123.456, -2)" 100)
     (run-test "$round(11.5)" 12)
     (run-test "$round(12.5)" 12)
-    (run-test "$round(125, -1)" 120)))
+    (run-test "$round(125, -1)" 120))))
 
 (deftest boolean-fns
   (testing "boolean functions"
@@ -240,12 +247,13 @@
 
     (run-test "$keys({'a' : 1, 'b' :2})" ["a" "b"])
 
+    #?(:clj
     (run-test "($ := $read('data/testing/jsonata/try.json');
                 Account.Order.Product.$sift(function($v, $k) {$k ~> /^Product/}) )"
               [{"Product Name" "Bowler Hat", "ProductID" 858383}
                {"Product Name" "Trilby hat", "ProductID" 858236}
                {"Product Name" "Bowler Hat", "ProductID" 858383}
-               {"Product Name" "Cloak"     , "ProductID" 345664}])
+               {"Product Name" "Cloak"     , "ProductID" 345664}]))
 
     (run-test "$spread({'a' : 1, 'b' : 2})" [{"a" 1} {"b" 2}])
     (run-test "$spread([{'a' : 1, 'b' : 2},{'a' : 1, 'b' : 2}])"
@@ -260,25 +268,3 @@
                 "11/07/2017 03:12PM") ; ToDo: Should be 'pm' not 'PM' and 3:12, not 03:12
       (run-test "$fromMillis(1510067557121, '[H01]:[m01]:[s01] [z]', '-0500')"
                 "10:12:37 -0500"))))) ; ToDo: Example shows "10:12:37 GMT-05:00"
-
-#_(defn tryme []
-   (bi/reset-env)
- (bi/again?
-  (bi/primary-m
-   (let
-    [$db
-     (with-meta
-      [(->
-        {}
-        (assoc "id" "find-me")
-        (assoc "attr1" 1)
-        (assoc "attr2" "two")
-        (assoc "anotherAttr" "another-value"))]
-      #:bi{:json-array? true})
-     $q
-     (bi/query '[] '[[?e :id "find-me"]] {:keepDBid true})
-     $id
-     (bi/run-steps
-      (bi/init-step-m (bi/fncall {:args [$db], :func $q}))
-      (bi/get-step (with-meta '?e {:qvar? true})))]
-    (bi/$pull $id $db)))))

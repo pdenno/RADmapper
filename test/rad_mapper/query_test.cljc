@@ -6,8 +6,7 @@
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
 ;  #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
-   [rad-mapper.builtins           :as bi]
-   [rad-mapper.evaluate           :as ev]
+   [rad-mapper.builtin            :as bi]
    [rad-mapper.query              :as qu]
    [dev.dutil :refer [run-rew]]
    [dev.dutil-util :refer [run remove-meta]]
@@ -92,7 +91,7 @@
       (is (= (run-rew
               "query(){[?class :rdf/type     'owl/Class']
                        [?class :resource/iri  ?class-iri]}")
-             '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]])))))
+             '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]] nil)))))
 
   (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
     (run-test

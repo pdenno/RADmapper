@@ -4,9 +4,14 @@
    [clojure.test :refer [deftest is testing]]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.rewrite  :as rew]
-   [dev.dutil-util :refer [diag remove-meta clean-form nicer-sym run]]
-   #?(:clj [dev.dutil-macros :refer [run-test]]))
-#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+   [dev.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
+  #?(:clj [dev.dutil-macros :as dutil]))
+#?(:cljs (:require-macros [dev.dutil-macros :as dutil])))
+
+(defn run-test
+  "run-test for rewrite sets :rewrite? true."
+  [exp expect & {:keys [keep-meta?]}]
+  (dutil/run-test exp expect :rewrite? true :keep-meta? keep-meta?))
 
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[1] translate correctly."
@@ -175,14 +180,14 @@
                   $f($x, $y) )"
                '(bi/primary
                  (let [$x "foo"
-                       _x1 (bi/set-context! (-> {} (assoc "a" 1)))
+                       _x1 (bim/set-context! (-> {} (assoc "a" 1)))
                        $y "bat"
                        $yy "ybat"]
                    (bi/fncall {:args [$x $y], :func $f}))))))
 
 (deftest options-map
   (testing "rewriting an options map"
-    (is (= '{:asKeys [?ownerName ?systemName], :otherStuff true}
-           (ev/processRM :ptag/options-map "{asKeys     : [?ownerName, ?systemName],
-                                             otherStuff : true}"
+    (is (= '{:keepDBid true, :otherStuff true}
+           (ev/processRM :ptag/options-map "<|keepDBid   : true,
+                                              otherStuff : true|>"
                          {:rewrite? true})))))

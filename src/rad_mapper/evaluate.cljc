@@ -4,8 +4,8 @@
     #?(:clj [clojure.java.io])
     [clojure.pprint               :refer [cl-format pprint]]
     [clojure.spec.alpha           :as s :refer [check-asserts]]
-    [rad-mapper.builtins          :as bi]
-    [rad-mapper.builtins-macros   :as bm]
+    [rad-mapper.builtin           :as bi]
+    [rad-mapper.builtin-macros    :as bm]
     [rad-mapper.parse-macros      :as pm]
     [rad-mapper.parse             :as par]
     [rad-mapper.rewrite           :as rew]
@@ -24,7 +24,7 @@
 (defn pretty-form
   "Replace some namespaces with aliases for diagnostic legability."
   [form]
-  (let [ns-alia {"rad-mapper.builtins" "bi"
+  (let [ns-alia {"rad-mapper.builtin"  "bi"
                  "bi"                  "bi"
                  "java.lang.Math"      "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
     (letfn [(ni [form]
@@ -40,27 +40,27 @@
 (def macro-subs
   "When rewriting produces any of the symbols corresponding to the keys of the map,
    AND evaluation with Clojure eval is intended, use the corresponding value of the map."
-  {"init-step"   'rad-mapper.builtins-macros/init-step-m,
-   "map-step"    'rad-mapper.builtins-macros/map-step-m,
-   "value-step"  'rad-mapper.builtins-macros/value-step-m,
-   "primary"     'rad-mapper.builtins-macros/primary-m,
-   "thread"      'rad-mapper.builtins-macros/thread-m})
+  {"init-step"   'rad-mapper.builtin-macros/init-step-m,
+   "map-step"    'rad-mapper.builtin-macros/map-step-m,
+   "value-step"  'rad-mapper.builtin-macros/value-step-m,
+   "primary"     'rad-mapper.builtin-macros/primary-m,
+   "thread"      'rad-mapper.builtin-macros/thread-m})
 
 (defn macro?
   "Return a ns-qualified -macro symbol substituting for the argument symbol created from rewriting.
    This is used where a macro is intended (i.e. when using clojure eval, not SCI, for the evaluation)."
   [sym]
   (let [n (name sym)]
-    (when (#{"rad-mapper.builtins" "bi"} (namespace sym))
+    (when (#{"rad-mapper.builtin" "bi"} (namespace sym))
       (get macro-subs n))))
 
 (defn rad-form
-  "Walk the form replacing the namespace alias 'bi' with 'rad-mapper.builtins' except where the var is an :sci/macro.
+  "Walk the form replacing the namespace alias 'bi' with 'rad-mapper.builtin' except where the var is an :sci/macro.
       - If it is an :sci/macro and running sci, drop the namespace altogether; sci doesn't like them.
       - If it is an :sci/macro and not running sci, replace it with the corresponding macro.
       - Wrap the form in code for multiple evaluation when it returns a primary fn."
   [form sci?]
-  (let [ns-alia {"bi" "rad-mapper.builtins"}]
+  (let [ns-alia {"bi" "rad-mapper.builtin"}]
     (letfn [(ni [form]
               (cond (vector? form) (->> form (map ni) doall vec),
                     (seq? form)    (->> form (map ni) doall),
@@ -71,17 +71,17 @@
                                                                            (->> form name (symbol nsa))
                                                                            form)),
                     :else form))]
-      `(do (rad-mapper.builtins/reset-env) (rad-mapper.builtins/again? ~(ni form))))))
+      `(do (rad-mapper.builtin/reset-env) (rad-mapper.builtin/again? ~(ni form))))))
 
 (def ctx
-  (let [publics        (ns-publics 'rad-mapper.builtins)
-        publics-m      (ns-publics 'rad-mapper.builtins-macros)
-        bns            (sci/create-ns 'rad-mapper.builtins)
-        bns-m          (sci/create-ns 'rad-mapper.builtins-macros)
+  (let [publics        (ns-publics 'rad-mapper.builtin)
+        publics-m      (ns-publics 'rad-mapper.builtin-macros)
+        bns            (sci/create-ns 'rad-mapper.builtin)
+        bns-m          (sci/create-ns 'rad-mapper.builtin-macros)
         pns            (sci/create-ns 'pprint-ns)
         tns            (sci/create-ns 'timbre-ns)
-        builtins-ns    (update-vals publics   #(sci/copy-var* % bns))
-        builtins-m-ns  (update-vals publics-m #(sci/copy-var* % bns-m))
+        builtin-ns     (update-vals publics   #(sci/copy-var* % bns))
+        builtin-m-ns   (update-vals publics-m #(sci/copy-var* % bns-m))
         pprint-ns      {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
         timbre-ns      {#_#_'debug     (sci/copy-var* #'taoensso.timbre/debug tns) ; a macro
                         #_#_'info      (sci/copy-var* #'taoensso.timbre/info tns)  ; a macro
@@ -89,16 +89,16 @@
                         '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
                         '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}]
     (sci/init
-     {:namespaces {'rad-mapper.builtins              builtins-ns,
-                   'rad-mapper.builtins-macros       builtins-m-ns,
+     {:namespaces {'rad-mapper.builtin               builtin-ns,
+                   'rad-mapper.builtin-macros        builtin-m-ns,
                    'taoensso.timbre                  timbre-ns,
                    'clojure-pprint                   pprint-ns}
       ; ToDo: SCI doesn't seem to want namespaced entries for macros.
-      :bindings  {'init-step  rad-mapper.builtins/init-step
-                  'map-step   rad-mapper.builtins/map-step
-                  'value-step rad-mapper.builtins/value-step
-                  'primary    rad-mapper.builtins/primary
-                  'thread     rad-mapper.builtins/thread}})))
+      :bindings  {'init-step  rad-mapper.builtin/init-step
+                  'map-step   rad-mapper.builtin/map-step
+                  'value-step rad-mapper.builtin/value-step
+                  'primary    rad-mapper.builtin/primary
+                  'thread     rad-mapper.builtin/thread}})))
 
 #?(:clj (def sw (java.io.StringWriter.)))
 
@@ -113,11 +113,11 @@
       (-> full-form pretty-form pprint))
     (try
       ;;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
-      (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtins-macros) (get '$)) nil]
+      (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtin-macros) (get '$)) nil]
         (sci/binding [sci/out *out*]
           (if run-sci?
             (sci/eval-form ctx full-form)
-            #?(:clj (binding [*ns* (find-ns 'rad-mapper.builtins)]
+            #?(:clj (binding [*ns* (find-ns 'rad-mapper.builtin)]
                       (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
                            (catch Throwable e
                              (ex-info "Failure in clojure.eval:" {:error e}))))
@@ -145,6 +145,7 @@
                      (keys opts)))
    (let [rewrite?    (or (:execute? opts) (:executable? opts) (:rewrite? opts))
          executable? (or (:execute? opts) (:executable? opts))
+         sci?        (or (:sci? opts) (util/cljs?))
          ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
      (binding [rewm/*debugging?* (:debug-rewrite? opts)
                pm/*debugging?* (:debug-parse? opts)]
@@ -166,5 +167,5 @@
          :ok (cond-> {:typ :toplevel :top (:result @ps-atm)}
                (not rewrite?)      (:top)
                rewrite?            (rew/rewrite)
-               executable?         (rad-form (:sci? opts))
+               executable?         (rad-form sci?)
                (:execute? opts)    (user-eval opts)))))))

@@ -1,4 +1,4 @@
-(ns rad-mapper.builtins
+(ns rad-mapper.builtin
   "Built-in functions implementing the expression language of the mapping language.
    Functions with names beginning with a '$' are available to the user (e.g. $filter).
    Others (such as bi/key and bi/strcat) implement other parts of the expression language
@@ -20,10 +20,10 @@
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
-   [rad-mapper.builtins-macros
-    :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m 
+   [rad-mapper.builtin-macros
+    :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
             jflatten containerize containerize? container? flatten-except-json]])
-   #?(:cljs (:require-macros [rad-mapper.builtins-macros]))
+   #?(:cljs (:require-macros [rad-mapper.builtin-macros]))
    #?(:clj
       (:import java.text.DecimalFormat
                java.text.DecimalFormatSymbols
@@ -336,7 +336,7 @@
                         (vector? form) (mapv sba-aux form)
                         (seq? form) (cond (and (= (first form) 'bi/key) (== 2 (count form)))
                                           (list 'bi/key sym (second form))
-                                          (= form '(deref rad-mapper.builtins/$)) sym
+                                          (= form '(deref rad-mapper.builtin-macros/$)) sym
                                           :else (map sba-aux form))
                         :else form)
                   (with-meta m))))]
@@ -598,7 +598,7 @@
 
    The pattern parameter can either be a string or a regular expression (regex).
    If it is a string, it specifies the substring(s) within str which should be replaced.
-   If it is a regex, its is used to find .
+   If it is a regex, its is used to find [a match].
 
    The replacement parameter can either be a string or a function. If it is a string,
    it specifies the sequence of characters that replace the substring(s) that are matched by pattern.
@@ -615,23 +615,32 @@
    described in the $match function; and must return a string.
 
    The optional limit parameter, is a number that specifies the maximum number of replacements to make before stopping.
-   The remainder of the input beyond this limit will be copied to the output unchanged."
-  ([s pattern replacement] ($replace s pattern replacement :unlimited))
+   The remainder of the input beyond this limit will be copied to the output unchanged.
+
+   Example: $replace('265USD', /([0-9]+)USD/, '$$$1') ==> '$256'
+   (I don't see why this doesn't return $$256 but both str/replace and JSONata return $256!)"
+  ([pattern replacement]   ($replace @$ pattern replacement :unlimited))
+  ([s pattern replacement] ($replace s  pattern replacement :unlimited))
   ([s pattern replacement limit]
    (s/assert ::string s)
    (s/assert ::str|regex pattern)
    (s/assert ::pos-limit limit)
    (let [lim  (if (number? limit) (-> limit Math/floor int) limit)]
+     (println lim)
      (cond (string? replacement)
-           (let [repl (str/replace replacement "$$" "\\$")]
-             (reduce (fn [res _i] (str/replace-first res pattern repl))
-                     s
-                     (if (= :unlimited lim) (-> s count range) (range lim)))),
+           (if (= :unlimited lim) ; Like JSONata, Clojure uses $1 type syntax for replacement.
+             (str/replace s pattern replacement)
+             ;; Next line is to handle difference between a literal $ and a variable (e.g. $1)???
+             (let [repl (str/replace replacement "$$" "\\$")]
+               (reduce (fn [res _i] (println "here" _i "repl=" repl)
+                         (str/replace-first res pattern repl))
+                       s
+                       (if (= :unlimited lim) (-> s count range) (range lim))))),
            (fn? replacement)
            (reduce (fn [res _i]
-                      (try (let [repl (-> ($match res pattern) replacement)]
+                     (try (let [repl (-> ($match res pattern) replacement)]
                             (str/replace-first res pattern repl))
-                          ;; ToDo: Need a better way! See last test of $replace in builtins_test.clj
+                          ;; ToDo: Need a better way! See last test of $replace in builtin_test.clj
                           (catch #?(:clj Exception :cljs :default) _e res)))
                    s
                    (if (= :unlimited lim) (-> s count range) (range lim))), ; ToDo: (-> s count range) is a guess.
