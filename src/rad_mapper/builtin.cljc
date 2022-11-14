@@ -619,6 +619,10 @@
 
    Example: $replace('265USD', /([0-9]+)USD/, '$$$1') ==> '$256'
    (I don't see why this doesn't return $$256 but both str/replace and JSONata return $256!)"
+  ;; ToDo: (clojure.string/replace "265USD" #"([0-9]+)USD" "$$$1") works in CLJS
+  ;;       (clojure.string/replace "265USD" #"([0-9]+)USD" "$$$1") DOES NOT WORK in Clojure.
+  ;;       (clojure.string/replace "265USD" #"([0-9]+)USD" "$1")   DOES WORK in Clojure.
+  ;;  It gets a "illegal group reference because it thinks $$ is a group reference.
   ([pattern replacement]   ($replace @$ pattern replacement :unlimited))
   ([s pattern replacement] ($replace s  pattern replacement :unlimited))
   ([s pattern replacement limit]
@@ -626,14 +630,12 @@
    (s/assert ::str|regex pattern)
    (s/assert ::pos-limit limit)
    (let [lim  (if (number? limit) (-> limit Math/floor int) limit)]
-     (println lim)
      (cond (string? replacement)
            (if (= :unlimited lim) ; Like JSONata, Clojure uses $1 type syntax for replacement.
              (str/replace s pattern replacement)
              ;; Next line is to handle difference between a literal $ and a variable (e.g. $1)???
              (let [repl (str/replace replacement "$$" "\\$")]
-               (reduce (fn [res _i] (println "here" _i "repl=" repl)
-                         (str/replace-first res pattern repl))
+               (reduce (fn [res _i] (str/replace-first res pattern repl))
                        s
                        (if (= :unlimited lim) (-> s count range) (range lim))))),
            (fn? replacement)
@@ -1687,17 +1689,20 @@
   (let [dbs (map deref db-atms)
         e-qvar? (entity-qvars body)
         qmap (substitute-in-form body param-subs)]
-    (-> (as-> (apply (partial d/q (rewrite-qform qmap)) dbs) ?bsets ; This is possible because body is data to d/q.
-             ;; Remove binding sets that involve a schema entity.
-             (remove (fn [bset] (some (fn [bval]
-                                        (and (keyword? bval)
-                                             (= "db" (namespace bval))))
-                                      (vals bset))) ?bsets)
-             (cond-> ?bsets
-               (-> options :keepDBid not) ; Remove entity qvar bindings unless this option.
-               (mapv (fn [bset] (reduce-kv (fn [m k v] (if (e-qvar? k) m (assoc m k v))) {} bset)) ?bsets))
-             (vec ?bsets))
-        (with-meta {:bi/b-set? true}))))
+    (as-> (apply (partial d/q (rewrite-qform qmap)) dbs) ?bsets ; This is possible because body is data to d/q.
+      ;; Remove binding sets that involve a schema entity.
+      (remove (fn [bset] (some (fn [bval]
+                                 (and (keyword? bval)
+                                      (= "db" (namespace bval))))
+                               (vals bset))) ?bsets)
+      (cond->> ?bsets
+        (-> options :keepDBid not) (map (fn [bset] bset
+                                          (reduce-kv (fn [m k v]
+                                                       (if (e-qvar? k) m (assoc m k v)))
+                                                     {}
+                                                     bset)))
+        true                       (vec))
+      (with-meta ?bsets {:bi/b-set? true}))))
 
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body."
@@ -1786,7 +1791,8 @@
 (defn sbind-body
   "Return a structure topologically identical to the argument body, but with sbinds replacing
    all the simple elements except map keys (which remain as strings or numbers).
-   The sbind is a map with meta {:sbind true}. The map contains as least the key :pos, an ordinal
+
+   sbind is a map with meta {:sbind? true}. The map contains as least the key :pos, an ordinal
    indicating the position of the sbind in depth-first traveral. It may also include:
      - :sym, the qvar if the sbind represents one.
      - :constant, a string or number, if the sbind represents one.
@@ -1849,7 +1855,7 @@
               (cond  (sbind? x)   (swap! body-sbinds-atm conj x)
                      (map? x)     (doseq [[k v] x] (bsbinds! k) (bsbinds! v))
                      (vector? x)  (doseq [e x] (bsbinds! e))))]
-      (bsbinds! body)
+      (bsbinds! body) ; If @body-sbinds-atm is empty then something is wrong.
       (let [body-sbinds @body-sbinds-atm
             val-sbinds (->> body-sbinds
                             (filter #(= (:binds %) :val))

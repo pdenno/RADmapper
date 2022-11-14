@@ -120,10 +120,15 @@
         *inside-step?*  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than *inside-delim?*
         :else `(~'bi/get-step  ~(:field-name m))))
 
+(def ^:dynamic *inside-express?* false)
+(def ^:dynamic *inside-key?*     false)
+
 (defrewrite :Qvar [m]
   (let [qvar (-> m :qvar-name symbol (with-meta {:qvar? true}))]
-    (if *inside-pattern?* qvar
-       `(~'bi/get-step (with-meta '~qvar {:qvar? true})))))
+    (cond *inside-pattern?* qvar
+          *inside-express?* qvar
+          *inside-key?*     qvar
+          :else `(~'bi/get-step (with-meta '~qvar {:qvar? true})))))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
@@ -158,7 +163,8 @@
   (let [p (-> m :params rewrite)]
     `(~'bi/express {:params   '~(remove map? p)
                     :options  ' ~(some #(when (map? %) %) p)
-                    :body '~(-> m :body rewrite)})))
+                    :body '~(binding [*inside-express?* true]
+                            (-> m :body rewrite))})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below they are interleaved.
@@ -174,7 +180,7 @@
 
 (defrewrite :KVPair [m]
   `(assoc ~(if (= :Qvar (-> m :key :typ))
-             `'~(-> m :key rewrite)
+             `'~(binding [*inside-key?* true] (-> m :key rewrite))
              (-> m :key rewrite))
           ~(-> m :val rewrite)))
 

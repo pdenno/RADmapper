@@ -191,3 +191,13 @@
            (ev/processRM :ptag/options-map "<|keepDBid   : true,
                                               otherStuff : true|>"
                          {:rewrite? true})))))
+
+(deftest literal-bsets
+  (testing "rewriting a literal-bsets"
+    (is (= :nyi
+           (ev/processRM :ptag/exp
+                         "{?idKey    : 'KeyVal',
+                           ?idKeyref : 'KeyrefVal',
+                           ?instruct : 'some instruction',
+                           ?method   : 'some method'}"
+                         {:rewrite? true})))))

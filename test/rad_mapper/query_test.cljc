@@ -94,16 +94,17 @@
              '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]] nil)))))
 
   (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
-    (run-test
-     "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
-           $q := query(){[?ent ?attr ?val]};
-           $q($data))"
-     '[{?attr :person/lname, ?val "Dee"}
-       {?attr :person/fname, ?val "Peter"}]))
+    (is (= (-> (run
+                 "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
+                    $q := query(){[?ent ?attr ?val]};
+                    $q($data))")
+               set)
+           #{{'?attr :person/lname, '?val "Dee"}
+             {'?attr :person/fname, '?val "Peter"}})))
 
   (testing "rewriting of an in-line query"
       (is (= (run-rew "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")
-             '((bi/query '[] '[[?ent ?attr ?val]])
+             '((bi/query '[] '[[?ent ?attr ?val]] nil)
                [(-> {}
                     (assoc "person/fname" "Peter")
                     (assoc "person/lname" "Dee"))]))))
@@ -112,13 +113,12 @@
     (is (= (run-rew "($qBob := query($name){[?e :name $name]}('Bob');
                       $qBob([{'name' : 'Bob'}]))")
            '(bi/primary
-            (let [$qBob ((bi/query '[$name] '[[?e :name $name]]) "Bob")]
+            (let [$qBob ((bi/query '[$name] '[[?e :name $name]] nil) "Bob")]
               (bi/fncall {:args [[(-> {} (assoc "name" "Bob"))]], :func $qBob}))))))
 
   (testing "execution of an in-line query"
-    (run-test
-     "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])"
-     '[{?attr :person/lname, ?val "Dee"} {?attr :person/fname, ?val "Peter"}]))
+    (is (= (-> (run "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])") set)
+           #{{'?attr :person/lname, '?val "Dee"} {'?attr :person/fname, '?val "Peter"}})))
 
 
     (testing "In-line parametric"
@@ -146,7 +146,7 @@
                                          (assoc "person/fname" "Bob")
                                          (assoc "person/lname" "Clark"))]
                            #:bi{:json-array? true})
-                   $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]])]
+                   $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]] nil)]
                (bi/fncall {:args [$data], :func $q}))))))
 
   (testing "execution of a query using a mapping context with the default name 'source-data-1'."
@@ -158,14 +158,13 @@
      '[{?fname "Bob", ?lname "Clark"}]))
 
   (testing "tests execution of a query using a mapping context with the default name 'source-data-1' (in spec)"
-    (run-test
-     "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
-                  {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
-           $q := query(){[?person :Person/firstname ?fname]
-                         [?person :Person/lastname  ?lname]};
-        $q($data) )"
-     '[{?fname "Peter", ?lname "Dee"}
-       {?fname "Bob",   ?lname "Clark"}]))
+    (is (= (-> (run "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
+                                 {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
+                       $q := query(){[?person :Person/firstname ?fname]
+                                     [?person :Person/lastname  ?lname]};
+                       $q($data) )")
+               set)
+           #{{'?fname "Peter", '?lname "Dee"} {'?fname "Bob",  '?lname "Clark"}})))
 
   ;; This tests query on data (rather than directly on a DB).
   #_(:clj
@@ -562,6 +561,7 @@
 
 (deftest rearrange
   (testing "rearrange data as shown in  https://try.jsonata.org/sTPDRs--6."
+ #?(:clj
     (testing "query for rearrange example."
       (let [result (->> (run "($data := $read('data/testing/jsonata/sTPDRs--6.json');
                                   $q := query(){ [?s ?system-name ?x]
@@ -584,7 +584,8 @@
                  {'?device-name :device7, '?system-name :system2, '?id 700, '?status "Ok", '?owner-name :owner2}
                  {'?device-name :device6, '?system-name :system2, '?id 600, '?status "Ok", '?owner-name :owner1}
                  {'?device-name :device1, '?system-name :system1, '?id 100, '?status "Ok", '?owner-name :owner1}}
-               result))))
+               result)))))
+ #?(:clj
     (testing "full sTPDRs--6 rearrange example"
       (run-test "($data := $read('data/testing/jsonata/sTPDRs--6.json');
                      $q := query(){ [?s ?systemName ?x]
@@ -618,7 +619,7 @@
                   "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
                                                   "device4" {"id" 400, "status" "Ok"}},
                                        "system2" {"device7" {"id" 700, "status" "Ok"},
-                                                  "device8" {"id" 800, "status" "Ok"}}}}}}))))
+                                                  "device8" {"id" 800, "status" "Ok"}}}}}})))))
 
 
 ;;; ToDo: Also demonstrate query with parameter for $id.
@@ -678,12 +679,12 @@
                 [{'?id 123, '?aData "A-data", '?bData "B-data"}]))
 
     ;; ToDo: Use one "$Dba" to test argument counting!
-    (testing "Similar to the above, but parametric."
+    (testing "Similar to the above, but parametric for Bob only."
       (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
 
                    $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
-                            {'id' : 234, 'bAttr' : 'Allic-B-data'}];
+                            {'id' : 234, 'bAttr' : 'Alice-B-data'}];
 
                    $qFnT :=  query($name){[$DBa ?e1 :id    ?id]
                                           [$DBb ?e2 :id    ?id]       /* Match on ID. */
@@ -695,7 +696,8 @@
                     $qFn := $qFnT('Bob');
 
                     $qFn($DBa, $DBb) )"
-                [{'?id 123, '?aData "Bob-A-data", '?bData "Bob-B-data" '?name "Bob"}]))
+                '[{?id 123, ?name "Bob", ?aData "Bob-A-data", ?bData "Bob-B-data"}]))
+
 
     ;; Can just swap to $map in REPL for this one.
     (testing "Now we express the result by processing the b-sets."

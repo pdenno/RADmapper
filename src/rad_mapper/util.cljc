@@ -21,7 +21,7 @@
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
-(defn db-atm? [o] (db? @o))
+(defn db-atm? [o] (db? o))
 
 ;;; ToDo: Why is SCI able to use this? Util isn't a sci-used ns.
 ;;; https://stackoverflow.com/questions/53321244/clojurescript-equivalent-of-re-matcher-and-re-groups
