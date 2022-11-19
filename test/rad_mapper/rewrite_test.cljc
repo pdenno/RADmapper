@@ -194,7 +194,11 @@
 
 (deftest literal-bsets
   (testing "rewriting a literal-bsets"
-    (is (= :nyi
+    (is (= '(cljs.core/-> {}
+                          (cljs.core/assoc '?idKey "KeyVal")
+                          (cljs.core/assoc '?idKeyref "KeyrefVal")
+                          (cljs.core/assoc '?instruct "some instruction")
+                          (cljs.core/assoc '?method "some method"))
            (ev/processRM :ptag/exp
                          "{?idKey    : 'KeyVal',
                            ?idKeyref : 'KeyrefVal',

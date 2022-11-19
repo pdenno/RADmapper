@@ -17,13 +17,16 @@
       :cljs [datascript.core              :as d])
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
+   #?(:cljs ["jsonata"  :as ja])
+   #?(:cljs ["nata-borrowed"  :as nb])
+   #?(:cljs [goog.crypt.base64 :as jsb64])
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
             jflatten containerize containerize? container? flatten-except-json]])
-   #?(:cljs (:require-macros [rad-mapper.builtin-macros]))
+  #?(:cljs (:require-macros [rad-mapper.builtin-macros]))
    #?(:clj
       (:import java.text.DecimalFormat
                java.text.DecimalFormatSymbols
@@ -66,11 +69,24 @@
   (log/error (:message e))
   e)
 
+(def now (atom nil))
+
+(defn get-set-now
+  "Set the time if it hasn't been set in this evaluation."
+  []
+  (or @now
+      (let [new-now #?(:clj (Instant/now) :cljs (js/Date.))] ; cljs is a #inst, clj is java.time.Instant.
+        (reset! now
+                {:instant  new-now
+                 :millis #?(:clj  (.toEpochMilli (Instant/now))
+                            :cljs (long new-now))}))))
+
 (defn reset-env
   "Clean things up just prior to running user code."
   ([] (reset-env nil))
   ([context]
    (set-context! context)
+   (reset! now nil) ; Don't set time until it is asked for (with $now() or $millis()).
    (reset! $$ :bi/unset)))
 
 (defn cmap
@@ -104,37 +120,6 @@
   ([val] ; ToDo: Is this one ever used?
    (set-context! (containerize? val))))
 
-#_(defmacro defn*
-  "Convenience macro for numerical operators. They can be passed functions."
-  [fn-name doc-string [& args] & body]
-  `(def ~fn-name
-     ~doc-string
-     (fn [~@args]
-       (let [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jflatten)) args)]
-         ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
-         ~@body))))
-
-#_(defmacro defn$
-  "Define two function arities using the body:
-     (1) the ordinary one, that has the usual arguments for the built-in, and,
-     (2) a function where the missing argument will be assumed to be the context variable, $.
-   The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
-   doc-string is required."
-  [fn-name doc-string [& params] & body]
-  (let [param-map (zipmap params (map #(symbol nil (name %)) params))
-        abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
-        abbrv-args (mapv #(if (str/ends-with? (str %) "_") '@$ %) (vals param-map))
-        fn-name (symbol nil (name fn-name))]
-    (letfn [(rewrite [x]
-              (cond (seq? x)    (map  rewrite x)
-                    (vector? x) (mapv rewrite x)
-                    (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
-                    :else (get param-map x x)))]
-    `(defn ~fn-name ~doc-string
-       (~abbrv-params (~fn-name ~@abbrv-args))
-       ([~@(vals param-map)]
-        (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
-
 ;;;========================= JSONata built-ins  =========================================
 (defn* add      "plus"   [x y]   (+ x y))
 (defn* subtract "minus"  [x y]   (- x y))
@@ -154,15 +139,6 @@
   "not equal, need not be numbers"
   [x y]
   (= (jflatten x) (jflatten y)))
-
-#_(defmacro thread-m [x y]
-  `(let [xarg# ~x]
-     (do (set-context! xarg#)
-         (let [yarg# ~y]
-           (if (fn? yarg#)
-             (yarg# xarg#)
-             (throw (ex-info "The RHS argument to the threading operator is not a function."
-                             {:rhs-operator yarg#})))))))
 
 (def thread ^:sci/macro
   (fn [_&form _&env x y]
@@ -264,11 +240,6 @@
                 :else           nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-#_(defmacro value-step-m
-  [body]
-  `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/value-step :body '~body})))
-
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
       `(-> (fn [& ignore#] ~body)
@@ -282,27 +253,15 @@
   ([k] (get-scoped @$ k))
   ([obj k] (get obj k)))
 
-#_(defmacro primary-m [body]
-  `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/primary})))
-
 (def primary ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [& ignore#] ~body)
          (with-meta {:bi/step-type :bi/primary}))))
 
-#_(defmacro init-step-m [body]
-  `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/init-step :bi/body '~body})))
-
 (def init-step ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
-
-#_(defmacro map-step-m [body]
-  `(-> (fn [_x#] ~body)
-       (with-meta {:bi/step-type :bi/map-step :body '~body})))
 
 (def map-step ^:sci/macro
   (fn [_&form _&env body]
@@ -364,14 +323,13 @@
   (str s1_ s2))
 
 ;;; $base64decode
-#?(:clj
 (defn $base64decode
   "Converts base 64 encoded bytes to a string, using a UTF-8 Unicode codepage."
   [c]
-  (-> c .getBytes b64/decode String.)))
+#?(:clj  (-> c .getBytes b64/decode String.)
+   :cljs (jsb64/decodeString c)))
 
 ;;; $base64encode
-#?(:clj
 (defn $base64encode
   "Converts an ASCII string to a base 64 representation.
    Each each character in the string is treated as a byte of binary data.
@@ -379,7 +337,8 @@
    which includes all characters in URI encoded strings.
    Unicode characters outside of that range are not supported."
   [s]
-  (-> s .getBytes b64/encode String.)))
+  #?(:clj  (-> s .getBytes b64/encode String.)
+     :cljs (jsb64/encodeString s)))
 
 ;;;  ToDo: (generally) when arguments do not pas s/assert, need to throw an error.
 ;;;        For example, "Argument 1 of function "contains" does not match function signature."
@@ -425,7 +384,7 @@
   (url/url-encode s))
 
 ;;; $eval
-#?(:clj ; ToDo: CLJS doesn't have ns-resolve.
+#?(:clj
 (defn $eval
   ([s] ($eval s @$))
   ([s context]
@@ -469,6 +428,7 @@
   ([]  ($lowercase @$))
   ([s] (s/assert ::string s) (str/lower-case s)))
 
+;;; ToDo: match is in nata-borrowed. Should I use it?
 ;;; $match
 #?(:cljs
 (defn $match
@@ -825,7 +785,6 @@
 ;;;  (3) For example, "'#'#" formats 123 to "#123". To create a single quote itself, use two in a row: "# o''clock".
 
 ;;; $formatNumber
-#?(:clj
 (defn $formatNumber
   "Casts the number to a string and formats it to a decimal representation as specified by the picture string.
 
@@ -836,27 +795,30 @@
    The optional third argument options is used to override the default locale specific formatting characters
    such as the decimal separator. If supplied, this argument must be an object containing name/value pairs
    specified in the decimal format section of the XPath F&O 3.1 specification."
-  [number picture & options]
-  (let [pic (str/replace picture "e" "E")
-        opts (-> options keywordize-keys first)
-        symbols (DecimalFormatSymbols.)]
-    (.setExponentSeparator symbols "e")
-    (doseq [[k v] opts]
-      (case k ; ToDo: More of these.
-        :zero-digit (.setZeroDigit symbols (nth v 0))
-        :minus-sign (.setMinusSign symbols (nth v 0))
-        nil))
-    (let [df (DecimalFormat. pic symbols)]
-      (doseq [[k _v] opts]
-        (case k ; ToDo: More of these.
-          :per-mille (.setMultiplier df 1000)
-          nil))
-    (.format df number)))))
+  ([number picture]  ($formatNumber number picture {}))
+  ([number picture options]
+  #?(:clj
+     (let [pic (str/replace picture "e" "E")
+           opts (-> options keywordize-keys first)
+           symbols (DecimalFormatSymbols.)]
+       (.setExponentSeparator symbols "e")
+       (doseq [[k v] opts]
+         (case k ; ToDo: More of these.
+           :zero-digit (.setZeroDigit symbols (nth v 0))
+           :minus-sign (.setMinusSign symbols (nth v 0))
+           nil))
+       (let [df (DecimalFormat. pic symbols)]
+         (doseq [[k _v] opts]
+           (case k ; ToDo: More of these.
+             :per-mille (.setMultiplier df 1000)
+             nil))
+         (.format df number)))
+     :cljs
+     (nb/formatNumber number picture (clj->js options)))))
 
 ;;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
 
 ;;; $formatInteger
-#?(:clj   ; ToDo: Calls $formatNumber, which is :clj-only so far.
 (defn $formatInteger
   "Casts the number to a string and formats it to an integer representation as specified by the picture string.
    The behaviour of this function is consistent with the two-argument version of the XPath/XQuery function
@@ -864,6 +826,7 @@
    the number is formatted and has the same syntax as fn:format-integer."
   [num pic]
   (s/assert num ::number)
+#?(:clj   ; ToDo: Calls $formatNumber, which is :clj-only so far.
   (let [simple (case pic
                  "A"  (-> (take (abs num) (util/string-permute)) last)
                  "a"  (-> (take (abs num) (util/string-permute)) last str/lower-case)
@@ -879,7 +842,9 @@
                  nil)]
     (cond (and simple (#{"A" "a" "i" "I"} pic) (neg? num)), (str "-" simple)
           simple  simple
-          :else ($formatNumber num pic)))))
+          :else ($formatNumber num pic)))
+   :cljs
+   (nb/formatInteger num pic)))
 
 ;;; $number
 (defn $number
@@ -939,7 +904,6 @@
   (rand))
 
 ;;; $round
-#?(:clj
 (defn $round
   "Returns the value of the number parameter rounded to the number of decimal places specified by the optional precision parameter.
    The precision parameter (which must be an integer) species the number of decimal places to be present in the rounded number.
@@ -953,15 +917,18 @@
    (s/assert ::number num)
    (s/assert ::number precision)
    ;; The Java notion of precision is the number of digits in scientific notation.
-   (let [[left _right] (-> num double str (str/split #"\."))
-         rnum (BigDecimal.
-               num
-               (MathContext.
-                (if (zero? precision)
-                  (count left)
-                  (+ (count left) precision))
-                RoundingMode/HALF_EVEN))]
-     (if (pos? precision) (double rnum) (long rnum))))))
+   #?(:clj
+      (let [[left _right] (-> num double str (str/split #"\."))
+            rnum (BigDecimal.
+                  num
+                  (MathContext.
+                   (if (zero? precision)
+                     (count left)
+                     (+ (count left) precision))
+                   RoundingMode/HALF_EVEN))]
+        (if (pos? precision) (double rnum) (long rnum)))
+      :cljs
+      (nb/round num precision))))
 
 ;;; $sum
 (defn $sum
@@ -1331,7 +1298,6 @@
     (str java-tstamp))))
 
 ;;; $fromMillis
-#?(:clj
 (defn $fromMillis
   "Convert the number representing milliseconds since the Unix Epoch (1 January, 1970 UTC) to a formatted
    string representation of the timestamp as specified by the picture string.
@@ -1345,23 +1311,27 @@
    The timezone string should be in the format '±HHMM', where ± is either the plus or minus sign and
    HHMM is the offset in hours and minutes from UTC. Positive offset for timezones east of UTC,
    negative offset for timezones west of UTC."
-  ([millis] ($fromMillis millis nil nil))
+  ([millis]     ($fromMillis millis nil nil))
   ([millis pic] ($fromMillis millis pic nil))
   ([millis pic tzone]
-   (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)
-         java-tstamp (ZonedDateTime/ofInstant (Instant/ofEpochMilli (long millis)) zone-offset)]
-     (format-time java-tstamp pic)))))
+   #?(:clj
+      (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)
+            java-tstamp (ZonedDateTime/ofInstant (Instant/ofEpochMilli (long millis)) zone-offset)]
+        (format-time java-tstamp pic))
+      :cljs
+      (cond (and pic tzone) (nb/fromMillis millis pic tzone)
+            pic             (nb/fromMillis millis pic)
+            :else           (nb/fromMillis millis)))))
 
 ;;; ToDo: What does this mean?:
 ;;;   "All invocations of $millis() within an evaluation of an expression will all return the same timestamp value."
-;;;    It says the same thing on $now().
+;;;    N.B. It says the same thing on $now().
 ;;; $millis
-#?(:clj
 (defn $millis
   "Returns the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
    All invocations of $millis() within an evaluation of an expression will all return the same value."
   []
-  (.toEpochMilli (.toInstant (ZonedDateTime/now))))) ; Local doesn't work here.
+  (:millis (get-set-now)))
 
 ;;; $now
 #?(:clj
@@ -1370,14 +1340,19 @@
    All invocations of $now() within an evaluation of an expression will all return the same timestamp value.
    If the optional picture and timezone parameters are supplied, then the current timestamp is formatted
    as described by the $fromMillis() function."
-  ([] (str (LocalDateTime/now))) ; Prints as e.g. "2022-08-09T14:01:25.849575"
+  ([] (-> (get-set-now) :instant str)) ; Prints as e.g. "2022-08-09T14:01:25.849575"
   ([pic] ($now pic nil))
   ([pic tzone]
    (let [zone-offset (if tzone (ZoneId/of tzone) ZoneOffset/UTC)]
-     (format-time (ZonedDateTime/now zone-offset) pic)))))
+     (format-time (-> (get-set-now) :instant (ZonedDateTime/ofInstant zone-offset)))))))
+
+#?(:cljs
+(defn $now
+  ([]              (-> (get-set-now) :millis ($fromMillis)))
+  ([pic]           (-> (get-set-now) :millis ($fromMillis pic)))
+  ([pic tzone]     (-> (get-set-now) :millis ($fromMillis pic tzone)))))
 
 ;;; $toMillis
-#?(:clj
 (defn $toMillis
   "Signature: $toMillis(timestamp [, picture])
    Convert a timestamp string to the number of milliseconds since the Unix Epoch (1 January, 1970 UTC) as a number.
@@ -1388,7 +1363,12 @@
   ([str] ($toMillis str nil))
   ([str _pic] ; ToDo: implement pic
    (s/assert ::string str)
-   (LocalDateTime/parse str)))) ; ZonedDateTime will not work.
+   #?(:clj
+      (LocalDateTime/parse str) ; ZonedDateTime will not work.
+      :cljs
+      (if _pic
+        (nb/toMillis str _pic)
+        (nb/toMillis str)))))
 
 ;;;-------------- Higher (the higher not yet defined)
 ;;; $filter

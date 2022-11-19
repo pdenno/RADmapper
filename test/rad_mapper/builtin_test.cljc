@@ -41,11 +41,9 @@
 ;;; --------- string functions -----------------------------------
 (deftest string-fns
   (testing "string functions"
-    #?(:clj ; ToDo: implement cljs
     (testing "$base64(en|de)code"
       (run-test "$base64encode('myuser:mypass')" "bXl1c2VyOm15cGFzcw==")
-
-      (run-test "$base64decode('bXl1c2VyOm15cGFzcw==')" "myuser:mypass")))
+      (run-test "$base64decode('bXl1c2VyOm15cGFzcw==')" "myuser:mypass"))
 
     (testing "$contains"
       (run-test "$contains('', '')"                 true)
@@ -164,27 +162,26 @@
     (run-test "$formatBase(100, 2)" "1100100")
     (run-test "$formatBase(2555, 16)" "9fb"))
 
-#?(:clj
   (testing "$formatNumber"
     (run-test "$formatNumber(12345.6, '#,###.00')"  "12,345.60")
-    (run-test "$formatNumber(1234.5678, '00.000E0')" "12.346e2")
+    #?(:clj (run-test "$formatNumber(1234.5678, '00.000E0')" "12.346e2")) ; ToDo: JSONata can't do this. Investigate.
     (run-test "$formatNumber(-12345.6, '#,###.00', {'minus-sign' : '*'})" "*12,345.60")
-    (run-test "$formatNumber(34.555, '#0.00;(#0.00)')" "34.55")     ; <=========== JSONata gets 34.56 Use ideas from bi/$round.
-    (run-test "$formatNumber(-34.555, '#0.00;(#0.00)')" "(34.55)")  ; <=========== JSONata gets 34.56 Use ideas from bi/$round.
-    (run-test "$formatNumber(0.14, '00%')" "14%")                   ; <=========== Typo? (JSONata had '01%') Not a Java picture.
+    (run-test "$formatNumber(34.555, '#0.00;(#0.00)')"  #?(:clj "34.55" :cljs "34.56"))      ; ToDo: JSONata/CLJS gets 34.56
+    (run-test "$formatNumber(-34.555, '#0.00;(#0.00)')" #?(:clj "(34.55)" :cljs "(34.56)"))  ; ToDo: JSONata/CLJS gets (34.56)
+    (run-test "$formatNumber(0.14, '00%')" "14%")                                            ; ToDo Typo? (JSONata had '01%'); not a Java pic.
     (run-test "$formatNumber(0.14, '###pm', {'per-mille': 'pm'})" "140pm")
-    #_(run-test "$formatNumber(1234.5678, '①①.①①①E①', {'zero-digit': '\u245f'})" "①②.③④⑥E②"))) ; Needs investigation. Error in exerciser too.
+    #_(run-test "$formatNumber(1234.5678, '①①.①①①E①', {'zero-digit': '\u245f'})" "①②.③④⑥E②")) ; Needs investigation. Error in exerciser too.
 
-#?(:clj
+
   (testing "$formatInteger"
     ;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
     (run-test "$formatInteger(123, '0000')" "0123")
-    (run-test "$formatInteger(123, 'w')" "one hundred twenty-three")
+    (run-test "$formatInteger(123, 'w')" #?(:clj "one hundred twenty-three" :cljs "one hundred and twenty-three"))
     (run-test "$formatInteger(7, 'a')" "g")
     (run-test "$formatInteger(29, 'A')" "AC")
     (run-test "$formatInteger(57, 'I')" "LVII")
     ;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
-    #_(run-test "$formatInteger(1234, '#;##0;')" "1;234"))) ; Needs investigation.
+    #_(run-test "$formatInteger(1234, '#;##0;')" "1;234")) ; Needs investigation.
 
   (testing "$parseInteger"
     (run-test "$parseInteger('twelve thousand, four hundred and seventy-six', 'w')" 12476)
@@ -198,7 +195,6 @@
     (run-test "$parseInteger('nine hundred ninety nine quadrillion', 'w')" 999000000000000000)
     (run-test "$parseInteger('two million, six hundred fifty-three thousand, two hundred fifty four', 'w')" 2653254))
 
-#?(:clj
   (testing "$round"
     (run-test "$round(123.456)" 123)
     (run-test "$round(123.456, 2)" 123.46)
@@ -206,7 +202,7 @@
     (run-test "$round(123.456, -2)" 100)
     (run-test "$round(11.5)" 12)
     (run-test "$round(12.5)" 12)
-    (run-test "$round(125, -1)" 120))))
+    (run-test "$round(125, -1)" 120)))
 
 (deftest boolean-fns
   (testing "boolean functions"
