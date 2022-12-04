@@ -43,7 +43,12 @@
 
 ;;; N.B.: In these maps of grammar elements, make sure you use a character literal when the map key is a single character of text!
 ;;; ============ Tokenizer ===============================================================
-(def keywords {"express" :tk/express "false" :tk/false "function" :tk/function "query" :tk/query "true" :tk/true})
+(def keywords {"express" :tk/express
+               "false" :tk/false
+               "function" :tk/function
+               "key" :tk/key
+               "query" :tk/query
+               "true" :tk/true})
 (def syntactic? ; chars that are valid tokens in themselves.
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \? \`})
 
@@ -588,7 +593,10 @@
                   (parse :ptag/base-exp ?ps :operand-2? true)))]
         (recur p (-> oseq (conj (recall p :operator)) (conj (:result p)))))))))
 
-;;; ToDo: qvar here might make it permissive of nonsense. Needs thought.
+;;; ToDo:
+;;;   - qvar here might make it permissive of nonsense. Needs thought.
+;;;   - Likewise, :tk/key here is too permissive. express should use something other than :ptag/obj-exp and
+;;;     that thing ought to reference :tk/key (so that it is not a base expression).
 ;;; <base-exp> ::= <delimited-exp> | (<builtin-un-op> <exp>) | <construct-def> | <fn-call> | <literal> | <jvar-decl> | <field> | <jvar> | <qvar>
 (defparse :ptag/base-exp
   [ps & {:keys [operand-2?]}]
@@ -597,7 +605,8 @@
         tkn2 (-> ps :look (get 1))]
     (cond (#{\{ \[ \(} tkn)                           (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
           (builtin-un-op tkn)                         (parse :ptag/unary-op-exp ps)  ; <unary-op-exp>
-          (#{:tk/function :tk/query :tk/express} tkn) (parse :ptag/construct-def ps) ; <construct-def>
+          (#{:tk/function :tk/query :tk/express
+             :tk/key} tkn)                            (parse :ptag/construct-def ps) ; <construct-def>
           (and (= \( tkn2)
                (or (builtin-fns tkn)
                    (jvar? tkn)))                      (parse :ptag/fn-call ps)       ; <fn-call>
@@ -999,7 +1008,7 @@
       (eat-token ?ps \})
       (assoc ?ps :result {:typ :ExpressDef
                           :params (recall ?ps :params)
-                          :body (recall ?ps :body)}))))
+                          :body   (recall ?ps :body)}))))
 
 (s/def ::ImmediateUse (s/keys :req-un [::def ::args]))
 ;;; <construct-def> ::= ( <fn-def> | <query-def> | <express-def> )( '(' <exp>* ')' )?
@@ -1008,7 +1017,8 @@
   (let [ps (case (:head ps)
              :tk/function  (parse :ptag/fn-def ps),         ; <fn-def>
              :tk/query     (parse :ptag/query-def ps),      ; <query-def>
-             :tk/express   (parse :ptag/express-def ps))]   ; <express-def>
+             :tk/express   (parse :ptag/express-def ps)     ; <express-def>
+             :tk/key       (parse :ptag/key-def ps))]       ; <key-def>
     (if (and (= \( (:head ps)) (#{:FnDef :QueryDef} (-> ps :result :typ)))
       ;; This part to wrap it in a ImmediateUse
       (as-> ps ?ps
@@ -1020,6 +1030,18 @@
                             :args (recall ?ps :args)}))
       ;; This if it is just a definition (which will be assigned to a $id).
       ps)))
+
+;;; <key-def> ::= 'key' '(' qvar ')'
+(defparse :ptag/key-def
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps :tk/key)
+    (eat-token ?ps \()
+    (store ?ps :qvar (:head ?ps))
+    (eat-token ?ps qvar?)
+    (eat-token ?ps \))
+    (assoc ?ps :result {:typ :KeyExp
+                        :qvar (recall ?ps :qvar)})))
 
 ;;; The next four 'options' rules are just for query and express keyword parameters (so far).
 (s/def ::OptionsMap (s/keys :req-un [::kv-pairs]))

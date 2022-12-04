@@ -1855,6 +1855,19 @@
              (assoc res k (:val vsb))))
          {} val-sbinds)))))
 
+(def diag (atom nil))
+
+(defn object-builder
+  "Reduce over the path-value objects to produce an object from init."
+  [init path-value]
+  (->> path-value
+       ;; Compress out duplicates
+       ;(reduce (fn [r [kp v]] (assoc r kp v)) {})
+       ;(reduce-kv (fn [r k v] (conj r [k v])) [])
+       (sort-by first)
+       (reset! diag)
+       (reduce (fn [m [k v]] (assoc-in m k v)) init)))
+
 (defn reduce-express
   "This function performs $reduce on an express function.
    The express function is entirely processable by the ordinary method of $reduce,
@@ -1865,8 +1878,7 @@
   ([b-sets efn init]
    (->> (map efn b-sets) ; The b-sets are executed for their meta! Crazy, huh?
         (mapcat #(-> % meta :bi/ai-map))
-        (sort-by first)
-        (reduce (fn [m [k v]] (assoc-in m k v)) init))))
+        (object-builder init))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

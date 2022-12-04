@@ -205,3 +205,24 @@
                            ?instruct : 'some instruction',
                            ?method   : 'some method'}"
                          {:rewrite? true})))))
+
+(deftest express-def
+  (testing "rewriting express definitions containing the key construct"
+    (is (= '(bi/express {:params '(),
+                         :options 'nil,
+                         :body '{"type" "OWNER",
+                                 "id" (bi/express-key ?ownerName),
+                                 "systems" [{"type" "SYSTEM",
+                                             "id" (bi/express-key ?systemName),
+                                             "devices" [{"type" "DEVICE",
+                                                         "id" (bi/express-key ?deviceName),
+                                                         "status" ?status}]}]}})
+           (ev/processRM :ptag/express-def
+                         "express{{'type'   : 'OWNER',
+                                   'id'     : key(?ownerName),
+                                   'systems': [{'type'   : 'SYSTEM',
+                                                'id'     : key(?systemName),
+                                                'devices': [{'type'  : 'DEVICE',
+                                                             'id'    : key(?deviceName),
+                                                             'status': ?status}]}]}}"
+                         {:rewrite? true})))))

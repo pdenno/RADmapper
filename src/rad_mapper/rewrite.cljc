@@ -178,6 +178,9 @@
           {}
           (:kv-pairs m)))
 
+(defrewrite :KeyExp [m]
+  `(~'bi/express-key ~(rewrite (:qvar m))))
+
 (defrewrite :KVPair [m]
   `(assoc ~(if (= :Qvar (-> m :key :typ))
              `'~(binding [*inside-key?* true] (-> m :key rewrite))

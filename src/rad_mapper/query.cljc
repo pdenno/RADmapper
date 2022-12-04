@@ -30,6 +30,8 @@
                       {:types result :attribute k :vector vec}))
       (first result))))
 
+(def diag (atom nil))
+
 ;;; ToDo: It should be possible to learn schema from binding sets and query combined.
 ;;;       That would be an entirely different function, though.
 (defn learn-schema
@@ -52,7 +54,8 @@
                                       (assoc-in [k :db/cardinality] this-card)
                                       (assoc-in [k :db/valueType] this-typ))))))
              (lsw-aux [obj]
-              (cond (map? obj) (doall (map (fn [[k v]]
+               (cond (map? obj) (doall (map (fn [[k v]]
+                                              (reset! diag {:k k :v v})
                                              (update-learned! k v)
                                              (when (coll? v) (lsw-aux v)))
                                            obj))

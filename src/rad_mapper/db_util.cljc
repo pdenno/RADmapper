@@ -2,12 +2,17 @@
   "Utilities for schema-db (which will likely become a library separate from rad-mapper"
   (:require
    [cemerick.url          :as url]
-   [clojure.data.xml      :as x]
-   [clojure.java.io       :as io]
+   #?(:clj [clojure.data.xml      :as x])
+   #?(:clj [clojure.java.io  :as io])
    [clojure.walk          :as walk]
    #?(:clj  [datahike.pull-api     :as dp]
       :cljs [datascript.pull-api   :as dp])
    [taoensso.timbre       :as log]))
+
+;;; ToDo:
+;;;  - cljs complains about not finding x/element-nss, which I don't see in the  0.2.0-alpha8 source at all.
+;;;    (Yet it does work in clj!) I suppose reading xml isn't something I need in cljs, but it would be
+;;;    nice to know what is going on here.
 
 ;;; This seems to cause problems in recursive resolution. (See resolve-db-id)"
 (defn db-ref?
@@ -17,7 +22,8 @@
 
 ;;; {:db/id 3779}
 (defn resolve-db-id
-  "Return the form resolved, possibly removing some properties."
+  "Return the form resolved, removing properties in filter-set,
+   a set of db attribute keys, for example, #{:db/id}."
   ([form conn-atm] (resolve-db-id form conn-atm #{}))
   ([form conn-atm filter-set]
    (letfn [(resolve-aux [obj]
@@ -151,6 +157,7 @@
        obj))
    xml))
 
+#?(:clj
 (defn explicit-root-ns
   "Return argument x/element-nss map modified so that that the empty-string namespace is 'root' or whatever
    If the schema uses 'xs' for 'http://www.w3.org/2001/XMLSchema', change it to xsd"
@@ -173,10 +180,11 @@
         (update ?ns1 :p->u  #(dissoc % "xs"))
         (update ?ns1 :u->ps #(dissoc % "http://www.w3.org/2001/XMLSchema"))
         (assoc-in ?ns1 [:u->ps "http://www.w3.org/2001/XMLSchema"] ["xsd"]))
-      ?ns)))
+      ?ns))))
 
 ;;; POD Currently this isn't looking for redefined aliases. It calls x/element-nss just once!
 ;;; (-> sample-ubl-message io/reader x/parse alienate-xml)
+#?(:clj
 (defn alienate-xml ; Silly, but I like it!
   "Replace namespaced xml map keywords with their aliases."
   [xml]
@@ -194,7 +202,7 @@
          (if (and (map? obj) (contains? obj :tag))
            (update obj :tag equivalent-tag)
            obj))
-       xml))))
+       xml)))))
 
 ;;; (detagify '{:tag :cbc/InvoiceTypeCode, :attrs {:listID "UN/ECE 1001 Subset", :listAgencyID "6"}, :content ("380")})
 (defn detagify
@@ -218,14 +226,16 @@
         (string? obj) obj ; It looks like nothing will be number? Need schema to fix things.
         :else (throw (ex-info "Unknown type in detagify" {:obj obj}))))
 
+#?(:clj
 (defn read-xml
   "Return a map of the XML file read."
   [pathname]
   (let [xml (-> pathname io/reader x/parse)]
      {:xml/ns-info (explicit-root-ns (x/element-nss xml))
       :xml/content (-> xml alienate-xml clean-whitespace detagify vector)
-      :schema/pathname pathname}))
+      :schema/pathname pathname})))
 
+#?(:clj
 (defn parse-xml-string
   "This is useful for debugging. Typical usage:
   (-> sss util/parse-xml-string (xpath :xsd/schema :xsd/complexType) rewrite-xsd)"
@@ -241,11 +251,12 @@
         xml  (x/parse-str (str pre s post))]
     (-> {}
         (assoc :xml/ns-info (explicit-root-ns (x/element-nss xml)))
-        (assoc :xml/content (-> xml alienate-xml clean-whitespace detagify vector)))))
+        (assoc :xml/content (-> xml alienate-xml clean-whitespace detagify vector))))))
 
+#?(:clj
 (defn dir-up
   "file is java.io file. Return the path of the nth parent directory, applied recursively to the ."
   [file n]
   (if (> n 0)
     (recur (.getParentFile file) (dec n))
-    file))
+    file)))

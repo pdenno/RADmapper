@@ -216,6 +216,7 @@
                                                         :val "Bob"}]}]} "Bob"]}
            (ev/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")))))
 
+
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
 (s/def ::simplified-parse-structure (s/or :typical (s/keys :req-un [::typ])
                                           :string string?
