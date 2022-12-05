@@ -1607,10 +1607,13 @@
   (qu/learn-schema data))
 
 ;;;---------- query ---------------------------------------
-(defn substitute-in-form
-  "Return a map for a datalog query [:find...] form that substitutes values as
-   though syntax quote were being used."
-  [body param-val-map]
+(defn final-query-form
+  "Return an executable datalog query [:find...] form that substitutes values as
+   though syntax quote were being used.
+   This replaces '$vars' parameters with values using param-val-map.
+   It provides everything needed to call d/q except the databases and predicate args.
+   Note: predicate parameters (the non-database things of :in) were defined earlier in rewriting."
+  [body in param-val-map]
   (letfn [(tp-aux [x]
             (cond (vector? x)                  (mapv tp-aux x),
                   (seq? x)                     (map  tp-aux x),
@@ -1621,26 +1624,10 @@
                                (str/starts-with? (name %) "?")))
                     distinct
                     vec)]
-    `{:vars  ~vars
-      :keys  ~(mapv symbol vars)
-      :where ~(tp-aux body)})))
-
-(defn dbs-from-qform
-  "Return the DB variables from the query form in the correct order
-   (the order in which they appear)."
-  [qform]
-  (if-let [db-forms (not-empty (filter #(== 4 (count %)) qform))]
-    (->> db-forms (map first) distinct)
-    '[$]))
-
-(defn rewrite-qform
-  "Rewrite a query map such as returned by subsitute-in-form into a form acceptable as a datalog query.
-   Accepts map keys :find :keys :in and :where."
-  [qmap]
-  `[:find ~@(:vars qmap)
-    :syms ~@(:keys qmap)
-    :in ~@(into (dbs-from-qform (:where qmap)) (:in qmap)) ; ToDo: do we really want the :in like this?
-    :where ~@(:where qmap)])
+    `[:find  ~@vars
+      :syms  ~@vars
+      :in    ~@in
+      :where ~@(tp-aux body)])))
 
 ;;; ToDo: This isn't working.
 #_(defn qvar? [obj]  (-> obj meta :qvar?))
@@ -1665,11 +1652,11 @@
 (defn query-fn-aux
   "The function that returns a vector binding sets.
    Note that it attaches meta for the DB and body."
-  [db-atms body param-subs options]
-  (let [dbs (map deref db-atms)
+  [db-atms body in pred-args param-subs options]
+  (let [dbs (mapv deref db-atms)
         e-qvar? (entity-qvars body)
-        qmap (substitute-in-form body param-subs)]
-    (as-> (apply (partial d/q (rewrite-qform qmap)) dbs) ?bsets ; This is possible because body is data to d/q.
+        qform (final-query-form body in param-subs)]
+    (as-> (apply d/q qform (into dbs pred-args)) ?bsets ; This is possible because body is data to d/q.
       ;; Remove binding sets that involve a schema entity.
       (remove (fn [bset] (some (fn [bval]
                                  (and (keyword? bval)
@@ -1686,21 +1673,26 @@
 
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body."
-  [body options]
-  (fn [& data|dbs] ; ToDo: Could I make this use $ if no data supplied?
+  [body in pred-args options]
+  (fn [& data|dbs]
     (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
-      (query-fn-aux db-atms body {} options))))
+      (query-fn-aux db-atms body in pred-args {} options))))
 
 (defn higher-order-query-fn
   "Return a function that can be called with parameters to return a function to m
    the parameterizes query defined by body and params. (It's just a closure...)"
-  [body params options]
+  [body in pred-args options params]
   (-> (fn [& args]
         (let [param-subs (zipmap params args)] ; the closure.
           (-> (fn [& data|dbs]
                 (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
-                  (query-fn-aux db-atms body param-subs options)))
-              (with-meta {:bi/fn-type :query-fn :bi/expected-arg-cnt (max 1 (-> body dbs-from-qform count))}))))
+                  (query-fn-aux db-atms body in pred-args param-subs options)))
+              (with-meta {:bi/fn-type :query-fn
+                          :bi/expected-arg-cnt (max 1 (->> body ; ToDo: Is this right?
+                                                           (filter #(== (count %) 4))
+                                                           (map first)
+                                                           distinct
+                                                           count))}))))
       (with-meta {:bi/fn-type :query-fn-template :bi/expected-arg-cnt (count params)})))
 
 (defn query
@@ -1721,10 +1713,10 @@
                        [?class :resource/namespace  ?class-ns]
                        [?class :resource/name       ?class-name]};
     $q($data,'owl/Class') )"
-  [params body options]
+  [{:keys [body in dbs pred-args params options]}]
   (if (empty? params)
-    (immediate-query-fn body options)
-    (higher-order-query-fn body params options)))
+    (immediate-query-fn body in pred-args options)
+    (higher-order-query-fn body in pred-args options params)))
 
 ;;;------------------ Express --------------------------------------------
 (declare sbind-body body&bset-ai-maps express-sub)

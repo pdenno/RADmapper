@@ -13,8 +13,8 @@
     "stacktrace-js": "^2.0.2",
     "ws": "7.3.1"
   },
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "scripts": {
+	"test-cljs": "shadow-cljs -d nrepl/nrepl:1.0.0 -d cider/piggieback:0.5.3 -d cider/cider-nrepl:0.28.5 watch kaocha-test"
   },
   "author": "Peter Denno",
   "license": "ISC"

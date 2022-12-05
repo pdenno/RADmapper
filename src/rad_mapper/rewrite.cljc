@@ -222,14 +222,53 @@
        {:bi/json-array? true})
     (mapv rewrite (:exprs m))))
 
+(defn dbs-from-qform
+  "Return the DB variables from the query form in the correct order
+   (the order in which they appear)."
+  [qform]
+  (if-let [db-forms (not-empty (filter #(== 4 (count %)) qform))]
+    (->> db-forms (map first) distinct)
+    '[$]))
+
+(defn rewrite-qform
+  "Define the :where of the query the query, identify db and other-args.
+   Because Datascript requires predicate vars to be substituted using :in, this rewrites the :where
+   and adds to the :in using generated names. DS doesn't like dollar-named predicates either
+   in the query either, thus I use, for example pred-match for $match.
+   - The :where is untouched except where predicates are used.
+     In that case a symbol is generated/substituted for the predicate and added to :in.
+   - The :in is computed as the DB arguments plus the symbols generated for predicates as above."
+  [where-raw]
+  (let [where (binding [*inside-pattern?* true] (mapv rewrite where-raw))
+        dbs (dbs-from-qform where)
+        pred-subs (atom {})
+        where-atm (atom [])]
+    (doseq [pat where]
+      (if (-> pat first seq?)
+        (let [fn-name (-> pat first first)
+              [_ _ base-name] (re-matches #"(\$)?(.*)" (name fn-name))
+              pred-name (->> base-name (str "pred-") symbol)]
+          (when-not (contains? @pred-subs pred-name)
+            (swap! pred-subs #(assoc % pred-name fn-name)))
+          (swap! where-atm #(conj % [`(~pred-name ~@(-> pat first rest))])))
+        (swap! where-atm #(conj % pat))))
+    {:where `'~(deref where-atm)
+     :in `'~(into dbs (-> @pred-subs keys))
+     :dbs `'~dbs
+     :pred-args (-> @pred-subs vals vec)
+     }))
+
 (defrewrite :QueryDef [m]
   (let [pats (->> m :patterns (filter #(= (:typ %) :QueryPattern)))]
     (if (or (not-any? #(:db %) pats) (every?  #(:db %) pats))
+      (let [{:keys [where in dbs pred-args]} (rewrite-qform (:patterns m))]
       `(~'bi/query
-        '~(mapv rewrite (:params m))
-        '~(binding [*inside-pattern?* true]
-            (mapv rewrite (:patterns m)))
-        ~(-> m :options rewrite))
+        {:body ~where
+         :in ~in
+         :dbs ~dbs
+         :pred-args ~pred-args
+         :params '~(mapv rewrite (:params m))
+         :options ~(-> m :options rewrite)}))
       (throw (ex-info "Either (none of / all of) the non-predicate query patterns must specify a DB." {})))))
 
 (defrewrite :QueryPattern [m]

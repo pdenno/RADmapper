@@ -102,7 +102,7 @@
    Called by builtins for query and express, for example.
    The argument known-schema takes a map indexed by db/ident (not a vector).
    NOTE: The db attributes (map keys) have to be keyword; you can't use strings etc."
-  [data & {:keys [known-schema] :or {known-schema {}}}]
+  [data & {:keys [known-schema datahike?] :or {known-schema {}}}]
   (let [data (-> (if (vector? data) data (vector data)) keywordize-keys)
         schema   (learn-schema data :known-schema known-schema :datahike? false)
         conn-atm (d/create-conn schema)]

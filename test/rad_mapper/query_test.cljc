@@ -92,7 +92,13 @@
       (is (= (run-rew
               "query(){[?class :rdf/type     'owl/Class']
                        [?class :resource/iri  ?class-iri]}")
-             '(bi/query '[] '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]] nil)))))
+             '(bi/query
+               {:params '[],
+                :dbs '[$],
+                :options nil,
+                :pred-args [],
+                :body '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]],
+                :in '[$]})))))
 
   (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
     (is (= (-> (run
@@ -104,18 +110,25 @@
              {'?attr :person/fname, '?val "Peter"}})))
 
   (testing "rewriting of an in-line query"
-      (is (= (run-rew "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")
-             '((bi/query '[] '[[?ent ?attr ?val]] nil)
-               [(-> {}
-                    (assoc "person/fname" "Peter")
-                    (assoc "person/lname" "Dee"))]))))
+    (is (= (run-rew "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")
+           '((bi/query {:params '[],
+                        :dbs '[$],
+                        :options nil,
+                        :pred-args [],
+                        :body '[[?ent ?attr ?val]],
+                        :in '[$]})
+             [(-> {} (assoc "person/fname" "Peter") (assoc "person/lname" "Dee"))]))))
 
   (testing "rewriting of an in-line query with a parameter."
     (is (= (run-rew "($qBob := query($name){[?e :name $name]}('Bob');
                       $qBob([{'name' : 'Bob'}]))")
-           '(bi/primary
-            (let [$qBob ((bi/query '[$name] '[[?e :name $name]] nil) "Bob")]
-              (bi/fncall {:args [[(-> {} (assoc "name" "Bob"))]], :func $qBob}))))))
+           '(bi/primary (let [$qBob ((bi/query {:params '[$name],
+                                                :dbs '[$],
+                                                :options nil,
+                                                :pred-args [],
+                                                :body '[[?e :name $name]],
+                                                :in '[$]}) "Bob")]
+                          (bi/fncall {:args [[(-> {} (assoc "name" "Bob"))]], :func $qBob}))))))
 
   (testing "execution of an in-line query"
     (is (= (-> (run "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])") set)
@@ -143,11 +156,14 @@
                        $q($data)
                      )")
            '(bi/primary
-             (let [$data (with-meta [(-> {}
-                                         (assoc "person/fname" "Bob")
-                                         (assoc "person/lname" "Clark"))]
-                           #:bi{:json-array? true})
-                   $q (bi/query '[] '[[?person :person/fname ?fname] [?person :person/lname ?lname]] nil)]
+             (let [$data (with-meta [(-> {} (assoc "person/fname" "Bob")
+                                         (assoc "person/lname" "Clark"))] #:bi{:json-array? true})
+                   $q (bi/query {:params '[],
+                                 :dbs '[$],
+                                 :options nil,
+                                 :pred-args [],
+                                 :body '[[?person :person/fname ?fname] [?person :person/lname ?lname]],
+                                 :in '[$]})]
                (bi/fncall {:args [$data], :func $q}))))))
 
   (testing "execution of a query using a mapping context with the default name 'source-data-1'."
@@ -190,11 +206,29 @@
               (map keyword)
               set))))
 
+(deftest query-$match
+  (testing "Testing that query can do $match (especially in SCI/DS)."
+    (run "( $data := {'instance-of' : 'example',
+                      'content'     : 'some-val'};
+
+            $q := query{ [?e :instance-of ?str]
+                         [($match(?str, /example/))] };
+
+            $q($data) )")))
+
+(defn tryme0 []
+  (let [db-atm (qu/db-for! [{:instance-of "example"}])]
+    (d/q '[:find ?e
+           :where
+           [?e :instance-of ?str]
+           [(bi/$match ?str #"example")]]
+         @db-atm)))
+
 ;;;================================ testing express ==================================
 (deftest simple-immediate
   (testing "Complete simple express"
     (run-test "( $data := {'instance-of' : 'example',
-                      'content'     : 'some-val'};
+                           'content'     : 'some-val'};
 
                $q :=  query(){ [?e :instance-of ?what]
                                [?e :content     ?val ] };
@@ -562,9 +596,11 @@
 
 (deftest rearrange
   (testing "rearrange data as shown in  https://try.jsonata.org/sTPDRs--6."
- #?(:clj
     (testing "query for rearrange example."
-      (let [result (->> (run "($data := $read('data/testing/jsonata/sTPDRs--6.json');
+      (let [result (->> (run "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}, 'device2': {'id': 200, 'status': 'Ok'}}, 'owner2': {'device3': {'id': 300, 'status': 'Ok'}, 'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'}, 'device6': {'id': 600, 'status': 'Ok'}}, 'owner2': {'device7': {'id': 700, 'status': 'Ok'}, 'device8': {'id': 800, 'status': 'Ok'}}}}}};
+
                                   $q := query(){ [?s ?system-name ?x]
                                                  [($match(?system-name, /system\\d/))]
                                                  [?x :owners ?y]
@@ -586,9 +622,11 @@
                  {'?device-name :device6, '?system-name :system2, '?id 600, '?status "Ok", '?owner-name :owner1}
                  {'?device-name :device1, '?system-name :system1, '?id 100, '?status "Ok", '?owner-name :owner1}}
                result)))))
- #?(:clj ; ToDo make the data available to cljs
+
     (testing "full sTPDRs--6 rearrange example"
-      (run-test "($data := $read('data/testing/jsonata/sTPDRs--6.json');
+      (run-test "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}, 'device2': {'id': 200, 'status': 'Ok'}}, 'owner2': {'device3': {'id': 300, 'status': 'Ok'}, 'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'}, 'device6': {'id': 600, 'status': 'Ok'}}, 'owner2': {'device7': {'id': 700, 'status': 'Ok'}, 'device8': {'id': 800, 'status': 'Ok'}}}}}};
                      $q := query(){ [?s ?systemName ?x]
                                     [($match(?systemName, /system\\d/))]
                                     [?x :owners ?y]
@@ -620,7 +658,7 @@
                   "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
                                                   "device4" {"id" 400, "status" "Ok"}},
                                        "system2" {"device7" {"id" 700, "status" "Ok"},
-                                                  "device8" {"id" 800, "status" "Ok"}}}}}})))))
+                                                  "device8" {"id" 800, "status" "Ok"}}}}}})))
 (deftest rearrange-keys
  (testing "sTPDRs--6 no keys"
    (is (= {"owners" {"id" :owner1,
@@ -630,16 +668,19 @@
                                 "devices" {"id" :device2,
                                            "status" "Ok",
                                            "type" "DEVICE"}}}}
-      (run "($data := $read('data/testing/jsonata/sTPDRs--6.json');
-                     $q := query(){ [?s ?systemName ?x]
-                                    [($match(?systemName, /system\\d/))]
-                                    [?x :owners ?y]
-                                    [?y ?ownerName ?z]
-                                    [($match(?ownerName, /owner\\d/))]
-                                    [?z ?deviceName ?d]
-                                    [($match(?deviceName, /device\\d/))]
-                                    [?d :id ?id]
-                                    [?d :status ?status] };
+      (run "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}, 'device2': {'id': 200, 'status': 'Ok'}}, 'owner2': {'device3': {'id': 300, 'status': 'Ok'}, 'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'}, 'device6': {'id': 600, 'status': 'Ok'}}, 'owner2': {'device7': {'id': 700, 'status': 'Ok'}, 'device8': {'id': 800, 'status': 'Ok'}}}}}};
+
+                  $q := query(){ [?s ?systemName ?x]
+                                 [($match(?systemName, /system\\d/))]
+                                 [?x :owners ?y]
+                                 [?y ?ownerName ?z]
+                                 [($match(?ownerName, /owner\\d/))]
+                                 [?z ?deviceName ?d]
+                                 [($match(?deviceName, /device\\d/))]
+                                 [?d :id ?id]
+                                 [?d :status ?status] };
 
                   $bsets := $q($data);
 
@@ -801,222 +842,3 @@
            "QIFPlan.WorkInstructions/Instruction"
              {"QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction" {"Instruction" "some instruction"}}},
           "QIFPlan/ActionMethods" {"QIFPlan/ActionMethods/ActionMethod" {"Method" "some method"}}}))))
-
-
-(defn tryme1 []
-      (run "($data := $read('data/testing/jsonata/sTPDRs--6.json');
-                     $q := query(){ [?s ?systemName ?x]
-                                    [($match(?systemName, /system\\d/))]
-                                    [?x :owners ?y]
-                                    [?y ?ownerName ?z]
-                                    [($match(?ownerName, /owner\\d/))]
-                                    [?z ?deviceName ?d]
-                                    [($match(?deviceName, /device\\d/))]
-                                    [?d :id ?id]
-                                    [?d :status ?status] };
-
-                  $bsets := $q($data);
-
-                  $reduce($bsets,
-                          express()
-                                 {  {'owners':
-                                        {?ownerName:
-                                          {'systems':
-                                             {?systemName:
-                                                {?deviceName : {'id'     : ?id,
-                                                                'status' : ?status}}}}}}
-                                 }
-                         )
-                 )"))
-
-(defn tryme2 []
-      (run "($data := $read('data/testing/jsonata/sTPDRs--6.json');
-                     $q := query(){ [?s ?systemName ?x]
-                                    [($match(?systemName, /system\\d/))]
-                                    [?x :owners ?y]
-                                    [?y ?ownerName ?z]
-                                    [($match(?ownerName, /owner\\d/))]
-                                    [?z ?deviceName ?d]
-                                    [($match(?deviceName, /device\\d/))]
-                                    [?d :id ?id]
-                                    [?d :status ?status] };
-
-                  $bsets := $q($data);
-
-                  $reduce($bsets,
-                          express()
-                                 {  {'owners':
-                                        {?ownerName:
-                                          {'my-name' : 'bob',
-                                           'systems':
-                                             {?systemName:
-                                                {?deviceName : {'id'     : ?id,
-                                                                'status' : ?status}}}}}}
-                                 }
-                         )
-                 )"))
-
-
-
-
-(defn tryme3 []
-      (run "($data := $read('data/testing/jsonata/sTPDRs--6.json');
-                     $q := query(){ [?s ?systemName ?x]
-                                    [($match(?systemName, /system\\d/))]
-                                    [?x :owners ?y]
-                                    [?y ?ownerName ?z]
-                                    [($match(?ownerName, /owner\\d/))]
-                                    [?z ?deviceName ?d]
-                                    [($match(?deviceName, /device\\d/))]
-                                    [?d :id ?id]
-                                    [?d :status ?status] };
-
-                  $bsets := $q($data);
-
-                  $reduce($bsets,
-                          express{{'owners' :
-                                   {'type'   : 'OWNER',
-                                              ?ownerName    : ?ownerName,
-                                              'systems': [{'type'   : 'SYSTEM',
-                                                           ?systemName : ?systemName,
-                                                           'devices': [{'type'  : 'DEVICE',
-                                                                        ?deviceName : ?deviceName,
-                                                                        'status': ?status}]}]}}
-                                   }  )
-                  )"))
-
-(defn tryme4 []
-      (run "($data := $read('data/testing/jsonata/sTPDRs--6.json');
-                     $q := query(){ [?s ?systemName ?x]
-                                    [($match(?systemName, /system\\d/))]
-                                    [?x :owners ?y]
-                                    [?y ?ownerName ?z]
-                                    [($match(?ownerName, /owner\\d/))]
-                                    [?z ?deviceName ?d]
-                                    [($match(?deviceName, /device\\d/))]
-                                    [?d :id ?id]
-                                    [?d :status ?status] };
-
-                  $bsets := $q($data);
-
-                  $map($bsets,
-                       express{{'owners' :
-                               {'type'   : 'OWNER',
-                                'id'     : ?ownerName,
-                                'systems': [{'type'   : 'SYSTEM',
-                                             'id' : ?systemName,
-                                             'devices': [{'type'  : 'DEVICE',
-                                                          'id' : ?deviceName,
-                                                          'status': ?status}]}]}}
-                                   }  )
-                  )"))
-
-
-(defn tryme5 []
-  (let [data
-        [{:reduce-db/ROOT
-          [{:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "system1", :u/devices {:u/type "DEVICE", :u/id "device3", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "system2", :u/devices {:u/type "DEVICE", :u/id "device8", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "system1", :u/devices {:u/type "DEVICE", :u/id "device4", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "system2", :u/devices {:u/type "DEVICE", :u/id "device5", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "system2", :u/devices {:u/type "DEVICE", :u/id "device7", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "system2", :u/devices {:u/type "DEVICE", :u/id "device6", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "system1", :u/devices {:u/type "DEVICE", :u/id "device1", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "system1", :u/devices {:u/type "DEVICE", :u/id "device2", :u/status "Ok"}}}}]}]
-        schema  {:u/id      {:db/unique :db.unique/identity}
-                 :u/owners  {:db/cardinality :db.cardinality/many}
-                 :u/systems {:db/cardinality :db.cardinality/many}
-                 :u/devices {:db/cardinality :db.cardinality/many}}
-        full-schema (qu/learn-schema data :known-schema schema)
-        db-atm (qu/db-for! data :known-schema schema)
-        root (d/q '[:find ?e . :where [?e :reduce-db/ROOT _]] @db-atm)]
-    {:schema full-schema
-     :db-atm db-atm
-     :resolved-object (du/resolve-db-id {:db/id root} db-atm)}))
-
-
-(defn tryme6 []
-  (let [data
-        [{:reduce-db/ROOT
-          [{:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "owner2|system1", :u/devices {:u/type "DEVICE", :u/id "device3", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "owner2|system2", :u/devices {:u/type "DEVICE", :u/id "device8", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "owner2|system1", :u/devices {:u/type "DEVICE", :u/id "device4", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "owner1|system2", :u/devices {:u/type "DEVICE", :u/id "device5", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner2",
-             :u/systems {:u/type "SYSTEM", :u/id "owner2|system2", :u/devices {:u/type "DEVICE", :u/id "device7", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "owner1|system2", :u/devices {:u/type "DEVICE", :u/id "device6", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "owner1|system1", :u/devices {:u/type "DEVICE", :u/id "device1", :u/status "Ok"}}}}
-           {:u/owners
-            {:u/type "OWNER",
-             :u/id "owner1",
-             :u/systems {:u/type "SYSTEM", :u/id "owner1|system1", :u/devices {:u/type "DEVICE", :u/id "device2", :u/status "Ok"}}}}]}]
-        schema  {:u/id      {:db/unique :db.unique/identity}
-                 :u/owners  {:db/cardinality :db.cardinality/many}
-                 :u/systems {:db/cardinality :db.cardinality/many}
-                 :u/devices {:db/cardinality :db.cardinality/many}}
-        full-schema (qu/learn-schema data :known-schema schema)
-        db-atm (qu/db-for! data :known-schema schema)
-        root (d/q '[:find ?e . :where [?e :reduce-db/ROOT _]] @db-atm)]
-    {#_#_:schema full-schema
-     :db-atm db-atm
-     :root root
-     :resolved-object (du/resolve-db-id {:db/id root} db-atm)}))
-
-
-
-#_(defn tryme5 []
-  (let [data
-        [{:reduce-db/ROOT
-[{"owners" {"type" "OWNER", "id" "owner2", "systems" {"type" "SYSTEM", "id" :system1, "devices" {"type" "DEVICE", "id" :device3, "status" "Ok"}}}}
- {"owners" {"type" "OWNER", "id" :owner2, "systems" {"type" "SYSTEM", "id" :system2, "devices" {"type" "DEVICE", "id" :device8, "status" "Ok"}}}}
- {"owners" {"type" "OWNER", "id" :owner2, "systems" {"type" "SYSTEM", "id" :system1, "devices" {"type" "DEVICE", "id" :device4, "status" "Ok"}}}}
- {"owners" {"type" "OWNER", "id" :owner1, "systems" {"type" "SYSTEM", "id" :system2, "devices" {"type" "DEVICE", "id" :device5, "status" "Ok"}}}}
- {"owners" {"type" "OWNER", "id" :owner2, "systems" {"type" "SYSTEM", "id" :system2, "devices" {"type" "DEVICE", "id" :device7, "status" "Ok"}}}}
- {"owners" {"type" "OWNER", "id" :owner1, "systems" {"type" "SYSTEM", "id" :system2, "devices" {"type" "DEVICE", "id" :device6, "status" "Ok"}}}}
- {"owners" {"type" "OWNER", "id" :owner1, "systems" {"type" "SYSTEM", "id" :system1, "devices" {"type" "DEVICE", "id" :device1, "status" "Ok"}}}}
- {"owners" {"type" "OWNER", "id" :owner1, "systems" {"type" "SYSTEM", "id" :system1, "devices" {"type" "DEVICE", "id" :device2, "status" "Ok"}}}}]}]]
-    (qu/learn-schema data)))
