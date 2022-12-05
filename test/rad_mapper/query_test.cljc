@@ -594,7 +594,7 @@
              $propBsets ($quProp $data)]
          (bi/$reduce $propBsets $enPropTable $tar_data))))))
 
-(deftest rearrange
+(deftest rearrange--bsets
   (testing "rearrange data as shown in  https://try.jsonata.org/sTPDRs--6."
     (testing "query for rearrange example."
       (let [result (->> (run "($data := {'systems':
@@ -621,8 +621,10 @@
                  {'?device-name :device7, '?system-name :system2, '?id 700, '?status "Ok", '?owner-name :owner2}
                  {'?device-name :device6, '?system-name :system2, '?id 600, '?status "Ok", '?owner-name :owner1}
                  {'?device-name :device1, '?system-name :system1, '?id 100, '?status "Ok", '?owner-name :owner1}}
-               result)))))
+               result))))))
 
+(deftest rearrange--full
+  (testing "rearrange data as shown in  https://try.jsonata.org/sTPDRs--6."
     (testing "full sTPDRs--6 rearrange example"
       (run-test "($data := {'systems':
  {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}, 'device2': {'id': 200, 'status': 'Ok'}}, 'owner2': {'device3': {'id': 300, 'status': 'Ok'}, 'device4': {'id': 400, 'status': 'Ok'}}}},
@@ -658,7 +660,7 @@
                   "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
                                                   "device4" {"id" 400, "status" "Ok"}},
                                        "system2" {"device7" {"id" 700, "status" "Ok"},
-                                                  "device8" {"id" 800, "status" "Ok"}}}}}})))
+                                                  "device8" {"id" 800, "status" "Ok"}}}}}}))))
 (deftest rearrange-keys
  (testing "sTPDRs--6 no keys"
    (is (= {"owners" {"id" :owner1,

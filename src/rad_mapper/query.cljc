@@ -50,20 +50,31 @@
                                 :db.cardinality/one)]
                 (if (and typ (not= typ this-typ))
                   (log/warn "Different types:" k "first:" typ "second:" this-typ)
-                  (swap! learned #(-> %
-                                      (assoc-in [k :db/cardinality] this-card)
-                                      (assoc-in [k :db/valueType] this-typ))))))
+                      (swap! learned #(-> %
+                                          (assoc-in [k :db/cardinality] this-card)
+                                          (assoc-in [k :db/valueType] this-typ))))))
              (lsw-aux [obj]
                (cond (map? obj) (doall (map (fn [[k v]]
-                                              (reset! diag {:k k :v v})
                                              (update-learned! k v)
                                              (when (coll? v) (lsw-aux v)))
                                            obj))
                     (coll? obj) (doall (map lsw-aux obj))))]
       (lsw-aux data)
-      (if datahike? ; DH uses a vec and attr :db/ident, DS doesn't use :db/valueType.
-          (reduce-kv (fn [res k v] (conj res (assoc v :db/ident k))) []  @learned)
-          (reduce-kv (fn [res k v] (assoc res k (dissoc v :db/valueType))) {} @learned)))))
+      (if datahike?
+        ;; DH uses a vec and attr :db/ident.
+        (reduce-kv (fn [res k v] (conj res (assoc v :db/ident k))) []  @learned)
+        ;; DS uses a map indexed by what would be :db/ident.
+        (reduce-kv (fn [schemas attr schema]
+                     (assoc schemas
+                            attr ; DS doesn't use :db/valueType except for distinguishing refs.
+                            (reduce-kv (fn [m k v]
+                                         (if (and (= k :db/valueType) (not (= v :db.type/ref)))
+                                           m
+                                           (assoc m k v)))
+                                       {}
+                                       schema)))
+                   {}
+                   @learned)))))
 
 (defn json-like
   "Return the object with its map keys replaced with strings.
@@ -102,9 +113,10 @@
    Called by builtins for query and express, for example.
    The argument known-schema takes a map indexed by db/ident (not a vector).
    NOTE: The db attributes (map keys) have to be keyword; you can't use strings etc."
-  [data & {:keys [known-schema datahike?] :or {known-schema {}}}]
+  [data & {:keys [known-schema] :or {known-schema {}}}]
+  (log/info "Datascript version")
   (let [data (-> (if (vector? data) data (vector data)) keywordize-keys)
-        schema   (learn-schema data :known-schema known-schema :datahike? false)
+        schema (learn-schema data :known-schema known-schema :datahike? false)
         conn-atm (d/create-conn schema)]
     (d/transact conn-atm data)
     conn-atm)))
