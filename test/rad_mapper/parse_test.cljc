@@ -186,7 +186,7 @@
               :db nil}]}
            (ev/processRM :ptag/exp q1)))))
 
-(deftest immediate-use
+(deftest query-immediate-use
   (testing "Testing expressions that start by defining an in-line, anonymous function or query."
 
     ;; This tests parsing function as an immediate-use expression.

@@ -218,11 +218,11 @@
                                                          "id" (bi/express-key ?deviceName),
                                                          "status" ?status}]}]}})
            (ev/processRM :ptag/express-def
-                         "express{{'type'   : 'OWNER',
-                                   'id'     : key(?ownerName),
-                                   'systems': [{'type'   : 'SYSTEM',
-                                                'id'     : key(?systemName),
-                                                'devices': [{'type'  : 'DEVICE',
-                                                             'id'    : key(?deviceName),
-                                                             'status': ?status}]}]}}"
+                         "express{{'owners': {'t/type'       : 'OWNER',
+                                              'owner/id'     : key(?ownerName),
+                                              'owner/systems': [{'t/type'         : 'SYSTEM',
+                                                                 'system/id'      : key(?systemName),
+                                                                 'system/devices' : [{'type'           : 'DEVICE',
+                                                                                      'device/id'      : key(?deviceName),
+                                                                                      'device/status'  : ?status}]}]}}}"
                          {:rewrite? true})))))

@@ -267,6 +267,20 @@
   #?(:cljs (seq (clojure.string/split-lines s))
      :clj  (line-seq s)))
 
+(defn json-like
+  "Return the object with its map keys replaced with strings.
+  :ab ==> 'ab'; :ns/ab ==> 'ns/ab'."
+  [obj]
+  (cond (map? obj) (reduce-kv (fn [m k v]
+                                (cond (keyword? v) (assoc m k (subs (str v) 1))
+                                      (vector? v) (assoc m k (mapv json-like v))
+                                      (map? v)   (assoc m k (reduce-kv (fn [m k v] (assoc m k (json-like v))) {} v))
+                                      :else     (assoc m k v)))
+                              {}
+                              obj),
+        (vector? obj) (mapv json-like obj),
+        :else obj))
+
 ;;;=============================================================================
 ;;; Utils for macros (It seems the CLJS macros file cannot have functions in it.
 ;;;=============================================================================

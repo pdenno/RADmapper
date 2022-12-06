@@ -1530,7 +1530,7 @@
      (-> (case (or (get opts "type") type "xml")
            #?(:clj "json") #?(:clj (-> fname slurp json/read-str))
            "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-           "edn"  (-> fname slurp util/read-str qu/json-like))
+           "edn"  (-> fname slurp util/read-str util/json-like))
          set-context!)))))
 
 (defn rewrite-sheet-for-mapper
@@ -1631,7 +1631,7 @@
 
 ;;; ToDo: This isn't working.
 #_(defn qvar? [obj]  (-> obj meta :qvar?))
-(defn qvar? [obj] (and (symbol? obj) (= "?" (-> obj str (subs 0 1)))))
+(defn qvar? [obj] (and (symbol? obj) (str/starts-with? (name obj) "?")))
 
 (defn entity-qvars
   "Return the set of qvars in entity position of the argument body"

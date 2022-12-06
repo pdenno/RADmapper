@@ -662,7 +662,7 @@
                                        "system2" {"device7" {"id" 700, "status" "Ok"},
                                                   "device8" {"id" 800, "status" "Ok"}}}}}}))))
 (deftest rearrange-keys
- (testing "sTPDRs--6 no keys"
+ (testing "sTPDRs--6 with keys"
    (is (= {"owners" {"id" :owner1,
                      "type" "OWNER",
                      "systems" {"id" :system1,
@@ -687,13 +687,13 @@
                   $bsets := $q($data);
 
                   $reduce($bsets,
-                          express{{'owners': {'type'   : 'OWNER',
-                                              'id'     : ?ownerName,
-                                              'systems': [{'type'   : 'SYSTEM',
-                                                           'id'     : ?systemName,
-                                                           'devices': [{'type'  : 'DEVICE',
-                                                                        'id'    : ?deviceName,
-                                                                        'status': ?status}]}]}}
+                          express{{'owners': {'t/type'       : 'OWNER',
+                                              'owner/id'     : key(?ownerName),
+                                              'owner/systems': [{'t/type'         : 'SYSTEM',
+                                                                 'system/id'      : key(?systemName),
+                                                                 'system/devices' : [{'type'           : 'DEVICE',
+                                                                                      'device/id'      : key(?deviceName),
+                                                                                      'device/status'  : ?status}]}]}}
                                    }  )
                   )")))))
 
@@ -844,3 +844,15 @@
            "QIFPlan.WorkInstructions/Instruction"
              {"QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction" {"Instruction" "some instruction"}}},
           "QIFPlan/ActionMethods" {"QIFPlan/ActionMethods/ActionMethod" {"Method" "some method"}}}))))
+
+
+(defn tryme []
+  [ebody '{"owners"
+           {"t/type" "OWNER",
+            "owner/id" (bi/express-key ?ownerName),
+            "owner/systems" [{"t/type" "SYSTEM",
+                              "system/id" (bi/express-key ?systemName),
+                              "system/devices" [{"t/type" "DEVICE",
+                                                 "device/id" (bi/express-key ?deviceName),
+                                                 "device/status" ?status}]}]}}]
+  (qu/learn-schema-from-express ebody))
