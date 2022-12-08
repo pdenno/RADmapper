@@ -7,6 +7,7 @@
    [clojure.spec.alpha         :as s]
    [rad-mapper.builtin         :as bi]
    [rad-mapper.builtin-macros  :as bim]
+   [rad-mapper.query           :as qu]
    [rad-mapper.util            :as util :refer [dgensym! reset-dgensym! rewrite-meth]]
    [rad-mapper.parse           :as par  :refer [builtin-fns]]
    #?(:clj  [rad-mapper.rewrite-macros :refer [defrewrite tags locals *debugging?*]]))
@@ -160,11 +161,14 @@
       (re-pattern (cl-format nil "(?~A)~A" flag-str body)))))
 
 (defrewrite :ExpressDef [m]
-  (let [p (-> m :params rewrite)]
-    `(~'bi/express {:params   '~(remove map? p)
-                    :options  ' ~(some #(when (map? %) %) p)
-                    :body '~(binding [*inside-express?* true]
-                            (-> m :body rewrite))})))
+  (let [params (-> m :params rewrite)
+        body-pre (binding [*inside-express?* true]
+                   (-> m :body rewrite qu/rewrite-express-keys))
+        schema   (qu/learn-schema-from-express body-pre)]
+    `(~'bi/express {:params  '~(remove map? params)
+                    :options '~(some #(when (map? %) %) params)
+                    :body    '~(qu/rewrite-express-catkeys body-pre schema)
+                    :schema  '~schema})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below they are interleaved.
@@ -179,7 +183,7 @@
           (:kv-pairs m)))
 
 (defrewrite :KeyExp [m]
-  `(~'bi/express-key ~(rewrite (:qvar m))))
+  `(:rm/express-key ~(rewrite (:qvar m))))
 
 (defrewrite :KVPair [m]
   `(assoc ~(if (= :Qvar (-> m :key :typ))

@@ -1398,6 +1398,8 @@
                 :else (throw (ex-info "$filter expects a function of 1 to 3 parameters:"
                                       {:params (-> func meta :bi/params)})))))
 
+(def ^:dynamic *in-reduce?* "true if executing a function inside reduce" false)
+
 ;;; $map
 (defn $map
   "Signature: $map(array, function)
@@ -1416,8 +1418,8 @@
       (== nvars 3)
       (loop [c coll, i 0, r []]
         (if (empty? c)
-          r
-          (recur (rest c) (inc i) (conj r (func (first c) i coll)))))
+            r
+            (recur (rest c) (inc i) (conj r (func (first c) i coll)))))
       (== nvars 2)
       (loop [c coll, i 0, r []]
         (if (empty? c)
@@ -1456,12 +1458,13 @@
   If not supplied, the initial value is the first value in the array parameter"
   ([coll func] ($reduce coll func nil))
   ([coll func init]
-   (let [met (meta func)]
-     (cond (:bi/express-template? met)                          (throw (ex-info "Reducing called on express template fn." {})),
-           (:bi/express? met)                                   (reduce-express coll func init),
-           (not (<= 2 (-> met :bi/params count) 4))             (throw (ex-info "Reduce function must take 2 to 4 args." {}))
-           (not init)                                           (reduce-typical coll func)
-           :else                                                (reduce-typical (into (vector init) coll) func)))))
+   (binding [*in-reduce?* true]
+     (let [met (meta func)]
+       (cond (:bi/express-template? met)                          (throw (ex-info "Reducing called on express template fn." {})),
+             (:bi/express? met)                                   (reduce-express coll func init),
+             (not (<= 2 (-> met :bi/params count) 4))             (throw (ex-info "Reduce function must take 2 to 4 args." {}))
+             (not init)                                           (reduce-typical coll func)
+             :else                                                (reduce-typical (into (vector init) coll) func))))))
 
 ;;; ToDo: What is the point of the 4th parameter in function called by $reduce?
 ;;;       My doc-string below doesn't say.
@@ -1647,6 +1650,13 @@
            (map first)
            set))))
 
+;;; ToDo: This needs some thought. Should probably only happen when the qvar binds a data key.
+;;;       Could use schema analysis such as used on the express body!
+(defn unkeywordize-bsets
+  "Data pushed into the DB had to have keywords for map keys. This undoes that."
+  [bsets]
+  (mapv #(reduce-kv (fn [m k v] (if (keyword? v) (assoc m k (name v)) (assoc m k v))) {} %) bsets))
+
 ;;; ToDo: Did I make a mistake in the User's Guide by calling the entire returned value of query (a vector) a binding set?
 ;;;       According to this code, I should have called it a "collection of bsets".
 (defn query-fn-aux
@@ -1668,8 +1678,11 @@
                                                        (if (e-qvar? k) m (assoc m k v)))
                                                      {}
                                                      bset)))
+        true                       unkeywordize-bsets
         true                       (vec))
       (with-meta ?bsets {:bi/b-set? true}))))
+
+(def diag (atom nil))
 
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body."
@@ -1719,7 +1732,36 @@
     (higher-order-query-fn body in pred-args options params)))
 
 ;;;------------------ Express --------------------------------------------
-(declare sbind-body body&bset-ai-maps express-sub)
+(defn cleanup-express
+  "Return the evaluated express body with :_rm removed."
+  [body]
+  (letfn [(ce-aux [obj]
+            (map? obj)     (reduce-kv (fn [m k v] (if (= "_rm" (namespace k)) m (assoc m k (ce-aux v)))) {} obj)
+            (vector? obj)  (mapv ce-aux obj)
+            :else          obj)]
+    (ce-aux body)))
+
+
+;;; ToDo: NYI: qvars in key positions.
+(defn evaluate-express-body
+  "Walk through the body of the express replacing qvars with their bset values,
+   computing concatenated keys (and NYI) evaluating expressions."
+  [bset body]
+  (letfn [(eeb-aux [obj]
+            (cond (map? obj)         (reduce-kv (fn [m k v] (assoc m k (eeb-aux v))) {} obj)
+                  (vector? obj)      (mapv eeb-aux obj)
+                  (qu/key-exp? obj)  (->> (map #(get bset %) (rest obj))
+                                          (map name)
+                                          (interpose "|")
+                                          (apply str))
+                  (qvar? obj)        (get bset obj)
+                  :else              obj))]
+    (let [res (eeb-aux body)]
+      (if *in-reduce?*
+        res
+        (cleanup-express res)))))
+
+
 (defn express
   "Return an function that either
     (1) has no template variable and can be used directly with a binding set, or
@@ -1728,25 +1770,23 @@
         be used with binding sets.
      The function returned has meta {express? true} so that, for example, $reduce
      knows that there should be a database involved."
-  [& {:keys [params options body]}]
-  (if (empty? params)
-    ;; The immediate function:
-    (let [bbody (sbind-body body)]
-      (-> (fn [bset]
-            (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
-              (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
-                  (with-meta {:bi/ai-map assoc-in-map})))) ; used by $reduce
-          (with-meta {:bi/params '[b-set], :bi/express? true, :bi/options options})))
-    ;; body has template params that must be replaced; new-body.
-    (-> (fn [& psubs]
-          (let [new-body (express-sub body (zipmap params psubs))
-                bbody (sbind-body new-body)]
-            (-> (fn [bset]
-                  (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
-                    (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
-                        (with-meta {:bi/ai-map assoc-in-map})))) ; used by $reduce
-                (with-meta {:bi/params '[b-set], :bi/express? true, :bi/options options}))))
-        (with-meta {:bi/express-template? true}))))
+  [& {:keys [params options body schema]}]
+    (if (empty? params)
+      ;; The immediate function:
+      (-> (fn [bset] (evaluate-express-body bset body))
+          ;; schema is not needed for simple evaluation, reduce evaluation.
+          (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))
+      ;; body has template params that must be replaced; new-body.
+      :nyi
+      #_(-> (fn [& psubs]
+            (let [new-body (express-sub body (zipmap params psubs))
+                  bbody (sbind-body new-body)]
+              (-> (fn [bset]
+                    (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
+                      (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
+                          (with-meta {:bi/ai-map assoc-in-map})))) ; used by $reduce
+                  (with-meta {:bi/params '[b-set], :bi/express? true, :bi/options options}))))
+          (with-meta {:bi/express-template? true}))))
 
 (defn express-sub
   "Walk through form replacing template parameters in sub-map with their values."
@@ -1758,119 +1798,28 @@
                   :else x))]
     (es-aux form)))
 
-(defn sbind? [obj] (-> obj meta :sbind?))
-
-(defn sbind-body
-  "Return a structure topologically identical to the argument body, but with sbinds replacing
-   all the simple elements except map keys (which remain as strings or numbers).
-
-   sbind is a map with meta {:sbind? true}. The map contains as least the key :pos, an ordinal
-   indicating the position of the sbind in depth-first traveral. It may also include:
-     - :sym, the qvar if the sbind represents one.
-     - :constant, a string or number, if the sbind represents one.
-     - :binds, having value :key if the original element was a map key; ; :val if the it was a map value."
-  [body]
-  (let [order (atom 0)]
-    (letfn [(sbind [m] (with-meta m {:sbind? true}))
-            (bb-aux [x]
-              (cond (sbind? x) (assoc x :pos (swap! order inc)),
-                    (map? x)   (reduce-kv (fn [m k v]
-                                           (assoc m
-                                                  (if (qvar? k) (-> {:sym k :binds :key} sbind bb-aux)
-                                                      (bb-aux k))
-                                                  (cond (or (string? v) (number? v))
-                                                        (-> {:constant? v :binds :val} sbind bb-aux),
-                                                        (qvar? v) (-> {:sym v :binds :val} sbind bb-aux)
-                                                        :else (bb-aux v))))
-                                         {} x),
-                    (qvar? x)   (-> {:sym x} sbind bb-aux), ; From vector, I suppose.
-                    (vector? x) (mapv bb-aux x),
-                    :else x))]
-      (bb-aux body))))
-
-(def path   "Atom tracking the path navigated in express body, shared only be sbind-path-to! and its caller." (atom []))
-(def found? "Atom required because recursively throwing out of sbind-path-to!." (atom nil))
-(defn sbind-eq
-  "Return true if the two arguments are the same sbind, disregarding value."
-  [x y]
-  (and (sbind? x) (sbind? y) (== (:pos x) (:pos y))))
-
-(defn sbind-path-to!
-  "Navigate the body to the argument sbind, tracking the path in the path atom.
-   Executed for its side-effect; returns nil."
-  [vsb body]
-  (letfn [(ppop! []      (swap! path #(if @found? % (-> % butlast vec))))
-          (ppush! [step] (swap! path #(if @found? %      (conj % step))))
-          (path-to-aux [vsb bod]
-            (try (cond @found?               (throw #?(:clj (Throwable.) :cljs js/Error)) ; unwind.
-                       (sbind-eq vsb bod)    (do (reset! found? true) (throw #?(:clj (Throwable.) :cljs js/Error)))
-                       (map? bod)            (doseq [[k v] bod]
-                                               (ppush! k) (path-to-aux vsb v) (ppop!)),
-                       (vector? bod)         (doseq [elem bod] (path-to-aux vsb elem)))
-                 (catch #?(:clj Throwable :cljs :default) _e nil)))]
-    (path-to-aux vsb body)))
-
-(defn body&bset-ai-maps
-  "Process the bset and body together, returning the assoc-in maps (ai-maps) it defines.
-   A ai-map describes a :val that is to be assoc-in'd to a :key
-   The form of the  ai-map is:
-   {:key - some vector of keys constructed from the body and bset;
-           the elements of the vector are either sbinds or strings.
-    :val - the value associated with the bset's qvar at the end of this path.}
-   The body argument has sbinds wherever the user's express body has a qvar or
-   a constant-valued map value.
-   (Map KEYS that are constants must be strings or numbers and are left unchanged.)"
-  [body bset]
-  (let [body-sbinds-atm (atom [])
-        bset (reduce-kv (fn [m k v] (assoc m (-> k name symbol) v)) {} bset)]
-    (letfn [(bsbinds! [x]
-              (cond  (sbind? x)   (swap! body-sbinds-atm conj x)
-                     (map? x)     (doseq [[k v] x] (bsbinds! k) (bsbinds! v))
-                     (vector? x)  (doseq [e x] (bsbinds! e))))]
-      (bsbinds! body) ; If @body-sbinds-atm is empty then something is wrong.
-      (let [body-sbinds @body-sbinds-atm
-            val-sbinds (->> body-sbinds
-                            (filter #(= (:binds %) :val))
-                            (mapv #(assoc % :val
-                                          (or (:constant? %) (get bset (:sym %))))))]
-        (reduce
-         (fn [res vsb]
-           (reset! path []) (reset! found? nil)
-           (let [k ; @path has the nil-sbinds; we need the :val on the arg bset.
-                 (->> (mapv (fn [kpart]
-                              (cond (sbind? kpart)        (get bset (:sym kpart))
-                                    ;;(or (string? kpart)
-                                    ;;(number? kpart))  (some #(when (= % kpart) (:val %)) val-sbinds),
-                                    :else                 kpart))
-                            (do (sbind-path-to! vsb body) @path))
-                      (mapv #(if (keyword? %) (name %) %)))]
-             (assoc res k (:val vsb))))
-         {} val-sbinds)))))
-
-(def diag (atom nil))
-
-(defn object-builder
-  "Reduce over the path-value objects to produce an object from init."
-  [init path-value]
-  (->> path-value
-       ;; Compress out duplicates
-       ;(reduce (fn [r [kp v]] (assoc r kp v)) {})
-       ;(reduce-kv (fn [r k v] (conj r [k v])) [])
-       (sort-by first)
-       (reset! diag)
-       (reduce (fn [m [k v]] (assoc-in m k v)) init)))
-
 (defn reduce-express
   "This function performs $reduce on an express function.
-   The express function is entirely processable by the ordinary method of $reduce,
-   but here it is used for the assoc-in-map that it creates and attaches to the
-   result when it is executed. It is the assoc-in-map that makes threading each
-   bset into the $reduce result possible."
+   The express function is callable as standalone; in that case, *in-reduce?* = false,
+   and that is used to do some clean-up on the datalog schema-oriented, value produced
+   by the vanilla, reduce-ready result. The reduce-ready result is used with the a
+   binding set to enrich :db/valueType-enriched of the schema attached as :bi/schema metadata.
+   The enriched schema and a map of the not-cleaned-up are placed in a map structure
+   {:_rm/ROOT <the-data>} and dumped into the DB created here.
+   Doing du/resolve-db-id on this object brings back the reduced result
+   (because that is what we mean by reduce on an express body).
+
+   Note that this only works because the addition of _rm/attrs that are concatenated keys.
+   (Again, that's what we mean by reduce on an express body.)"
   ([b-sets efn] (reduce-express b-sets efn {}))
-  ([b-sets efn init]
-   (->> (map efn b-sets) ; The b-sets are executed for their meta! Crazy, huh?
-        (mapcat #(-> % meta :bi/ai-map))
-        (object-builder init))))
+  ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
+   (let [schema (-> efn meta :bi/schema)
+         full-schema (qu/learn-schema-from-bset schema (first b-sets))
+         db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
+         data (->> (mapv efn b-sets)
+                   (assoc {} :_rm/ROOT))
+         db (qu/db-for! data :known-schema db-schema :learn? false)]
+     db)))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

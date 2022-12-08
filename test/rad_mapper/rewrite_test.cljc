@@ -208,21 +208,48 @@
 
 (deftest express-def
   (testing "rewriting express definitions containing the key construct"
-    (is (= '(bi/express {:params '(),
-                         :options 'nil,
-                         :body '{"type" "OWNER",
-                                 "id" (bi/express-key ?ownerName),
-                                 "systems" [{"type" "SYSTEM",
-                                             "id" (bi/express-key ?systemName),
-                                             "devices" [{"type" "DEVICE",
-                                                         "id" (bi/express-key ?deviceName),
-                                                         "status" ?status}]}]}})
+    (is (= ('bi/express
+             :schema
+             '{:t/type #:db{:valueType :db.type/string, :cardinality :db.cardinality/one},
+               :owner/id {:_rm/qvar ?ownerName, :db/cardinality :db.cardinality/one},
+               :owners #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+               :_rm/owner*id--ownerName
+               {:db/unique :db.unique/identity, :db/valueType :db.type/string,
+                :_rm/self :_rm/owner*id--ownerName, :_rm/ref-key "owner/id"},
+               :system/id {:_rm/qvar ?systemName, :db/cardinality :db.cardinality/one},
+               :system/devices #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
+               :type #:db{:valueType :db.type/string, :cardinality :db.cardinality/one},
+               :owner/systems #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
+               :device/status #:_rm{:qvar ?status},
+               :_rm/system*id--ownerName|systemName
+               {:db/unique :db.unique/identity, :db/valueType :db.type/string,
+                :_rm/self :_rm/system*id--ownerName|systemName, :_rm/ref-key "system/id"},
+               :_rm/device*id--ownerName|systemName|deviceName
+               {:db/unique :db.unique/identity, :db/valueType :db.type/string,
+                :_rm/self :_rm/device*id--ownerName|systemName|deviceName, :_rm/ref-key "device/id"},
+               :device/id {:_rm/qvar ?deviceName, :db/cardinality :db.cardinality/one}},
+             :params '(),
+             :options 'nil,
+             :body
+             '{"owners"
+               {"t/type" "OWNER",
+                :_rm/owner*id--ownerName (:rm/express-key ?ownerName),
+                "owner/id" ?ownerName,
+                "owner/systems"
+                [{"t/type" "SYSTEM",
+                  :_rm/system*id--ownerName|systemName (:rm/express-key ?ownerName ?systemName),
+                  "system/id" ?systemName,
+                  "system/devices" [{"type" "DEVICE",
+                                     :_rm/device*id--ownerName|systemName|deviceName (:rm/express-key ?ownerName ?systemName ?deviceName),
+                                     "device/id" ?deviceName,
+                                     "device/status" ?status}]}]}})
+
            (ev/processRM :ptag/express-def
                          "express{{'owners': {'t/type'       : 'OWNER',
                                               'owner/id'     : key(?ownerName),
                                               'owner/systems': [{'t/type'         : 'SYSTEM',
                                                                  'system/id'      : key(?systemName),
-                                                                 'system/devices' : [{'type'           : 'DEVICE',
+                                                                 'system/devices' : [{'t/type'           : 'DEVICE',
                                                                                       'device/id'      : key(?deviceName),
                                                                                       'device/status'  : ?status}]}]}}}"
                          {:rewrite? true})))))

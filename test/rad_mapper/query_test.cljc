@@ -844,15 +844,3 @@
            "QIFPlan.WorkInstructions/Instruction"
              {"QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction" {"Instruction" "some instruction"}}},
           "QIFPlan/ActionMethods" {"QIFPlan/ActionMethods/ActionMethod" {"Method" "some method"}}}))))
-
-
-(defn tryme []
-  [ebody '{"owners"
-           {"t/type" "OWNER",
-            "owner/id" (bi/express-key ?ownerName),
-            "owner/systems" [{"t/type" "SYSTEM",
-                              "system/id" (bi/express-key ?systemName),
-                              "system/devices" [{"t/type" "DEVICE",
-                                                 "device/id" (bi/express-key ?deviceName),
-                                                 "device/status" ?status}]}]}}]
-  (qu/learn-schema-from-express ebody))
