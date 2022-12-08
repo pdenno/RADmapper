@@ -20,6 +20,7 @@
    #?(:cljs ["jsonata"  :as ja])
    #?(:cljs ["nata-borrowed"  :as nb])
    #?(:cljs [goog.crypt.base64 :as jsb64])
+   [rad-mapper.db-util            :as du]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
@@ -1732,15 +1733,28 @@
     (higher-order-query-fn body in pred-args options params)))
 
 ;;;------------------ Express --------------------------------------------
-(defn cleanup-express
-  "Return the evaluated express body with :_rm removed."
-  [body]
-  (letfn [(ce-aux [obj]
-            (map? obj)     (reduce-kv (fn [m k v] (if (= "_rm" (namespace k)) m (assoc m k (ce-aux v)))) {} obj)
-            (vector? obj)  (mapv ce-aux obj)
-            :else          obj)]
-    (ce-aux body)))
+(declare evaluate-express-body express-sub cleanup-express)
 
+(defn express
+  "Return an function that either
+    (1) has no template variable and can be used directly with a binding set, or
+    (2) has template variables and returns a parameterized version of (1) that
+        can be called with parameter values to get the a function like (1) to
+        be used with binding sets.
+     The function returned has meta {express? true} so that, for example, $reduce
+     knows that there should be a database involved."
+  [& {:keys [params options body schema]}]
+    (if (empty? params)
+      ;; The immediate function:
+      (-> (fn [bset] (evaluate-express-body bset body))
+          ;; schema is not needed for simple evaluation, reduce evaluation.
+          (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))
+      ;; body has template params that must be replaced; new-body.
+      (-> (fn [& psubs]
+            (let [new-body (express-sub body (zipmap params psubs))]
+              (-> (fn [bset] (evaluate-express-body bset new-body))
+                  (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))))
+          (with-meta {:bi/express-template? true}))))
 
 ;;; ToDo: NYI: qvars in key positions.
 (defn evaluate-express-body
@@ -1761,33 +1775,6 @@
         res
         (cleanup-express res)))))
 
-
-(defn express
-  "Return an function that either
-    (1) has no template variable and can be used directly with a binding set, or
-    (2) has template variables and returns a parameterized version of (1) that
-        can be called with parameter values to get the a function like (1) to
-        be used with binding sets.
-     The function returned has meta {express? true} so that, for example, $reduce
-     knows that there should be a database involved."
-  [& {:keys [params options body schema]}]
-    (if (empty? params)
-      ;; The immediate function:
-      (-> (fn [bset] (evaluate-express-body bset body))
-          ;; schema is not needed for simple evaluation, reduce evaluation.
-          (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))
-      ;; body has template params that must be replaced; new-body.
-      :nyi
-      #_(-> (fn [& psubs]
-            (let [new-body (express-sub body (zipmap params psubs))
-                  bbody (sbind-body new-body)]
-              (-> (fn [bset]
-                    (let [assoc-in-map (apply merge {} (body&bset-ai-maps bbody bset))]
-                      (-> (reduce-kv (fn [m k v] (assoc-in m k v)) {} assoc-in-map)
-                          (with-meta {:bi/ai-map assoc-in-map})))) ; used by $reduce
-                  (with-meta {:bi/params '[b-set], :bi/express? true, :bi/options options}))))
-          (with-meta {:bi/express-template? true}))))
-
 (defn express-sub
   "Walk through form replacing template parameters in sub-map with their values."
   [form sub-map]
@@ -1797,6 +1784,20 @@
                   (symbol? x) (or (get sub-map x) x)
                   :else x))]
     (es-aux form)))
+
+(defn cleanup-express
+  "Return the evaluated express body with :_rm removed."
+  [body]
+  (letfn [(ce-aux [obj]
+            (cond
+              (map? obj)     (reduce-kv (fn [m k v]
+                                          (if (and (or (keyword? k) (symbol? k))
+                                                   (= "_rm" (namespace k)))
+                                            m
+                                            (assoc m k (ce-aux v)))) {} obj)
+              (vector? obj)  (mapv ce-aux obj)
+              :else          obj))]
+    (ce-aux body)))
 
 (defn reduce-express
   "This function performs $reduce on an express function.
@@ -1818,8 +1819,16 @@
          db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
          data (->> (mapv efn b-sets)
                    (assoc {} :_rm/ROOT))
-         db (qu/db-for! data :known-schema db-schema :learn? false)]
-     db)))
+         zippy (reset! diag {:schema db-schema
+                             :b-sets b-sets})
+         db (qu/db-for! data :known-schema db-schema :learn? false)
+         root-eids (d/q '[:find [?top ...] :where [_ :_rm/ROOT ?top]] @db)]
+      (->> (dp/pull-many @db '[*] root-eids)
+           (map #(dissoc % :db/id))
+           (mapcat vals)
+           distinct
+           (mapv #(du/resolve-db-id % db #{:db/id}))
+           cleanup-express))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

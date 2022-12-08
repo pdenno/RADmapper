@@ -163,7 +163,11 @@
 (defrewrite :ExpressDef [m]
   (let [params (-> m :params rewrite)
         body-pre (binding [*inside-express?* true]
-                   (-> m :body rewrite qu/rewrite-express-keys))
+                   (-> m
+                       :body
+                       rewrite
+                       qu/rew-key-keys
+                       qu/rewrite-express-keys))
         schema   (qu/learn-schema-from-express body-pre)]
     `(~'bi/express {:params  '~(remove map? params)
                     :options '~(some #(when (map? %) %) params)

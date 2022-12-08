@@ -107,7 +107,7 @@
   [full-form opts]
   (let [min-level (util/default-min-log-level)
         run-sci?   (or (util/cljs?) (:sci? opts))]
-    (when true ;(or (:debug-eval? opts) (= min-level :debug))
+    (when (or (:debug-eval? opts) (= min-level :debug))
       (util/config-log :info) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox).
       (log/info (cl-format nil "*****  Running ~S *****" (if run-sci? "SCI" "eval")))
       (-> full-form pretty-form pprint))

@@ -7,6 +7,7 @@
       :cljs [datascript.pull-api  :as dp])
 ;  #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
    [rad-mapper.builtin            :as bi]
+   [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
    [rad-mapper.db-util            :as du] ; For some testing
    [dev.dutil :refer [run-rew]]
@@ -17,6 +18,13 @@
 (defn read-str [s]
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
+
+(defn vec2set
+  "Use this so that = testing on data works."
+  [obj]
+  (cond (map? obj)     (reduce-kv (fn [m k v] (assoc m k (vec2set v))) {} obj)
+        (vector? obj)  (->> (map vec2set obj) set)
+        :else          obj))
 
 ;;; ToDo: I think I intended to test whether some data (from express?) results in this?
 (def test-schema
@@ -216,13 +224,6 @@
 
             $q($data) )")))
 
-(defn tryme0 []
-  (let [db-atm (qu/db-for! [{:instance-of "example"}])]
-    (d/q '[:find ?e
-           :where
-           [?e :instance-of ?str]
-           [(bi/$match ?str #"example")]]
-         @db-atm)))
 
 ;;;================================ testing express ==================================
 (deftest simple-immediate
@@ -239,14 +240,6 @@
 
                $reduce($bsets, $e) )"
               {"inst" "example", "val" "some-val"})))
-
-(deftest simple-express
-  (testing "the essential steps of a simple express"
-    (is (= (let [bbody (bi/sbind-body '{"instance-of" "FixedType" "content" ?class-iri})
-                 bset '{?class-iri "MY-IRI"}
-                 ai-maps (apply merge {} (bi/body&bset-ai-maps bbody bset))]
-             (reduce-kv (fn [m k v] (assoc-in m k v)) {} ai-maps))
-           {"instance-of" "FixedType", "content" "MY-IRI"}))))
 
 (deftest simple-parameteric-express
   (testing "That error from the below (efn, pefn, etc.) aren't about my screwing up the args!" ; ...which they are currently!
@@ -623,6 +616,32 @@
                  {'?device-name :device1, '?system-name :system1, '?id 100, '?status "Ok", '?owner-name :owner1}}
                result))))))
 
+;;; ToDo: This isn't correct, but I'm just getting started.
+(deftest rearrange-rewrite-express
+  (is (=
+       '(bi/express
+         {:schema
+          '{:_rm/ROOT    #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
+            :owners      #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+            :?ownerName  #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+            :systems     #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+            :?systemName #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+            :?deviceName #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+            :id          #:_rm{:qvar ?id},
+            :status      #:_rm{:qvar ?status}},
+          :params '(),
+          :options 'nil,
+          :body '{"owners" {?ownerName {"systems" {?systemName {?deviceName {"id" ?id, "status" ?status}}}}}}})
+       (ev/processRM :ptag/exp "express()
+                                 {  {'owners':
+                                        {?ownerName:
+                                          {'systems':
+                                             {?systemName:
+                                                {?deviceName : {'id'     : ?id,
+                                                                'status' : ?status}}}}}}
+                                 }"
+                 {:rewrite? true}))))
+
 (deftest rearrange--full
   (testing "rearrange data as shown in  https://try.jsonata.org/sTPDRs--6."
     (testing "full sTPDRs--6 rearrange example"
@@ -663,16 +682,33 @@
                                                   "device8" {"id" 800, "status" "Ok"}}}}}}))))
 (deftest rearrange-keys
  (testing "sTPDRs--6 with keys"
-   (is (= {"owners" {"id" :owner1,
-                     "type" "OWNER",
-                     "systems" {"id" :system1,
-                                "type" "SYSTEM",
-                                "devices" {"id" :device2,
-                                           "status" "Ok",
-                                           "type" "DEVICE"}}}}
-      (run "($data := {'systems':
- {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}, 'device2': {'id': 200, 'status': 'Ok'}}, 'owner2': {'device3': {'id': 300, 'status': 'Ok'}, 'device4': {'id': 400, 'status': 'Ok'}}}},
-  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'}, 'device6': {'id': 600, 'status': 'Ok'}}, 'owner2': {'device7': {'id': 700, 'status': 'Ok'}, 'device8': {'id': 800, 'status': 'Ok'}}}}}};
+   (is (= #{{:owner/id "owner1",
+             :owner/systems
+             #{{:system/devices #{{:device/id "device1", :device/status "Ok", :t/type "DEVICE"}
+                                  {:device/id "device2", :device/status "Ok", :t/type "DEVICE"}},
+                :system/id "system1", :t/type "SYSTEM"}
+               {:system/devices #{{:device/id "device6", :device/status "Ok", :t/type "DEVICE"}
+                                  {:device/id "device5", :device/status "Ok", :t/type "DEVICE"}},
+                :system/id "system2", :t/type "SYSTEM"}},
+             :t/type "OWNER"}
+            {:owner/id "owner2",
+             :owner/systems
+             #{{:system/devices #{{:device/id "device3", :device/status "Ok", :t/type "DEVICE"}
+                                  {:device/id "device4", :device/status "Ok", :t/type "DEVICE"}},
+                :system/id "system1", :t/type "SYSTEM"}
+               {:system/devices #{{:device/id "device8", :device/status "Ok", :t/type "DEVICE"}
+                                  {:device/id "device7", :device/status "Ok", :t/type "DEVICE"}},
+                :system/id "system2", :t/type "SYSTEM"}},
+             :t/type "OWNER"}}
+      (-> "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'},
+                                    'device2': {'id': 200, 'status': 'Ok'}},
+                         'owner2': {'device3': {'id': 300, 'status': 'Ok'},
+                                    'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'},
+                                    'device6': {'id': 600, 'status': 'Ok'}},
+                         'owner2': {'device7': {'id': 700, 'status': 'Ok'},
+                                    'device8': {'id': 800, 'status': 'Ok'}}}}}};
 
                   $q := query(){ [?s ?systemName ?x]
                                  [($match(?systemName, /system\\d/))]
@@ -691,11 +727,13 @@
                                               'owner/id'     : key(?ownerName),
                                               'owner/systems': [{'t/type'         : 'SYSTEM',
                                                                  'system/id'      : key(?systemName),
-                                                                 'system/devices' : [{'type'           : 'DEVICE',
+                                                                 'system/devices' : [{'t/type'         : 'DEVICE',
                                                                                       'device/id'      : key(?deviceName),
                                                                                       'device/status'  : ?status}]}]}}
                                    }  )
-                  )")))))
+                  )"
+          run
+          vec2set)))))
 
 
 ;;; ToDo: Also demonstrate query with parameter for $id.

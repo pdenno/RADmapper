@@ -1,7 +1,7 @@
 (ns rad-mapper.query
   "supporting code for query and express"
   (:require
-   [clojure.string :refer [starts-with? replace]]
+   [clojure.string :refer [starts-with?] :as string]
    [clojure.walk   :refer [keywordize-keys]]
    #?(:clj  [datahike.api         :as d]
       :cljs [datascript.core      :as d])
@@ -94,26 +94,43 @@
       (schema-from-canonical @learned (if datahike? :datahike :datascript)))))
 
 (defn qvar? [obj] (and (symbol? obj) (starts-with? (name obj) "?")))
+
 (defn key-exp?
   "Return true when the argument looks like (bi/express-key ?some-qvar)."
   [obj]
   (and (seq? obj)
        (let [[exp-key qvar] obj]
-         (and (= exp-key :rm/express-key) (qvar? qvar)))))
+         (and (#{:rm/express-key :rm/express-Kkey} exp-key)
+              (qvar? qvar)))))
+
+(defn rew-key-keys
+  "Called in rewrite.
+   Wrap qvar in key positions in (:rm/express-key-key <the-qvar>)."
+  [obj]
+  (cond (map? obj)        (reduce-kv (fn [m k v] (if (qvar? k)
+                                                   (assoc m `(:rm/express-Kkey ~k) (rew-key-keys v))
+                                                   (assoc m k (rew-key-keys v))))
+                                     {} obj)
+        (vector? obj)     (mapv rew-key-keys obj)
+        :else             obj))
 
 ;;; ToDo: Check that there is at most one key at each map level. (filter instead of some).
 (defn rewrite-express-keys
-  "Rewrite an express body's bi/express-key forms to concatenate parent keys required for reducing over it."
+  "Called in rewrite.
+   Rewrite an express body's bi/express-key forms to concatenate parent keys required for reducing over it."
   [body]
   (let [ekeys (atom [])]
     (letfn [(rew-keys [obj]
-              (cond (map? obj)
-                    (do (when-let [this-key (some #(when (key-exp? %) (second %)) (vals obj))]
+              (cond (map? obj) ; I think the or below is justified; the map can only have one key.
+                    (do (when-let [this-key (or (some #(when (key-exp? %) (second %)) (vals obj))
+                                                (some #(when (key-exp? %) (second %)) (keys obj)))]
                           (swap! ekeys conj this-key))
                         (let [res (doall (reduce-kv (fn [m k v]
                                                       (if (key-exp? v)
                                                         (assoc m k `(:rm/express-key ~@(deref ekeys)))
-                                                        (assoc m k (rew-keys v))))
+                                                        (if (key-exp? k)
+                                                          (assoc m `(:rm/express-Kkey ~@(deref ekeys)) (rew-keys v))
+                                                          (assoc m k (rew-keys v)))))
                                                     {} obj))]
                           (swap! ekeys #(-> % rest vec)) ; Pop the key when you've finished the map.
                           res))
@@ -140,13 +157,15 @@
       (rew4ckeys body))))
 
 (defn express-key-schema
-  "Return schema information for an express-key."
+  "Return schema information for an express-key or express-Kkey."
   [k v]
-  (let [db-ident (keyword "_rm"
+  (let [real-k (if (key-exp? v) k v)                ; This is typical; example :domain/id (key ?id). (qvar in value position).
+        real-v (if (key-exp? v) v :not-important)   ; This is where the user has a qvar in key position.
+        db-ident (keyword "_rm"
                           (apply str
-                                 (replace k "/" "*")
+                                 (string/replace k "/" "*")
                                  "--"
-                                 (interpose "|" (map #(replace (name %) "?" "") (rest v)))))]
+                                 (interpose "|" (map #(string/replace (name %) "?" "") (rest v)))))]
     (-> {}
         (assoc-in [db-ident :db/unique] :db.unique/identity)
         (assoc-in [db-ident :db/valueType] :db.type/string)
@@ -163,10 +182,13 @@
     (letfn [(lsfe-aux [obj]
               (cond (map? obj)
                       (doseq [[k v] obj]
-                        (let [db-ident (keyword k)
+                        (let [db-ident (if (key-exp? k) (-> k last str (subs 1) keyword) (keyword k))
                               typ (db-type-of v)]
                           (when (qvar? v)
                             (swap! schema #(assoc-in % [db-ident :_rm/qvar] v)))
+                          (when (key-exp? k)
+                            (swap! schema #(assoc-in % [db-ident :_rm/qvar] (last k))) ; ToDo: Not sure I need this one.
+                            (swap! schema #(merge % (express-key-schema k v))))
                           (cond typ         (do (swap! schema #(assoc-in % [db-ident :db/valueType] typ))
                                                 (swap! schema #(assoc-in % [db-ident :db/cardinality] :db.cardinality/one))
                                                 (when (= :db.type/ref typ) (lsfe-aux v))),
