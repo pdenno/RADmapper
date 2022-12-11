@@ -141,14 +141,14 @@
 (defn rewrite-express-catkeys
   "Rewrite an express body by inserting :_rm/whatever attributes required for reducing over it."
   [body schema]
-  (let [new-keys (reduce-kv (fn [m k v] (if (contains? v :_rm/ref-key) (assoc m k v) m)) {} schema)]
+  (let [new-keys (reduce-kv (fn [m k v] (if (contains? v :_rm/user-key) (assoc m k v) m)) {} schema)]
     (letfn [(rew4ckeys [obj]
               (cond (map? obj)     (reduce-kv (fn [m k v]
-                                                (if-let [info (some (fn [[_ iv]] (when (= k (:_rm/ref-key iv)) iv))
+                                                (if-let [info (some (fn [[_ iv]] (when (= k (:_rm/user-key iv)) iv))
                                                                     (seq new-keys))]
                                                   (-> m
                                                       (assoc (:_rm/self info) v)
-                                                      (assoc (:_rm/ref-key info) (last v)))
+                                                      (assoc (:_rm/user-key info) (last v)))
                                                   (assoc m k (rew4ckeys v))))
                                               {}
                                               obj)
@@ -159,31 +159,43 @@
 (defn express-key-schema
   "Return schema information for an express-key or express-Kkey."
   [k v]
-  (let [real-k (if (key-exp? v) k v)                ; This is typical; example :domain/id (key ?id). (qvar in value position).
-        real-v (if (key-exp? v) v :not-important)   ; This is where the user has a qvar in key position.
+  (let [k-key?   (key-exp? k)
+        user-key (if k-key? (last k) k) ; user-key is a string if express-key and qvar if express-Kkey.
+        ref-val  (if k-key? k v)
         db-ident (keyword "_rm"
-                          (apply str
-                                 (string/replace k "/" "*")
-                                 "--"
-                                 (interpose "|" (map #(string/replace (name %) "?" "") (rest v)))))]
-    (-> {}
-        (assoc-in [db-ident :db/unique] :db.unique/identity)
-        (assoc-in [db-ident :db/valueType] :db.type/string)
-        (assoc-in [db-ident :db/cardinality] :db.cardinality/one)
-        (assoc-in [db-ident :_rm/self] db-ident)
-        (assoc-in [db-ident :_rm/ref-key] k))))
+                            (apply str
+                                   (string/replace user-key "/" "*")
+                                   "--"
+                                   (interpose "|" (map #(string/replace (name %) "?" "") (rest ref-val)))))]
+    (as-> {} ?s
+      (if k-key?
+        (assoc-in ?s [db-ident :db/cardinality] :db.cardinality/one) ; <============================= It is unique, thus one!
+        (assoc-in ?s [db-ident :db/cardinality] :db.cardinality/one))
+      (assoc-in ?s [db-ident :db/valueType] :db.type/string)
+      (assoc-in ?s [db-ident :db/unique] :db.unique/identity)
+      (assoc-in ?s [db-ident :_rm/cat-key] (rest ref-val))
+      (assoc-in ?s [db-ident :_rm/self] db-ident)
+      (assoc-in ?s [db-ident :_rm/user-key] user-key))))
 
-;;; ToDo: Here when you encounter a [:rm/express-key ?qvar...] you need to
-;;;    1) note that the db-ident is :db.cardinality/one
-;;;    2) create another db-ident (maybe :_rm/orig-db-ident--?qvar-...) that is :db.unique/ident and :db.type/string
 (defn learn-schema-from-express
+  "Create schema object by studying the body.
+   In addition to simply learning :db.cardinality, which is apparent by use of vector syntax,
+      1) add entities for (:rm/express-key ?some-qvar). These concatenate keys that are on the same path, and
+      2) define new schema entries that will have :db.unique/identity that will get concatenated key values from the bset."
   [body]
-  (let [schema (atom {:_rm/ROOT {:db/valueType :db.type/ref :db/cardinality :db.cardinality/many}})]
+  (let [schema (atom {:_rm/ROOT {:db/valueType :db.type/ref    :db/cardinality :db.cardinality/many}
+                      :_rm/Kkey {:db/valueType :db.type/string :db/cardinality :db.cardinality/one}
+                      :_rm/Kval {:db/valueType :db.type/ref    :db/cardinality :db.cardinality/one}
+                      :box/boolean-val {:db/cardinality :db.cardinality/one :db/valueType :db.type/boolean}
+                      :box/keyword-val {:db/cardinality :db.cardinality/one :db/valueType :db.type/keyword}
+                      :box/number-val  {:db/cardinality :db.cardinality/one :db/valueType :db.type/number}
+                      :box/string-val  {:db/cardinality :db.cardinality/one :db/valueType :db.type/string}})]
     (letfn [(lsfe-aux [obj]
               (cond (map? obj)
                       (doseq [[k v] obj]
                         (let [db-ident (if (key-exp? k) (-> k last str (subs 1) keyword) (keyword k))
                               typ (db-type-of v)]
+                          (swap! schema #(assoc-in % [db-ident :_rm/self] db-ident))
                           (when (qvar? v)
                             (swap! schema #(assoc-in % [db-ident :_rm/qvar] v)))
                           (when (key-exp? k)
@@ -220,6 +232,7 @@
     @schema))
 
 ;;; BTW, I can make a trivial DB on my laptop using this in 6 milliseconds.
+;;; ToDo: Where I'm creating DBs for short-term use (e.g. express reduce) we need to d/delete-database when done!
 #?(:clj
 (defn db-for!
   "Datahike version : Create a database for the argument data and return a connection to it.
@@ -231,10 +244,10 @@
         data (-> (if (vector? data) data (vector data)) keywordize-keys)]
     #?(:clj (when (d/database-exists? db-cfg) (d/delete-database db-cfg))) ; ToDo: FIX!
     (d/create-database db-cfg)
-    (let [conn-atm (d/connect db-cfg)]
-      (d/transact conn-atm (if learn? (learn-schema data :known-schema known-schema) known-schema))
-      (d/transact conn-atm data)
-      conn-atm))))
+    (let [db-atm (d/connect db-cfg)]
+      (d/transact db-atm (if learn? (learn-schema data :known-schema known-schema) known-schema))
+      (d/transact db-atm data)
+      db-atm))))
 
 #?(:cljs
 (defn db-for!
@@ -245,6 +258,6 @@
   [data & {:keys [known-schema learn?] :or {known-schema {} learn? true}}]
   (let [data (-> (if (vector? data) data (vector data)) keywordize-keys)
         schema (if learn? (learn-schema data :known-schema known-schema :datahike? false) known-schema)
-        conn-atm (d/create-conn schema)]
-    (d/transact conn-atm data)
-    conn-atm)))
+        db-atm (d/create-conn schema)]
+    (d/transact db-atm data)
+    db-atm)))

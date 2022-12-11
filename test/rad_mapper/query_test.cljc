@@ -617,22 +617,39 @@
                result))))))
 
 ;;; ToDo: This isn't correct, but I'm just getting started.
-(deftest rearrange-rewrite-express
-  (is (=
-       '(bi/express
-         {:schema
-          '{:_rm/ROOT    #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
-            :owners      #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
-            :?ownerName  #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
-            :systems     #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
-            :?systemName #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
-            :?deviceName #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
-            :id          #:_rm{:qvar ?id},
-            :status      #:_rm{:qvar ?status}},
-          :params '(),
-          :options 'nil,
-          :body '{"owners" {?ownerName {"systems" {?systemName {?deviceName {"id" ?id, "status" ?status}}}}}}})
-       (ev/processRM :ptag/exp "express()
+(deftest rewrite-express
+  (testing "rewrite express"
+    (testing "use without keys"
+      (is (=
+           '(bi/express
+             {:schema ; Here the user-key is a qvar; it corresponds to an :rm/express-Kkey.
+            '{:_rm/ROOT #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
+              :systems #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+              :owners #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+              :deviceName {:_rm/qvar ?deviceName, :db/valueType :db.type/ref, :db/cardinality :db.cardinality/one},
+              :ownerName {:_rm/qvar ?ownerName, :db/valueType :db.type/ref, :db/cardinality :db.cardinality/one},
+              :status #:_rm{:qvar ?status},
+              :id #:_rm{:qvar ?id},
+              :systemName {:_rm/qvar ?systemName, :db/valueType :db.type/ref, :db/cardinality :db.cardinality/one}
+
+              :_rm/?ownerName--ownerName
+              {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one,
+               :_rm/self :_rm/?ownerName--ownerName, :_rm/user-key ?ownerName},
+
+              :_rm/?systemName--ownerName|systemName
+              {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one,
+               :_rm/self :_rm/?systemName--ownerName|systemName, :_rm/user-key ?systemName}
+
+              :_rm/?deviceName--ownerName|systemName|deviceName
+              {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one,
+               :_rm/self :_rm/?deviceName--ownerName|systemName|deviceName, :_rm/user-key ?deviceName}},
+              :params '(),
+              :options 'nil,
+              :body '{"owners" {(:rm/express-Kkey ?ownerName)
+                                {"systems" {(:rm/express-Kkey ?ownerName ?systemName)
+                                            {(:rm/express-Kkey ?ownerName ?systemName ?deviceName)
+                                             {"id" ?id, "status" ?status}}}}}}})
+           (ev/processRM :ptag/exp "express()
                                  {  {'owners':
                                         {?ownerName:
                                           {'systems':
@@ -640,12 +657,59 @@
                                                 {?deviceName : {'id'     : ?id,
                                                                 'status' : ?status}}}}}}
                                  }"
-                 {:rewrite? true}))))
+                     {:rewrite? true}))))
+    (testing "use with keys"
+      (is (=  ; Here the user-key is a string; it corresponds to a :rm/express-key
+           '(bi/express
+             {:schema
+              '{:_rm/ROOT #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
+                :t/type #:db{:valueType :db.type/string, :cardinality :db.cardinality/one},
+                :owner/id {:_rm/qvar ?ownerName, :db/cardinality :db.cardinality/one},
+                :owners #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one},
+                :_rm/owner*id--ownerName {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality
+                                          :db.cardinality/one, :_rm/self :_rm/owner*id--ownerName, :_rm/user-key "owner/id"},
+                :system/id {:_rm/qvar ?systemName, :db/cardinality :db.cardinality/one},
+                :system/devices #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
+                :owner/systems #:db{:valueType :db.type/ref, :cardinality :db.cardinality/many},
+                :device/status #:_rm{:qvar ?status},
+                :_rm/system*id--ownerName|systemName {:db/unique :db.unique/identity, :db/valueType :db.type/string,
+                                                      :db/cardinality :db.cardinality/one, :_rm/self
+                                                      :_rm/system*id--ownerName|systemName, :_rm/user-key "system/id"},
+                :_rm/device*id--ownerName|systemName|deviceName
+                {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one,
+                 :_rm/self :_rm/device*id--ownerName|systemName|deviceName, :_rm/user-key "device/id"},
+                :device/id {:_rm/qvar ?deviceName, :db/cardinality :db.cardinality/one}},
+              :params '(),
+              :options 'nil,
+              :body
+              '{"owners"
+                {"t/type" "OWNER",
+                 :_rm/owner*id--ownerName (:rm/express-key ?ownerName),
+                 "owner/id" ?ownerName,
+                 "owner/systems"
+                 [{"t/type" "SYSTEM",
+                   :_rm/system*id--ownerName|systemName (:rm/express-key ?ownerName ?systemName),
+                   "system/id" ?systemName,
+                   "system/devices" [{"t/type" "DEVICE",
+                                      :_rm/device*id--ownerName|systemName|deviceName (:rm/express-key ?ownerName ?systemName ?deviceName),
+                                      "device/id" ?deviceName,
+                                      "device/status" ?status}]}]}}})
+           (ev/processRM :ptag/exp "express{{'owners': {'t/type'       : 'OWNER',
+                                                        'owner/id'     : key(?ownerName),
+                                                        'owner/systems': [{'t/type'         : 'SYSTEM',
+                                                                           'system/id'      : key(?systemName),
+                                                                           'system/devices' : [{'t/type'         : 'DEVICE',
+                                                                                                'device/id'      : key(?deviceName),
+                                                                                                'device/status'  : ?status}]}]}}
+                                           }"
+                         {:rewrite? true}))))))
+
 
 (deftest rearrange--full
   (testing "rearrange data as shown in  https://try.jsonata.org/sTPDRs--6."
     (testing "full sTPDRs--6 rearrange example"
-      (run-test "($data := {'systems':
+      (is (=
+           (-> "($data := {'systems':
  {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}, 'device2': {'id': 200, 'status': 'Ok'}}, 'owner2': {'device3': {'id': 300, 'status': 'Ok'}, 'device4': {'id': 400, 'status': 'Ok'}}}},
   'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'}, 'device6': {'id': 600, 'status': 'Ok'}}, 'owner2': {'device7': {'id': 700, 'status': 'Ok'}, 'device8': {'id': 800, 'status': 'Ok'}}}}}};
                      $q := query(){ [?s ?systemName ?x]
@@ -671,16 +735,18 @@
                                  }
                          )
                  )"
-                {"owners"
-                 {"owner1" {"systems" {"system1" {"device1" {"id" 100, "status" "Ok"},
-                                                  "device2" {"id" 200, "status" "Ok"}},
-                                       "system2" {"device5" {"id" 500, "status" "Ok"},
-                                                  "device6" {"id" 600, "status" "Ok"}}}},
-                  "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
-                                                  "device4" {"id" 400, "status" "Ok"}},
-                                       "system2" {"device7" {"id" 700, "status" "Ok"},
-                                                  "device8" {"id" 800, "status" "Ok"}}}}}}))))
-(deftest rearrange-keys
+              run
+              vec2set)
+          (vec2set {"owners"
+                    {"owner1" {"systems" {"system1" {"device1" {"id" 100, "status" "Ok"},
+                                                     "device2" {"id" 200, "status" "Ok"}},
+                                          "system2" {"device5" {"id" 500, "status" "Ok"},
+                                                     "device6" {"id" 600, "status" "Ok"}}}},
+                     "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
+                                                     "device4" {"id" 400, "status" "Ok"}},
+                                          "system2" {"device7" {"id" 700, "status" "Ok"},
+                                                     "device8" {"id" 800, "status" "Ok"}}}}}}))))))
+(deftest rearrange-full-keys
  (testing "sTPDRs--6 with keys"
    (is (= #{{:owner/id "owner1",
              :owner/systems
@@ -882,3 +948,182 @@
            "QIFPlan.WorkInstructions/Instruction"
              {"QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction" {"Instruction" "some instruction"}}},
           "QIFPlan/ActionMethods" {"QIFPlan/ActionMethods/ActionMethod" {"Method" "some method"}}}))))
+
+(defn tryme []
+  (let [schema
+         [#:db{:valueType :db.type/ref, :cardinality :db.cardinality/many, :ident :_rm/ROOT}
+          #:db{:cardinality :db.cardinality/one, :valueType :db.type/keyword, :ident :box/keyword-val}
+          #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one, :ident :systems}
+          #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :box/string-val}
+          #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one, :ident :owners}
+          #:db{:valueType :db.type/string, :cardinality :db.cardinality/many, :ident :deviceName}
+          #:db{:cardinality :db.cardinality/one, :valueType :db.type/boolean, :ident :box/boolean-val}
+          #:db{:valueType :db.type/string, :unique :db.unique/identity, :cardinality :db.cardinality/one,
+               :ident :_rm/?deviceName--ownerName|systemName|deviceName}
+          #:db{:valueType :db.type/string, :unique :db.unique/identity, :cardinality :db.cardinality/one,
+               :ident :_rm/?ownerName--ownerName}
+          #:db{:valueType :db.type/string, :cardinality :db.cardinality/one, :ident :_rm/Kkey}
+          #:db{:valueType :db.type/string, :cardinality :db.cardinality/many, :ident :ownerName}
+          #:db{:valueType :db.type/ref, :cardinality :db.cardinality/one, :ident :_rm/Kval}
+          #:db{:valueType :db.type/string, :cardinality :db.cardinality/one, :ident :status}
+          #:db{:valueType :db.type/number, :cardinality :db.cardinality/one, :ident :id}
+          #:db{:cardinality :db.cardinality/one, :valueType :db.type/number, :ident :box/number-val}
+          #:db{:valueType :db.type/string, :cardinality :db.cardinality/many, :ident :systemName}
+          #:db{:valueType :db.type/string, :unique :db.unique/identity, :cardinality :db.cardinality/one,
+               :ident :_rm/?systemName--ownerName|systemName}]
+        data [ #:_rm{:ROOT
+                     [{:owners
+                       #:_rm{:?ownerName--ownerName "owner2",
+                             :Kval
+                             {:systems
+                              #:_rm{:?systemName--ownerName|systemName "owner2|system1",
+                                    :Kval #:_rm{:?deviceName--ownerName|systemName|deviceName "owner2|system1|device3",
+                                                :Kval {:id 300, :status "Ok"}, :_rm/Kkey "device3"},
+                                    :_rm/Kkey "system1"}},
+                             :_rm/Kkey "owner2"}}]}]]
+    #?(:clj (when (d/database-exists? db-cfg) (d/delete-database db-cfg))) ; ToDo: FIX!
+    (d/create-database db-cfg)
+    (let [db-atm (d/connect db-cfg)]
+      (d/transact db-atm schema)
+      (d/transact db-atm data)
+      (let [root-eids (d/q '[:find [?top ...] :where [_ :_rm/ROOT ?top]] @db-atm)]
+        (->> (dp/pull-many @db-atm '[*] root-eids)
+             (map #(dissoc % :db/id))
+             (mapcat vals)
+             distinct
+             (mapv #(du/resolve-db-id % db-atm #{:db/id})))))))
+
+
+
+(defn tryme0 []
+  (-> "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'},
+                                    'device2': {'id': 200, 'status': 'Ok'}},
+                         'owner2': {'device3': {'id': 300, 'status': 'Ok'},
+                                    'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'},
+                                    'device6': {'id': 600, 'status': 'Ok'}},
+                         'owner2': {'device7': {'id': 700, 'status': 'Ok'},
+                                    'device8': {'id': 800, 'status': 'Ok'}}}}}};
+
+                  $q := query(){ [?s ?systemName ?x]
+                                 [($match(?systemName, /system\\d/))]
+                                 [?x :owners ?y]
+                                 [?y ?ownerName ?z]
+                                 [($match(?ownerName, /owner\\d/))]
+                                 [?z ?deviceName ?d]
+                                 [($match(?deviceName, /device\\d/))]
+                                 [?d :id ?id]
+                                 [?d :status ?status] };
+
+                  $bsets := $q($data);
+
+                  $reduce($bsets,
+                          express{{'owners': {'t/type'       : 'OWNER',
+                                              'owner/id'     : key(?ownerName),
+                                              'owner/systems': [{'t/type'         : 'SYSTEM',
+                                                                 'system/id'      : key(?systemName),
+                                                                 'system/devices' : [{'t/type'         : 'DEVICE',
+                                                                                      'device/id'      : key(?deviceName),
+                                                                                      'device/status'  : ?status}]}]}}
+                                   }  )
+                  )"
+      run))
+
+(defn tryme1 []
+  (-> "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'},
+                                    'device2': {'id': 200, 'status': 'Ok'}},
+                         'owner2': {'device3': {'id': 300, 'status': 'Ok'},
+                                    'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'},
+                                    'device6': {'id': 600, 'status': 'Ok'}},
+                         'owner2': {'device7': {'id': 700, 'status': 'Ok'},
+                                    'device8': {'id': 800, 'status': 'Ok'}}}}}};
+
+                  $q := query(){ [?s ?systemName ?x]
+                                 [($match(?systemName, /system\\d/))]
+                                 [?x :owners ?y]
+                                 [?y ?ownerName ?z]
+                                 [($match(?ownerName, /owner\\d/))]
+                                 [?z ?deviceName ?d]
+                                 [($match(?deviceName, /device\\d/))]
+                                 [?d :id ?id]
+                                 [?d :status ?status] };
+
+                  $bsets := $q($data);
+
+                  $reduce($bsets,
+                          express{{'owners': {'id'     : key(?ownerName),
+                                              'systems': [{'id'      : key(?systemName),
+                                                           'devices' : [{'id'      : key(?deviceName),
+                                                                         'status'  : ?status}]}]}}
+                                   }  )
+                  )"
+      run))
+
+
+(defn tryme2 []
+  (-> "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}, 'device2': {'id': 200, 'status': 'Ok'}}, 'owner2': {'device3': {'id': 300, 'status': 'Ok'}, 'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'}, 'device6': {'id': 600, 'status': 'Ok'}}, 'owner2': {'device7': {'id': 700, 'status': 'Ok'}, 'device8': {'id': 800, 'status': 'Ok'}}}}}};
+                     $q := query(){ [?s ?systemName ?x]
+                                    [($match(?systemName, /system\\d/))]
+                                    [?x :owners ?y]
+                                    [?y ?ownerName ?z]
+                                    [($match(?ownerName, /owner\\d/))]
+                                    [?z ?deviceName ?d]
+                                    [($match(?deviceName, /device\\d/))]
+                                    [?d :id ?id]
+                                    [?d :status ?status] };
+
+                  $bsets := $q($data);
+
+                  $reduce($bsets,
+                          express()
+                                 {  {'owners':
+                                        {?ownerName:
+                                          {'systems':
+                                             {?systemName:
+                                                {?deviceName : {'id'     : ?id,
+                                                                'status' : ?status}}}}}}
+                                 }
+                         )
+                 )"
+              run))
+
+
+(def good-data
+#:_rm{:ROOT
+      [{:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner2",
+         :id "owner2",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner2|system1", :id "system1", :devices [{:_rm/id--ownerName|systemName|deviceName "owner2|system1|device3", :id "device3", :status "Ok"}]}]}}
+       {:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner2",
+         :id "owner2",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner2|system2", :id "system2", :devices [{:_rm/id--ownerName|systemName|deviceName "owner2|system2|device8", :id "device8", :status "Ok"}]}]}}
+       {:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner2",
+         :id "owner2",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner2|system1", :id "system1", :devices [{:_rm/id--ownerName|systemName|deviceName "owner2|system1|device4", :id "device4", :status "Ok"}]}]}}
+       {:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner1",
+         :id "owner1",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner1|system2", :id "system2", :devices [{:_rm/id--ownerName|systemName|deviceName "owner1|system2|device5", :id "device5", :status "Ok"}]}]}}
+       {:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner2",
+         :id "owner2",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner2|system2", :id "system2", :devices [{:_rm/id--ownerName|systemName|deviceName "owner2|system2|device7", :id "device7", :status "Ok"}]}]}}
+       {:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner1",
+         :id "owner1",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner1|system2", :id "system2", :devices [{:_rm/id--ownerName|systemName|deviceName "owner1|system2|device6", :id "device6", :status "Ok"}]}]}}
+       {:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner1",
+         :id "owner1",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner1|system1", :id "system1", :devices [{:_rm/id--ownerName|systemName|deviceName "owner1|system1|device1", :id "device1", :status "Ok"}]}]}}
+       {:owners
+        {:_rm/id--ownerName|systemName|deviceName "owner1",
+         :id "owner1",
+         :systems [{:_rm/id--ownerName|systemName|deviceName "owner1|system1", :id "system1", :devices [{:_rm/id--ownerName|systemName|deviceName "owner1|system1|device2", :id "device2", :status "Ok"}]}]}}]}

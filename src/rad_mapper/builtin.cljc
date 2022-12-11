@@ -1746,32 +1746,59 @@
   [& {:keys [params options body schema]}]
     (if (empty? params)
       ;; The immediate function:
-      (-> (fn [bset] (evaluate-express-body bset body))
-          ;; schema is not needed for simple evaluation, reduce evaluation.
-          (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))
+      (-> (fn [bset] (evaluate-express-body bset body schema))
+          ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/body for debugging
+          (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema :bi/body body}))
       ;; body has template params that must be replaced; new-body.
       (-> (fn [& psubs]
             (let [new-body (express-sub body (zipmap params psubs))]
-              (-> (fn [bset] (evaluate-express-body bset new-body))
+              (-> (fn [bset] (evaluate-express-body bset new-body schema))
                   (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))))
           (with-meta {:bi/express-template? true}))))
 
-;;; ToDo: NYI: qvars in key positions.
+(defn lookup-Kkey-val
+  "Return the value from the bset which is the fragment of a concatenated key at schema-key.
+   The fragment of that key returned is defined by :_rm/user-key, which is a qvar
+   (because this is Kkey)."
+  [schema schema-key bset]
+  (->> (get schema schema-key)
+       :_rm/user-key
+       (get bset)))
+
+;;; ToDo: what is the type of things referenced at Kkeys? (Get it from bset?)
 (defn evaluate-express-body
   "Walk through the body of the express replacing qvars with their bset values,
    computing concatenated keys (and NYI) evaluating expressions."
-  [bset body]
-  (letfn [(eeb-aux [obj]
-            (cond (map? obj)         (reduce-kv (fn [m k v] (assoc m k (eeb-aux v))) {} obj)
+  [bset body schema]
+  (letfn [(sub-bset [key-exp bset] ; Used for express-keys, which are always in value position. Provides the concatenated key.
+            (->> (map #(get bset %) (rest key-exp))
+                 (map name)
+                 (interpose "|")
+                 (apply str)))
+          (sub-key-bset [key-exp bset] ; Used for express-Kkeys, which are always in key position.
+            (let [qvars (rest key-exp)
+                  schema-key (some (fn [[k entry]] (when (= qvars (:_rm/cat-key entry)) k))
+                                   (seq schema))]
+              {:schema-key schema-key :cat-str (sub-bset key-exp bset)}))
+          (eeb-aux [obj]
+            (cond (map? obj)         (reduce-kv (fn [m k v]
+                                                  (if (qu/key-exp? k) ; Catch Kkeys here.
+                                                    (let [{:keys [schema-key cat-str]} (sub-key-bset k bset)]
+                                                      (cond (map? v)     (-> (eeb-aux v)
+                                                                             (assoc schema-key cat-str)
+                                                                             (assoc :_rm/Kkey (lookup-Kkey-val schema schema-key bset)))
+                                                            (string? v)  (:box/string-val v)
+                                                            (number? v)  (:box/number-val v)
+                                                            (keyword? v) (:box/keyword-val v)
+                                                            (boolean? v) (:box/boolean-val v)))
+                                                    (assoc m k (eeb-aux v))))
+                                                {} obj)
                   (vector? obj)      (mapv eeb-aux obj)
-                  (qu/key-exp? obj)  (->> (map #(get bset %) (rest obj))
-                                          (map name)
-                                          (interpose "|")
-                                          (apply str))
+                  (qu/key-exp? obj)  (sub-bset obj bset)    ; Catch non-Kkey express keys here.
                   (qvar? obj)        (get bset obj)
                   :else              obj))]
-    (let [res (eeb-aux body)]
-      (if *in-reduce?*
+    (let [res (eeb-aux body)] ; ToDo: Why do I go through the trouble of eeb-aux when not *in-reduce?*? Write simple-eval-express-body.
+      (if *in-reduce?*        ;       Or am I missing something? Something about cat keys???
         res
         (cleanup-express res)))))
 
@@ -1785,19 +1812,30 @@
                   :else x))]
     (es-aux form)))
 
+(defn kkey-map?
+  "Return true if the argument is a Kkey map, which is an object for the
+   key/value pair where there is a Kkey (qvar in key position of users's data).
+   The kkey-map contains three keys: :_rm/Kkey, :_rm/:Kval and the key for
+   the concatenated value."
+  [obj]
+  (and (map? obj) (contains? obj :_rm/Kkey) (contains? obj :_rm/Kval)))
+
 (defn cleanup-express
   "Return the evaluated express body with :_rm removed."
   [body]
   (letfn [(ce-aux [obj]
             (cond
-              (map? obj)     (reduce-kv (fn [m k v]
-                                          (if (and (or (keyword? k) (symbol? k))
-                                                   (= "_rm" (namespace k)))
-                                            m
-                                            (assoc m k (ce-aux v)))) {} obj)
+              (kkey-map? obj)  {(:_rm/Kkey obj) (-> obj :_rm/Kval ce-aux)}
+              (map? obj)       (reduce-kv (fn [m k v]
+                                            (if (and (or (keyword? k) (symbol? k))
+                                                     (= "_rm" (namespace k)))
+                                              m
+                                              (assoc m k (ce-aux v))))
+                                          {} obj)
               (vector? obj)  (mapv ce-aux obj)
               :else          obj))]
     (ce-aux body)))
+
 
 (defn reduce-express
   "This function performs $reduce on an express function.
@@ -1815,20 +1853,28 @@
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
    (let [schema (-> efn meta :bi/schema)
-         full-schema (qu/learn-schema-from-bset schema (first b-sets))
+         full-schema #_full-schema  (qu/learn-schema-from-bset schema (first b-sets))
          db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
          data (->> (mapv efn b-sets)
+                   walk/keywordize-keys
                    (assoc {} :_rm/ROOT))
-         zippy (reset! diag {:schema db-schema
-                             :b-sets b-sets})
-         db (qu/db-for! data :known-schema db-schema :learn? false)
-         root-eids (d/q '[:find [?top ...] :where [_ :_rm/ROOT ?top]] @db)]
-      (->> (dp/pull-many @db '[*] root-eids)
+         zippy (reset! diag {:full-schema full-schema
+                             :db-schema db-schema
+                             :data data})
+         db-atm (qu/db-for! data :known-schema db-schema :learn? false)
+         root-eids (d/q '[:find [?top ...] :where [_ :_rm/ROOT ?top]] @db-atm)]
+     (reset! diag {:schema full-schema
+                   :body (-> efn meta :bi/body)
+                   :db-atm db-atm
+                   :root-eids root-eids
+                   :data data
+                   :b-sets b-sets})
+      (->> (dp/pull-many @db-atm '[*] root-eids)
            (map #(dissoc % :db/id))
            (mapcat vals)
            distinct
-           (mapv #(du/resolve-db-id % db #{:db/id}))
-           cleanup-express))))
+           (mapv #(du/resolve-db-id % db-atm #{:db/id}))
+           #_cleanup-express))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
