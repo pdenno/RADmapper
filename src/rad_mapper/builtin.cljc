@@ -1733,7 +1733,24 @@
     (higher-order-query-fn body in pred-args options params)))
 
 ;;;------------------ Express --------------------------------------------
+;;; ToDo: Write a few paragraphs about how express works, particularly
+;;;      (1) the difference  between ordinary operation and *id-reduce?* reduce-db,
+;;;      (2) the use of :db.unique/identity for 'assoc-in-like' mapping over bodies instantiated by bsets.
+;;;      (3) the differences in how the two key positions are handled (express keys vs. qvar in key position).
+;;;      (4) the avoidance of constant keys in the DB and :_rm/constant-parent (RENAME IT LIKE THIS???)
 (declare evaluate-express-body express-sub cleanup-express)
+
+(def force-body
+  '#:_rm{:?ownerName--ownerName (:rm/express-Kkey ?ownerName),
+         :parent-constant "owners" ; This doesn't need to be in the schema!
+         :user-key ?ownerName,
+         :Kkey-val
+         #:_rm{:?systemName--ownerName|systemName (:rm/express-Kkey ?ownerName ?systemName),
+               :parent-constant "systems" ; This doesn't need to be in the schema!
+               :user-key ?systemName,
+               :Kkey-val #:_rm{:?deviceName--ownerName|systemName|deviceName (:rm/express-Kkey ?ownerName ?systemName ?deviceName),
+                               :user-key ?deviceName,
+                               :Kkey-val {"id" ?id, "status" ?status}}}})
 
 (defn express
   "Return an function that either
@@ -1746,9 +1763,10 @@
   [& {:keys [params options body schema]}]
     (if (empty? params)
       ;; The immediate function:
-      (-> (fn [bset] (evaluate-express-body bset body schema))
-          ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/body for debugging
-          (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema :bi/body body}))
+      (let [body force-body]
+        (-> (fn [bset] (evaluate-express-body bset body schema))
+            ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/body for debugging
+            (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema :bi/body body})))
       ;; body has template params that must be replaced; new-body.
       (-> (fn [& psubs]
             (let [new-body (express-sub body (zipmap params psubs))]
@@ -1765,11 +1783,30 @@
        :_rm/user-key
        (get bset)))
 
-;;; ToDo: what is the type of things referenced at Kkeys? (Get it from bset?)
+;;; ToDo: This is only needed for *in-reduce?* and the final construction is needed
+;;;       both post-db reduce and as last step of evaluate-express-body when *in-reduce?* = false.
+(defn remove-parent-constants
+  "Argument is an instantiated express body; remove  :_rm/parent-constant from it everywhere.
+
+   Background: :_rm/parent-constant represents  constant key in the user's express body.
+   (e.g. {'systems' : ....})
+   Such keys are problematic to the design of the reduce DB.
+   Therefore, we rewrite the body to hide such keys if *in-reduce?* = true.
+    We put them back in after resolved :_rm/ROOT."
+  [body]
+  (letfn [(rpc [obj]
+            (cond (map? obj)     (reduce-kv (fn [m k v] (if (= k :_rm/parent-constant) m (assoc m k (rpc v)))) {} obj)
+                  (vector? obj)  (mapv rpc obj)
+                  :else obj))]
+    (rpc body)))
+
+;;; ToDo: Shat is the type of things referenced at Kkeys? (Get it from bset?)
+;;; ToDo: How much of this is relevant only to *in-reduce?*.
 (defn evaluate-express-body
   "Walk through the body of the express replacing qvars with their bset values,
    computing concatenated keys (and NYI) evaluating expressions."
   [bset body schema]
+  (reset! diag {:body body})
   (letfn [(sub-bset [key-exp bset] ; Used for express-keys, which are always in value position. Provides the concatenated key.
             (->> (map #(get bset %) (rest key-exp))
                  (map name)
@@ -1799,7 +1836,7 @@
                   :else              obj))]
     (let [res (eeb-aux body)] ; ToDo: Why do I go through the trouble of eeb-aux when not *in-reduce?*? Write simple-eval-express-body.
       (if *in-reduce?*        ;       Or am I missing something? Something about cat keys???
-        res
+        (remove-parent-constants res)
         (cleanup-express res)))))
 
 (defn express-sub
@@ -1836,6 +1873,35 @@
               :else          obj))]
     (ce-aux body)))
 
+(def full-schema
+  '{:_rm/ROOT #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
+    :box/keyword-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/keyword},
+    ;:systems {:_rm/self :systems, :db/valueType :db.type/ref, :db/cardinality :db.cardinality/one}, ; was one
+    :_rm/user-key #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
+    :box/string-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
+    :owners {:_rm/self :owners, :db/valueType :db.type/ref, :db/cardinality :db.cardinality/one},
+    :deviceName {:_rm/self :deviceName, :_rm/qvar ?deviceName, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
+    :box/boolean-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/boolean},
+    :_rm/?deviceName--ownerName|systemName|deviceName
+    {:db/cardinality :db.cardinality/one,
+     :db/valueType :db.type/string,
+     :db/unique :db.unique/identity,
+     :_rm/cat-key (?ownerName ?systemName ?deviceName),
+     :_rm/self :_rm/?deviceName--ownerName|systemName|deviceName,
+     :_rm/user-key ?deviceName},
+    :_rm/?ownerName--ownerName
+    {:db/cardinality :db.cardinality/one, :db/valueType :db.type/string, :db/unique :db.unique/identity,
+     :_rm/cat-key (?ownerName), :_rm/self :_rm/?ownerName--ownerName, :_rm/user-key ?ownerName},
+    :ownerName {:_rm/self :ownerName, :_rm/qvar ?ownerName, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
+    :status {:_rm/self :status, :_rm/qvar ?status, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
+    :id {:_rm/self :id, :_rm/qvar ?id, :db/valueType :db.type/number, :db/cardinality :db.cardinality/one},
+    :box/number-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/number},
+    :systemName {:_rm/self :systemName, :_rm/qvar ?systemName, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
+    :_rm/?systemName--ownerName|systemName
+    {:db/cardinality :db.cardinality/one, :db/valueType :db.type/string, :db/unique :db.unique/identity,
+     :_rm/cat-key (?ownerName ?systemName), :_rm/self :_rm/?systemName--ownerName|systemName, :_rm/user-key ?systemName},
+    :_rm/Kkey-val #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref}}) ; was one
+
 
 (defn reduce-express
   "This function performs $reduce on an express function.
@@ -1853,27 +1919,25 @@
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
    (let [schema (-> efn meta :bi/schema)
-         full-schema #_full-schema  (qu/learn-schema-from-bset schema (first b-sets))
+         full-schema full-schema  #_(qu/learn-schema-from-bset schema (first b-sets))
          db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
          data (->> (mapv efn b-sets)
                    walk/keywordize-keys
                    (assoc {} :_rm/ROOT))
          zippy (reset! diag {:full-schema full-schema
+                             :body (-> efn meta :bi/body)
                              :db-schema db-schema
                              :data data})
          db-atm (qu/db-for! data :known-schema db-schema :learn? false)
-         root-eids (d/q '[:find [?top ...] :where [_ :_rm/ROOT ?top]] @db-atm)]
+         root-eid (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)]
      (reset! diag {:schema full-schema
                    :body (-> efn meta :bi/body)
                    :db-atm db-atm
-                   :root-eids root-eids
+                   :root-eids root-eid
                    :data data
                    :b-sets b-sets})
-      (->> (dp/pull-many @db-atm '[*] root-eids)
-           (map #(dissoc % :db/id))
-           (mapcat vals)
-           distinct
-           (mapv #(du/resolve-db-id % db-atm #{:db/id}))
+     (->> (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})
+          ;<====================================== NEXT construct result using body (attention to parent-constant user-key)
            #_cleanup-express))))
 
 ;;;---- not express ------------

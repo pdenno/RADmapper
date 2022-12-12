@@ -171,7 +171,7 @@
         schema   (qu/learn-schema-from-express body-pre)]
     `(~'bi/express {:params  '~(remove map? params)
                     :options '~(some #(when (map? %) %) params)
-                    :body    '~(qu/rewrite-express-catkeys body-pre schema)
+                    :body    '~(qu/add-catkey-slots body-pre schema)
                     :schema  '~schema})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.

@@ -138,20 +138,28 @@
                     :else obj))]
       (rew-keys body))))
 
-(defn rewrite-express-catkeys
-  "Rewrite an express body by inserting :_rm/whatever attributes required for reducing over it."
+(defn add-catkey-slots
+  "Rewrite an express body by inserting :_rm/whatever attributes required for reducing over the body."
   [body schema]
   (let [new-keys (reduce-kv (fn [m k v] (if (contains? v :_rm/user-key) (assoc m k v) m)) {} schema)]
     (letfn [(rew4ckeys [obj]
-              (cond (map? obj)     (reduce-kv (fn [m k v]
-                                                (if-let [info (some (fn [[_ iv]] (when (= k (:_rm/user-key iv)) iv))
-                                                                    (seq new-keys))]
-                                                  (-> m
-                                                      (assoc (:_rm/self info) v)
-                                                      (assoc (:_rm/user-key info) (last v)))
-                                                  (assoc m k (rew4ckeys v))))
-                                              {}
-                                              obj)
+              (cond (map? obj)
+                    (reduce-kv (fn [m k v]
+                                 (if (or (key-exp? k) (key-exp? v))
+                                   (let [qvars (if (key-exp? v) (rest v) (rest k))
+                                         info (some (fn [s] (when (= qvars (:_rm/cat-key s)) s))
+                                                    (vals new-keys))]
+                                     (if (key-exp? v) ; ordinary express-key
+                                       (-> m
+                                           (assoc (:_rm/self info) v)  ; the concat key slot, keeps the e-key form.
+                                           (assoc k (last v)))         ; the ordinary slot, just the final qvar of the e-key form.
+                                       (-> m          ; express-Kkey
+                                           (assoc (:_rm/self info) k)                 ; the concat kdy slot, keeps the e-key form.
+                                           (assoc :_rm/user-key (:_rm/user-key info)) ; the user's key in key position for final restruct.
+                                           (assoc :_rm/Kkey-val (rew4ckeys v)))))                 ; go deeper.
+                                   (assoc m k (rew4ckeys v)))) ; ordinary slot, go deeper.
+                               {}
+                               obj)
                     (vector? obj)  (mapv rew4ckeys obj)
                     :else          obj))]
       (rew4ckeys body))))
@@ -168,9 +176,7 @@
                                    "--"
                                    (interpose "|" (map #(string/replace (name %) "?" "") (rest ref-val)))))]
     (as-> {} ?s
-      (if k-key?
-        (assoc-in ?s [db-ident :db/cardinality] :db.cardinality/one) ; <============================= It is unique, thus one!
-        (assoc-in ?s [db-ident :db/cardinality] :db.cardinality/one))
+      (assoc-in ?s [db-ident :db/cardinality] :db.cardinality/one)
       (assoc-in ?s [db-ident :db/valueType] :db.type/string)
       (assoc-in ?s [db-ident :db/unique] :db.unique/identity)
       (assoc-in ?s [db-ident :_rm/cat-key] (rest ref-val))
@@ -183,13 +189,13 @@
       1) add entities for (:rm/express-key ?some-qvar). These concatenate keys that are on the same path, and
       2) define new schema entries that will have :db.unique/identity that will get concatenated key values from the bset."
   [body]
-  (let [schema (atom {:_rm/ROOT {:db/valueType :db.type/ref    :db/cardinality :db.cardinality/many}
-                      :_rm/Kkey {:db/valueType :db.type/string :db/cardinality :db.cardinality/one}
-                      :_rm/Kval {:db/valueType :db.type/ref    :db/cardinality :db.cardinality/one}
-                      :box/boolean-val {:db/cardinality :db.cardinality/one :db/valueType :db.type/boolean}
-                      :box/keyword-val {:db/cardinality :db.cardinality/one :db/valueType :db.type/keyword}
-                      :box/number-val  {:db/cardinality :db.cardinality/one :db/valueType :db.type/number}
-                      :box/string-val  {:db/cardinality :db.cardinality/one :db/valueType :db.type/string}})]
+  (let [schema (atom {:_rm/ROOT        {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+                      :_rm/Kkey-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/ref} ; Will be boxed, if necessary.
+                      :_rm/user-key    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string }
+                      :box/boolean-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
+                      :box/keyword-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
+                      :box/number-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
+                      :box/string-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})]
     (letfn [(lsfe-aux [obj]
               (cond (map? obj)
                       (doseq [[k v] obj]
