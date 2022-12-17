@@ -1740,18 +1740,6 @@
 ;;;      (4) the avoidance of constant keys in the DB and :_rm/constant-parent (RENAME IT LIKE THIS???)
 (declare evaluate-express-body express-sub cleanup-express)
 
-(def force-body
-  '#:_rm{:?ownerName--ownerName (:rm/express-Kkey ?ownerName),
-         :parent-constant "owners" ; This doesn't need to be in the schema!
-         :user-key ?ownerName,
-         :Kkey-val
-         #:_rm{:?systemName--ownerName|systemName (:rm/express-Kkey ?ownerName ?systemName),
-               :parent-constant "systems" ; This doesn't need to be in the schema!
-               :user-key ?systemName,
-               :Kkey-val #:_rm{:?deviceName--ownerName|systemName|deviceName (:rm/express-Kkey ?ownerName ?systemName ?deviceName),
-                               :user-key ?deviceName,
-                               :Kkey-val {"id" ?id, "status" ?status}}}})
-
 (defn express
   "Return an function that either
     (1) has no template variable and can be used directly with a binding set, or
@@ -1760,84 +1748,39 @@
         be used with binding sets.
      The function returned has meta {express? true} so that, for example, $reduce
      knows that there should be a database involved."
-  [& {:keys [params options body schema]}]
+  [& {:keys [params options base-body reduce-body schema]}]
     (if (empty? params)
       ;; The immediate function:
-      (let [body force-body]
-        (-> (fn [bset] (evaluate-express-body bset body schema))
-            ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/body for debugging
-            (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema :bi/body body})))
-      ;; body has template params that must be replaced; new-body.
-      (-> (fn [& psubs]
-            (let [new-body (express-sub body (zipmap params psubs))]
-              (-> (fn [bset] (evaluate-express-body bset new-body schema))
-                  (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))))
-          (with-meta {:bi/express-template? true}))))
+        (-> (fn [bset] (evaluate-express-body bset base-body reduce-body))
+            ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/reduce-body for debugging.
+            (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
+                        :bi/base-body base-body :bi/reduce-body reduce-body}))
+        ;; body has template params that must be replaced; new-body.
+        (-> (fn [& psubs]
+              (let [new-base-body   (express-sub base-body   (zipmap params psubs))
+                    new-reduce-body (express-sub reduce-body (zipmap params psubs))]
+                (-> (fn [bset] (evaluate-express-body bset new-base-body new-reduce-body))
+                    (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))))
+            (with-meta {:bi/express-template? true}))))
 
-(defn lookup-Kkey-val
-  "Return the value from the bset which is the fragment of a concatenated key at schema-key.
-   The fragment of that key returned is defined by :_rm/user-key, which is a qvar
-   (because this is Kkey)."
-  [schema schema-key bset]
-  (->> (get schema schema-key)
-       :_rm/user-key
-       (get bset)))
-
-;;; ToDo: This is only needed for *in-reduce?* and the final construction is needed
-;;;       both post-db reduce and as last step of evaluate-express-body when *in-reduce?* = false.
-(defn remove-parent-constants
-  "Argument is an instantiated express body; remove  :_rm/parent-constant from it everywhere.
-
-   Background: :_rm/parent-constant represents  constant key in the user's express body.
-   (e.g. {'systems' : ....})
-   Such keys are problematic to the design of the reduce DB.
-   Therefore, we rewrite the body to hide such keys if *in-reduce?* = true.
-    We put them back in after resolved :_rm/ROOT."
-  [body]
-  (letfn [(rpc [obj]
-            (cond (map? obj)     (reduce-kv (fn [m k v] (if (= k :_rm/parent-constant) m (assoc m k (rpc v)))) {} obj)
-                  (vector? obj)  (mapv rpc obj)
-                  :else obj))]
-    (rpc body)))
-
-;;; ToDo: Shat is the type of things referenced at Kkeys? (Get it from bset?)
-;;; ToDo: How much of this is relevant only to *in-reduce?*.
 (defn evaluate-express-body
   "Walk through the body of the express replacing qvars with their bset values,
    computing concatenated keys (and NYI) evaluating expressions."
-  [bset body schema]
-  (reset! diag {:body body})
-  (letfn [(sub-bset [key-exp bset] ; Used for express-keys, which are always in value position. Provides the concatenated key.
-            (->> (map #(get bset %) (rest key-exp))
+  [bset base-body reduce-body]
+  (letfn [(sub-bset [key-exp bset] ; Generate a value for a :rm/express-key expression.
+            (->> (map #(if (qvar? %) (get bset %) %) (rest key-exp)) ; There can be constants in catkey.
                  (map name)
                  (interpose "|")
                  (apply str)))
-          (sub-key-bset [key-exp bset] ; Used for express-Kkeys, which are always in key position.
-            (let [qvars (rest key-exp)
-                  schema-key (some (fn [[k entry]] (when (= qvars (:_rm/cat-key entry)) k))
-                                   (seq schema))]
-              {:schema-key schema-key :cat-str (sub-bset key-exp bset)}))
           (eeb-aux [obj]
-            (cond (map? obj)         (reduce-kv (fn [m k v]
-                                                  (if (qu/key-exp? k) ; Catch Kkeys here.
-                                                    (let [{:keys [schema-key cat-str]} (sub-key-bset k bset)]
-                                                      (cond (map? v)     (-> (eeb-aux v)
-                                                                             (assoc schema-key cat-str)
-                                                                             (assoc :_rm/Kkey (lookup-Kkey-val schema schema-key bset)))
-                                                            (string? v)  (:box/string-val v)
-                                                            (number? v)  (:box/number-val v)
-                                                            (keyword? v) (:box/keyword-val v)
-                                                            (boolean? v) (:box/boolean-val v)))
-                                                    (assoc m k (eeb-aux v))))
-                                                {} obj)
+            (cond (map? obj)         (reduce-kv (fn [m k v] (assoc m k (eeb-aux v))) {} obj)
                   (vector? obj)      (mapv eeb-aux obj)
-                  (qu/key-exp? obj)  (sub-bset obj bset)    ; Catch non-Kkey express keys here.
+                  (qu/key-exp? obj)  (sub-bset obj bset)
                   (qvar? obj)        (get bset obj)
                   :else              obj))]
-    (let [res (eeb-aux body)] ; ToDo: Why do I go through the trouble of eeb-aux when not *in-reduce?*? Write simple-eval-express-body.
-      (if *in-reduce?*        ;       Or am I missing something? Something about cat keys???
-        (remove-parent-constants res)
-        (cleanup-express res)))))
+      (if *in-reduce?*        ; Or am I missing something? Something about cat keys???
+        (eeb-aux reduce-body)
+        (eeb-aux base-body))))
 
 (defn express-sub
   "Walk through form replacing template parameters in sub-map with their values."
@@ -1849,59 +1792,29 @@
                   :else x))]
     (es-aux form)))
 
-(defn kkey-map?
-  "Return true if the argument is a Kkey map, which is an object for the
-   key/value pair where there is a Kkey (qvar in key position of users's data).
-   The kkey-map contains three keys: :_rm/Kkey, :_rm/:Kval and the key for
-   the concatenated value."
-  [obj]
-  (and (map? obj) (contains? obj :_rm/Kkey) (contains? obj :_rm/Kval)))
+(defn redex-keys-values
+  "For each map that has a :_rm/user-key and :_rm/Kkey-val,
+   replace the map with a map that has those that key and value."
+  [body]
+  (letfn [(rkv [obj]
+            (cond (and (map? obj)
+                       (contains? obj :_rm/user-key)
+                       (contains? obj :_rm/val))         {(:_rm/user-key obj) (-> obj :_rm/val rkv)}
+                  (map? obj)                             (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)
+                  (vector? obj)                          (mapv rkv obj)
+                  :else                                  obj))]
+    (rkv body)))
 
 (defn cleanup-express
   "Return the evaluated express body with :_rm removed."
   [body]
-  (letfn [(ce-aux [obj]
-            (cond
-              (kkey-map? obj)  {(:_rm/Kkey obj) (-> obj :_rm/Kval ce-aux)}
-              (map? obj)       (reduce-kv (fn [m k v]
-                                            (if (and (or (keyword? k) (symbol? k))
-                                                     (= "_rm" (namespace k)))
-                                              m
-                                              (assoc m k (ce-aux v))))
-                                          {} obj)
-              (vector? obj)  (mapv ce-aux obj)
-              :else          obj))]
-    (ce-aux body)))
+  (-> body
+      redex-keys-values))
 
-(def full-schema
-  '{:_rm/ROOT #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
-    :box/keyword-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/keyword},
-    ;:systems {:_rm/self :systems, :db/valueType :db.type/ref, :db/cardinality :db.cardinality/one}, ; was one
-    :_rm/user-key #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
-    :box/string-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
-    :owners {:_rm/self :owners, :db/valueType :db.type/ref, :db/cardinality :db.cardinality/one},
-    :deviceName {:_rm/self :deviceName, :_rm/qvar ?deviceName, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
-    :box/boolean-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/boolean},
-    :_rm/?deviceName--ownerName|systemName|deviceName
-    {:db/cardinality :db.cardinality/one,
-     :db/valueType :db.type/string,
-     :db/unique :db.unique/identity,
-     :_rm/cat-key (?ownerName ?systemName ?deviceName),
-     :_rm/self :_rm/?deviceName--ownerName|systemName|deviceName,
-     :_rm/user-key ?deviceName},
-    :_rm/?ownerName--ownerName
-    {:db/cardinality :db.cardinality/one, :db/valueType :db.type/string, :db/unique :db.unique/identity,
-     :_rm/cat-key (?ownerName), :_rm/self :_rm/?ownerName--ownerName, :_rm/user-key ?ownerName},
-    :ownerName {:_rm/self :ownerName, :_rm/qvar ?ownerName, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
-    :status {:_rm/self :status, :_rm/qvar ?status, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
-    :id {:_rm/self :id, :_rm/qvar ?id, :db/valueType :db.type/number, :db/cardinality :db.cardinality/one},
-    :box/number-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/number},
-    :systemName {:_rm/self :systemName, :_rm/qvar ?systemName, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one},
-    :_rm/?systemName--ownerName|systemName
-    {:db/cardinality :db.cardinality/one, :db/valueType :db.type/string, :db/unique :db.unique/identity,
-     :_rm/cat-key (?ownerName ?systemName), :_rm/self :_rm/?systemName--ownerName|systemName, :_rm/user-key ?systemName},
-    :_rm/Kkey-val #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref}}) ; was one
-
+(defn merge-schema
+  "Merge values (maps) at keys that are :db.ident."
+  [schema updates]
+  (reduce-kv (fn [m k v] (assoc m k (merge (get m k) v))) schema updates))
 
 (defn reduce-express
   "This function performs $reduce on an express function.
@@ -1918,27 +1831,28 @@
    (Again, that's what we mean by reduce on an express body.)"
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
-   (let [schema (-> efn meta :bi/schema)
-         full-schema full-schema  #_(qu/learn-schema-from-bset schema (first b-sets))
-         db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
-         data (->> (mapv efn b-sets)
+   (let [data (->> (mapv efn b-sets)
                    walk/keywordize-keys
                    (assoc {} :_rm/ROOT))
-         zippy (reset! diag {:full-schema full-schema
-                             :body (-> efn meta :bi/body)
+         schema (merge qu/support-schema (-> efn meta :bi/schema))
+         full-schema schema #_(merge-schema schema (qu/schema-updates-from-data schema (-> data :_rm/ROOT first)))
+         db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
+         zippy (reset! diag {:schema full-schema
+                             :reduce-body (-> efn meta :bi/reduce-body)
                              :db-schema db-schema
+                             :b-sets b-sets
                              :data data})
          db-atm (qu/db-for! data :known-schema db-schema :learn? false)
          root-eid (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)]
      (reset! diag {:schema full-schema
-                   :body (-> efn meta :bi/body)
+                   :reduce-body (-> efn meta :bi/reduce-body)
+                   :base-body (-> efn meta :bi/base-body)
                    :db-atm db-atm
                    :root-eids root-eid
                    :data data
                    :b-sets b-sets})
      (->> (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})
-          ;<====================================== NEXT construct result using body (attention to parent-constant user-key)
-           #_cleanup-express))))
+          cleanup-express))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

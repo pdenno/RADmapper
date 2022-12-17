@@ -161,18 +161,14 @@
       (re-pattern (cl-format nil "(?~A)~A" flag-str body)))))
 
 (defrewrite :ExpressDef [m]
-  (let [params (-> m :params rewrite)
-        body-pre (binding [*inside-express?* true]
-                   (-> m
-                       :body
-                       rewrite
-                       qu/rew-key-keys
-                       qu/rewrite-express-keys))
-        schema   (qu/learn-schema-from-express body-pre)]
-    `(~'bi/express {:params  '~(remove map? params)
-                    :options '~(some #(when (map? %) %) params)
-                    :body    '~(qu/add-catkey-slots body-pre schema)
-                    :schema  '~schema})))
+  (let [params    (-> m :params rewrite)
+        base-body (binding [*inside-express?* true] (-> m :body rewrite))
+        {:keys [body schema]}  (qu/schematic-express-body base-body)]
+    `(~'bi/express {:params      '~(remove map? params)
+                    :options     '~(some #(when (map? %) %) params)
+                    :base-body   '~base-body
+                    :reduce-body '~body
+                    :schema      '~schema})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below they are interleaved.

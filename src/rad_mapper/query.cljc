@@ -96,23 +96,102 @@
 (defn qvar? [obj] (and (symbol? obj) (starts-with? (name obj) "?")))
 
 (defn key-exp?
-  "Return true when the argument looks like (bi/express-key ?some-qvar)."
+  "Return true when the argument looks like (:rm/express-key ?some-qvar)."
   [obj]
   (and (seq? obj)
-       (let [[exp-key qvar] obj]
-         (and (#{:rm/express-key :rm/express-Kkey} exp-key)
-              (qvar? qvar)))))
+       (let [[exp-key & args] obj]
+         (and (= :rm/express-key exp-key)
+              (every? #(or (qvar? %) (string? %)) args)))))
 
-(defn rew-key-keys
-  "Called in rewrite.
-   Wrap qvar in key positions in (:rm/express-key-key <the-qvar>)."
-  [obj]
-  (cond (map? obj)        (reduce-kv (fn [m k v] (if (qvar? k)
-                                                   (assoc m `(:rm/express-Kkey ~k) (rew-key-keys v))
-                                                   (assoc m k (rew-key-keys v))))
-                                     {} obj)
-        (vector? obj)     (mapv rew-key-keys obj)
-        :else             obj))
+(defn schema-ident
+  "Return a schema key for the argument stack of key representing
+   the nesting of a value in the express body."
+  [user-key all-keys]
+  (keyword "_rm"
+           (apply str
+                  (string/replace user-key "/" "*")
+                  (if (empty? all-keys) "" "--")
+                  (interpose "|" (map #(-> % str (string/replace "/" "*")) all-keys)))))
+
+(defn key-schema
+  "Define schema information for a user key (constant string or qvar doesn't matter)."
+  [ident k all-keys]
+  {:db/cardinality :db.cardinality/one,
+   :db/valueType :db.type/string,
+   :db/unique :db.unique/identity,
+   :_rm/cat-key all-keys,
+   :_rm/self ident
+   :_rm/user-key (str k)})
+
+(defn exp-key-schema
+  "Define schema information for the key that has as a value an express key.
+   For example owner/id in 'owner/id' : key(?ownerName)"
+  [ident k]
+  {:db/cardinality :db.cardinality/one,
+   :db/valueType :db.type/string, ; Might be overwritten by b-set knowledge.
+   :_rm/self ident
+   :_rm/user-key k})
+
+(defn user-key
+  "Return a keyword for a user-defined key. If the argument is a string, it could have a / in it.
+   In which case, it is treated as namespaced."
+  [s]
+  (if-let [[_ nspace nam] (re-matches #"(.*)/(.*)" (str s))]
+    (keyword nspace (string/replace (str nam) "/" "*"))
+    (keyword s)))
+
+;;; This one, where express-keys are implied by qvar is simpler to process.
+;;;              {'owners':
+;;;                 {?ownerName:
+;;;                    {'systems':
+;;;                       {?systemName:
+;;;                          {?deviceName : {'id'     : ?id,
+;;;                                          'status' : ?status}}}}
+
+;;; Here you have to essentially make it look like the above plus keep extras like 'owner/id' and 'device/id'.
+;;;              {'owners': {'owner/id'     : key(?ownerName),
+;;;                          'systems'      : [{'system/id'  : key(?systemName),
+;;;                                             'devices'    : [{'device/id' : key(?deviceName),
+;;;                                                              'status'    : ?status}]}]}}
+(defn schematic-express-body
+  "Return a map containing a schema describing the argument express body and
+   the body rewritten to use that schema. The schema will have to be augmented
+   by :db/valueType information and some b-set data will have to be boxed because
+   the values of keys is always a :db.value/ref.
+   Express keys can only appear in value position of a map.
+   Keys (qvar or constant) are always treated things with :_rm/Kkey-val."
+  [body]
+  (let [key-stack (atom []) ; ToDo: currently not popping stack.
+        schema (atom {})]
+    (letfn [(rb [obj] ; Here there is an express-key in a map value.
+              (if-let [{:keys [key-key key-val]} (and (map? obj)
+                                                      (some  (fn [[k v]] (when (key-exp? v)
+                                                                           {:key-key k :key-val (second v)}))
+                                                             (seq obj)))]
+                (let [ident (schema-ident key-val @key-stack)]
+                  (swap! key-stack conj key-val)
+                  (swap! schema #(assoc % ident (key-schema ident key-key @key-stack)))
+                  (swap! schema #(assoc % (user-key key-key) (exp-key-schema (user-key key-key) key-key)))
+                  (-> {}
+                      (assoc (keyword key-key) key-val)
+                      (assoc ident `(:rm/express-key ~@(deref key-stack)))
+                      (assoc :_rm/val (rb (dissoc obj key-key))))) ; Rest of map is under the :_rm/val
+                (cond (map? obj)            (reduce-kv (fn [m k v] ; Each key is treated
+                                                         (swap! key-stack conj k)
+                                                         (let [ident (schema-ident k @key-stack)
+                                                               res (-> m
+                                                                       (assoc ident `(:rm/express-key ~@(deref key-stack)))
+                                                                       (assoc :_rm/user-key k)
+                                                                       (assoc :_rm/val (rb v)))]
+                                                           (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
+                                                           (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
+                                                           res))
+                                                       {}
+                                                       obj)
+                     (vector? obj)          (mapv rb obj)
+                     :else                  obj)))]
+      {:body (rb body)
+       :schema @schema})))
 
 ;;; ToDo: Check that there is at most one key at each map level. (filter instead of some).
 (defn rewrite-express-keys
@@ -129,7 +208,7 @@
                                                       (if (key-exp? v)
                                                         (assoc m k `(:rm/express-key ~@(deref ekeys)))
                                                         (if (key-exp? k)
-                                                          (assoc m `(:rm/express-Kkey ~@(deref ekeys)) (rew-keys v))
+                                                          (assoc m `(:rm/express-key ~@(deref ekeys)) (rew-keys v))
                                                           (assoc m k (rew-keys v)))))
                                                     {} obj))]
                           (swap! ekeys #(-> % rest vec)) ; Pop the key when you've finished the map.
@@ -138,94 +217,32 @@
                     :else obj))]
       (rew-keys body))))
 
-(defn add-catkey-slots
-  "Rewrite an express body by inserting :_rm/whatever attributes required for reducing over the body."
-  [body schema]
-  (let [new-keys (reduce-kv (fn [m k v] (if (contains? v :_rm/user-key) (assoc m k v) m)) {} schema)]
-    (letfn [(rew4ckeys [obj]
-              (cond (map? obj)
-                    (reduce-kv (fn [m k v]
-                                 (if (or (key-exp? k) (key-exp? v))
-                                   (let [qvars (if (key-exp? v) (rest v) (rest k))
-                                         info (some (fn [s] (when (= qvars (:_rm/cat-key s)) s))
-                                                    (vals new-keys))]
-                                     (if (key-exp? v) ; ordinary express-key
-                                       (-> m
-                                           (assoc (:_rm/self info) v)  ; the concat key slot, keeps the e-key form.
-                                           (assoc k (last v)))         ; the ordinary slot, just the final qvar of the e-key form.
-                                       (-> m          ; express-Kkey
-                                           (assoc (:_rm/self info) k)                 ; the concat kdy slot, keeps the e-key form.
-                                           (assoc :_rm/user-key (:_rm/user-key info)) ; the user's key in key position for final restruct.
-                                           (assoc :_rm/Kkey-val (rew4ckeys v)))))                 ; go deeper.
-                                   (assoc m k (rew4ckeys v)))) ; ordinary slot, go deeper.
-                               {}
-                               obj)
-                    (vector? obj)  (mapv rew4ckeys obj)
-                    :else          obj))]
-      (rew4ckeys body))))
+(def support-schema
+  "These are added to the schema when reducing on express-body."
+  {:_rm/ROOT        {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/val         {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/user-key    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string }
+   :box/boolean-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
+   :box/keyword-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
+   :box/number-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
+   :box/string-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})
 
-(defn express-key-schema
-  "Return schema information for an express-key or express-Kkey."
-  [k v]
-  (let [k-key?   (key-exp? k)
-        user-key (if k-key? (last k) k) ; user-key is a string if express-key and qvar if express-Kkey.
-        ref-val  (if k-key? k v)
-        db-ident (keyword "_rm"
-                            (apply str
-                                   (string/replace user-key "/" "*")
-                                   "--"
-                                   (interpose "|" (map #(string/replace (name %) "?" "") (rest ref-val)))))]
-    (as-> {} ?s
-      (assoc-in ?s [db-ident :db/cardinality] :db.cardinality/one)
-      (assoc-in ?s [db-ident :db/valueType] :db.type/string)
-      (assoc-in ?s [db-ident :db/unique] :db.unique/identity)
-      (assoc-in ?s [db-ident :_rm/cat-key] (rest ref-val))
-      (assoc-in ?s [db-ident :_rm/self] db-ident)
-      (assoc-in ?s [db-ident :_rm/user-key] user-key))))
-
-(defn learn-schema-from-express
-  "Create schema object by studying the body.
-   In addition to simply learning :db.cardinality, which is apparent by use of vector syntax,
-      1) add entities for (:rm/express-key ?some-qvar). These concatenate keys that are on the same path, and
-      2) define new schema entries that will have :db.unique/identity that will get concatenated key values from the bset."
-  [body]
-  (let [schema (atom {:_rm/ROOT        {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
-                      :_rm/Kkey-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/ref} ; Will be boxed, if necessary.
-                      :_rm/user-key    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string }
-                      :box/boolean-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
-                      :box/keyword-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
-                      :box/number-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
-                      :box/string-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})]
-    (letfn [(lsfe-aux [obj]
-              (cond (map? obj)
-                      (doseq [[k v] obj]
-                        (let [db-ident (if (key-exp? k) (-> k last str (subs 1) keyword) (keyword k))
-                              typ (db-type-of v)]
-                          (swap! schema #(assoc-in % [db-ident :_rm/self] db-ident))
-                          (when (qvar? v)
-                            (swap! schema #(assoc-in % [db-ident :_rm/qvar] v)))
-                          (when (key-exp? k)
-                            (swap! schema #(assoc-in % [db-ident :_rm/qvar] (last k))) ; ToDo: Not sure I need this one.
-                            (swap! schema #(merge % (express-key-schema k v))))
-                          (cond typ         (do (swap! schema #(assoc-in % [db-ident :db/valueType] typ))
-                                                (swap! schema #(assoc-in % [db-ident :db/cardinality] :db.cardinality/one))
-                                                (when (= :db.type/ref typ) (lsfe-aux v))),
-                                (vector? v) (let [typ (db-type-of (first v))]
-                                              (when-not typ (throw (ex-info "Invalid express structure" {:obj v})))
-                                              (swap! schema #(assoc-in % [db-ident :db/valueType] typ))
-                                              (swap! schema #(assoc-in % [db-ident :db/cardinality] :db.cardinality/many))
-                                              (doall (map lsfe-aux v)))
-                                (seq? v)    (when (key-exp? v) ; ToDo: otherwise learn-schema-from-bset.
-                                              (swap! schema #(merge % (express-key-schema k v)))
-                                              (swap! schema #(assoc-in % [db-ident :_rm/qvar] (last v)))
-                                              (swap! schema #(assoc-in % [db-ident :db/cardinality] :db.cardinality/one)))))
-                        (lsfe-aux v)),
-                    (vector? obj) (doall (map lsfe-aux obj))))]
-      (lsfe-aux body)
-      @schema)))
+(defn schema-updates-from-data
+  "Return a map of :db/valueTypes by studying the data and schema."
+  [schema data]
+  (let [new-info (atom {})]
+    (letfn [(supdate [obj]
+              (cond (map? obj)        (doseq [[k v] (seq obj)]
+                                             (when (contains? schema k)
+                                               (when-let [typ (db-type-of v)]
+                                                 (swap! new-info #(assoc-in % [k :db/valueType] typ))))
+                                             (supdate v))
+                    (vector? obj)     (doall (map supdate obj))))]
+      (supdate data)
+      @new-info)))
 
 ;;; ToDo: Do I care that I'm only looking at one bset?
-(defn learn-schema-from-bset
+#_(defn learn-schema-from-bset
   "Update the schema with :db/valueType from an example bset."
   [known-schema bset]
   (let [schema (atom known-schema)]
@@ -234,7 +251,7 @@
       (when-let [skey (some #(let [[skey smap] %] (when (= qvar (:_rm/qvar smap)) skey)) @schema)]
         (when-let [typ (db-type-of bval)]
           (swap! schema #(assoc-in % [skey :db/valueType] typ))
-          (swap! schema #(assoc-in % [skey :db/cardinality] :db.cardinality/one)))))
+          #_(swap! schema #(assoc-in % [skey :db/cardinality] :db.cardinality/one)))))
     @schema))
 
 ;;; BTW, I can make a trivial DB on my laptop using this in 6 milliseconds.
