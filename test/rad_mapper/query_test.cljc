@@ -1062,61 +1062,27 @@
                            }"
                  {:rewrite? true}))
 
-(defn devectorize-small
-  []
-  (let [pre-clean
-        #:_rm{:?systemName--owners|?ownerName|systems|?systemName "owners|owner1|systems|system1",
-              :user-key "system1",
-              :val
-              [#:_rm{:?deviceName--owners|?ownerName|systems|?systemName|?deviceName "owners|owner1|systems|system1|device1",
-                     :user-key "device1",
-                     :val
-                     [#:_rm{:id--owners|?ownerName|systems|?systemName|?deviceName|id "owners|owner1|systems|system1|device1|id",
-                            :user-key "id", :val [#:box{:number-val 100}]}
-                      #:_rm{:status--owners|?ownerName|systems|?systemName|?deviceName|status "owners|owner1|systems|system1|device1|status",
-                            :user-key "status", :val [#:box{:string-val "Ok"}]}]}
-               #:_rm{:?deviceName--owners|?ownerName|systems|?systemName|?deviceName "owners|owner1|systems|system1|device2",
-                     :user-key "device2",
-                     :val
-                     [#:_rm{:id--owners|?ownerName|systems|?systemName|?deviceName|id "owners|owner1|systems|system1|device2|id",
-                            :user-key "id", :val [#:box{:number-val 200}]}
-                      #:_rm{:status--owners|?ownerName|systems|?systemName|?deviceName|status "owners|owner1|systems|system1|device2|status",
-                            :user-key "status",
-                            :val [#:box{:string-val "Ok"}]}]}]}
-        schema #:_rm{:?systemName--owners|?ownerName|systems|?systemName               {:db/unique :db.unique/identity},
-                     :?deviceName--owners|?ownerName|systems|?systemName|?deviceName   {:db/unique :db.unique/identity},
-                     :id--owners|?ownerName|systems|?systemName|?deviceName|id         {:db/unique :db.unique/identity},
-                     :status--owners|?ownerName|systems|?systemName|?deviceName|status {:db/unique :db.unique/identity}}]
-    (bi/devectorize pre-clean schema)))
-
-(defn devectorize-smallest
-  []
-  (let [pre-clean
-        #:_rm{:?deviceName--owners|?ownerName|systems|?systemName|?deviceName "owners|owner1|systems|system1|device2",
-              :user-key "device2",
-              :val
-              [#:_rm{:id--owners|?ownerName|systems|?systemName|?deviceName|id "owners|owner1|systems|system1|device2|id",
-                     :user-key "id", :val [#:box{:number-val 200}]}
-               #:_rm{:status--owners|?ownerName|systems|?systemName|?deviceName|status "owners|owner1|systems|system1|device2|status",
-                     :user-key "status",
-                     :val [#:box{:string-val "Ok"}]}]}
-        schema #:_rm{:?systemName--owners|?ownerName|systems|?systemName               {:db/unique :db.unique/identity},
-                     :?deviceName--owners|?ownerName|systems|?systemName|?deviceName   {:db/unique :db.unique/identity},
-                     :id--owners|?ownerName|systems|?systemName|?deviceName|id         {:db/unique :db.unique/identity},
-                     :status--owners|?ownerName|systems|?systemName|?deviceName|status {:db/unique :db.unique/identity}}]
-    (bi/cleanup-post-db-data pre-clean schema)))
-
-
-#:_rm{:ROOT
-      [{"owners"
-        {"owner2"
-         [{"systems" {"system1" [{"device3" {"id" [300], "status" ["Ok"]}}
-                                 {"device4" {"id" [400], "status" ["Ok"]}}],
-                      "system2" [{"device8" {"id" [800], "status" ["Ok"]}}
-                                 {"device7" {"id" [700], "status" ["Ok"]}}]}}],
-         "owner1"
-         [{"systems"
-           {"system2" [{"device5" {"id" [500], "status" ["Ok"]}}
-                       {"device6" {"id" [600], "status" ["Ok"]}}],
-            "system1" [{"device1" {"id" [100], "status" ["Ok"]}}
-                       {"device2" {"id" [200], "status" ["Ok"]}}]}}]}}]}
+(deftest data-cleanup
+  (testing "That cleanup from resolve-db-id :rm/ROOT works."
+    (let [pre-clean
+          {:_rm/ROOT
+           [#:_rm{:?deviceName--owners|?ownerName|systems|?systemName|?deviceName "owners|owner1|systems|system1|device2",
+                  :user-key "device2",
+                  :val
+                  [#:_rm{:id--owners|?ownerName|systems|?systemName|?deviceName|id "owners|owner1|systems|system1|device2|id",
+                         :user-key "id", :val [#:box{:number-val 200}]}
+                   #:_rm{:status--owners|?ownerName|systems|?systemName|?deviceName|status "owners|owner1|systems|system1|device2|status",
+                         :user-key "status",
+                         :val [#:box{:string-val "Ok"}]}]}]}
+          schema1 #:_rm{:?systemName--owners|?ownerName|systems|?systemName               {},
+                        :?deviceName--owners|?ownerName|systems|?systemName|?deviceName   {},
+                        :id--owners|?ownerName|systems|?systemName|?deviceName|id         {},
+                        :status--owners|?ownerName|systems|?systemName|?deviceName|status {}}
+          schema2 #:_rm{:?systemName--owners|?ownerName|systems|?systemName               {},
+                        :?deviceName--owners|?ownerName|systems|?systemName|?deviceName   {:_rm/user-vec? true},
+                        :id--owners|?ownerName|systems|?systemName|?deviceName|id         {},
+                        :status--owners|?ownerName|systems|?systemName|?deviceName|status {}}]
+      (is (= {"device2" {"id" 200, "status" "Ok"}}
+             (bi/cleanup-post-db-data pre-clean schema1)))
+      (is (= {"device2" [{"id" 200, "status" "Ok"}]}
+             (bi/cleanup-post-db-data pre-clean schema1))))))

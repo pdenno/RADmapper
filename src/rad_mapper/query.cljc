@@ -34,11 +34,12 @@
 (def diag (atom nil))
 
 ;;; ToDo: Pull out all the :_rm/ stuff.
-(defn schema-from-canonical
-  "Return a Datahike or Datascript conforming schema from the canonical schema,
-   which is a map with keys naming the attribute (like :db/ident) and values being content.
-   The argument schema can have content that isn't fit for any DB; of course the schema
-   returned will filter all that out."
+(defn schema-for-db
+  "Given a map indexed by DB idents with values (maps) containing some information about those
+   idents in a form consistent with the type argument of database (either :datascript or :datahike)
+   return a conforming schema for that database. To do this it just filters out the extraneous
+   key/value pairs of each value, and in the case of :datahike, returns a vector of maps where the
+   original keys are used to set :db/ident in each vector element (a map)."
   [smap type]
   (as-> smap ?schema ; Remove schema entries whose keys are not :db
     (reduce-kv (fn [m k v]
@@ -91,7 +92,7 @@
                                            obj))
                     (coll? obj) (doall (map lsw-aux obj))))]
       (lsw-aux data)
-      (schema-from-canonical @learned (if datahike? :datahike :datascript)))))
+      (schema-for-db @learned (if datahike? :datahike :datascript)))))
 
 (defn qvar? [obj] (and (symbol? obj) (starts-with? (name obj) "?")))
 
@@ -112,8 +113,6 @@
                   (string/replace user-key "/" "*")
                   (if (empty? all-keys) "" "--")
                   (interpose "|" (map #(-> % str (string/replace "/" "*")) all-keys)))))
-
-;(def ^:dynamic *key?* true)
 
 (defn key-schema
   "Define schema information for a user key (constant string or qvar doesn't matter)."
@@ -136,7 +135,8 @@
 
 (defn user-key
   "Return a keyword for a user-defined key. If the argument is a string, it could have a / in it.
-   In which case, it is treated as namespaced."
+   In which case, it is treated as namespaced. If it has more than one, th ones to the right are
+   changed to '*'"
   [s]
   (if-let [[_ nspace nam] (re-matches #"(.*)/(.*)" (str s))]
     (keyword nspace (string/replace (str nam) "/" "*"))
@@ -177,6 +177,7 @@
                   (-> {}
                       (assoc (keyword key-key) key-val)
                       (assoc ident `(:rm/express-key ~@(deref key-stack)))
+                      (assoc :_rm/user-key key-key)
                       (assoc :_rm/val (rb (dissoc obj key-key))))) ; Rest of map is under the :_rm/val
                 (cond (map? obj)            (let [result
                                                   (reduce-kv (fn [r k v] ; Each key is treated

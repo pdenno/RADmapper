@@ -1825,47 +1825,65 @@
                   :else x))]
     (es-aux form)))
 
+(s/def ::raw-data-elem (s/and map? #(== 3 (count %)) #(contains? % :_rm/val) #(contains? % :_rm/user-key)))
+(s/def ::prim-vec (s/and vector?
+                         (fn [obj]
+                           (every? (fn [elem]
+                                     (some #(% elem) [string? number? keyword? boolean?]))
+                                   obj))))
+
+(defn schema-info
+  "Return schema information on the argument if it is a ::raw-data-elem, or nil if it isn't one."
+  [obj schema]
+  (when (s/valid? ::raw-data-elem obj)
+    (->> (dissoc obj :_rm/val :_rm/user-key) keys first (get schema))))
+
 (defn redex-keys-values
   "For each map that has an :_rm/val, replace the map with a map that has those that key and value.
    In the case that the express body specified that the attr value is a map and the current value
    is a vector of maps, merge the maps by their :_rm/user-key."
   [data schema]
-  (let [ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
-    (letfn [(dvec-immediate [obj]
-              (let [schema-entry ((some ref-ident? (keys obj)) schema)]
-                (if (-> schema schema-entry :_rm/user-vec?)
-                  obj
-                  (update obj :_rmval first)))) ; SNARL!
-            (db-merj [objs]
-              (->> (reduce (fn [r m] (assoc r (:_rm/user-key m) (-> m dvec-immediate :_rm/val rkv))) ; <========= SNARLED UP!
-                           {}
-                           objs)
-                   (into (sorted-map))))
-            (rkv [obj]
-              (cond (and (map? obj)
-                         (some #(= % :_rm/val) (keys obj))) ; Can't use contains? when keys are strings.
-                    (let [schema-key (some ref-ident? (keys obj))]
-                      (cond (-> schema schema-key :_rm/user-vec?)   {(:_rm/user-key obj) (-> obj :_rm/val rkv)}
-                            (== 1 (-> obj :_rm/val count))          {(:_rm/user-key obj) (-> obj :_rm/val first rkv)}
-                            (->> obj :_rm/val (every? map?))        {(:_rm/user-key obj) (-> obj :_rm/val db-merj rkv)} ; SNARL!
-                            :else                                   :bi/devectorize-error))
-                    (map? obj)                             (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)
-                    (vector? obj)                          (mapv rkv obj)
-                    :else                                  obj))]
-      (rkv data))))
+  (letfn [(db-merj [objs]
+            (->> (reduce (fn [r o]
+                           (let [info (schema-info o schema)]
+                             (assoc r (:_rm/user-key o) (-> o :_rm/val (rkv info)))))
+                         {}
+                         objs)
+                 (into (sorted-map))))
+          (rkv ([obj] (rkv obj nil))
+               ([obj info]
+                (let [info (or info (schema-info obj schema))]
+                  (cond info
+                        (cond (:_rm/user-vec? info)                {(:_rm/user-key obj) (-> obj :_rm/val rkv)}
+                              (and (s/valid? ::prim-vec obj)
+                                   (== 1 (count obj)))             (first obj) ; Sent from db-merj
+                              (vector? obj)                        (mapv rkv obj)
+                              (== 1 (-> obj :_rm/val count))       {(:_rm/user-key obj) (-> obj :_rm/val first rkv)}
+                              (->> obj :_rm/val (every? map?))     {(:_rm/user-key obj) (-> obj :_rm/val db-merj)}
+                              :else                                :bi/devectorize-error)
+                        (map? obj)                                   (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)
+                        (vector? obj)                                (mapv rkv obj)
+                        :else                                        obj))))]
+    (rkv data)))
 
 (defn cleanup-post-db-data
   "Return the evaluated express body with
      1) user map keys replacing :_rm
      2) vector values of :_rm/val replaced with first where user intended single value.
      3) boxed values unboxed.
-   Argument schema need only have the :db/unique attrs and among those its :_rm/user-vec? value."
+   Argument schema
+     a) should have :_rm/ROOT (to 'deroot' it, if necessary
+     b) need only have other entries that are :db/unique attrs."
   [data schema]
-  (-> data
-      unbox-vals
-      (redex-keys-values schema)))
+  (as-> data ?d
+    (unbox-vals ?d)
+    (redex-keys-values ?d schema)
+    (if (-> schema :_rm/ROOT :_rm/user-vec?)
+      (:_rm/ROOT ?d)
+      (-> ?d :_rm/ROOT first))))
 
-(defn merge-schema
+;;; Won't be used if we don't need qu/schema-updates-from-data.
+#_(defn merge-schema
   "Merge values (maps) at keys that are :db.ident."
   [schema updates]
   (reduce-kv (fn [m k v] (assoc m k (merge (get m k) v))) schema updates))
@@ -1904,9 +1922,8 @@
 (defn reduce-express
   "This function performs $reduce on an express function; *in-reduce?* = true.
    Prior to this call, query/schematic-express-body defined metadata (:bi/reduce-body and :bi/schema).
-   The data is built-up according to this schema and the b-sets and set as the value of :_rm/ROOT.
-   Lookup-refs are used, and the data is pushed into a database, pulled back, and cleaned up
-   (using the schema, especially :_rm/user-vec?)."
+   The data is built-up according to this schema and the b-sets; It is set to the value of :_rm/ROOT.
+   Lookup-refs are used, and the data is pushed into a database, the ROOT is pulled back, and cleaned up."
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
    (let [schema (-> efn meta :bi/schema)
@@ -1917,7 +1934,7 @@
          ;; ToDo: Is this needed? Data is boxed.
          ;;full-schema schema #_(merge-schema schema (qu/schema-updates-from-data schema (-> data :_rm/ROOT first)))
          full-schema (merge qu/support-schema schema)
-         db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
+         db-schema (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
          zippy (reset! diag {:schema full-schema
                              :efn efn
                              :lookup-refs lookup-refs
@@ -1929,7 +1946,7 @@
          db-atm (qu/db-for! [] :known-schema db-schema :learn? false)]
      (swap! diag #(assoc % :db-atm db-atm))
      ;; Inserting objects 'lookup-ref first' helps us catch errors (e.g. conflicting upserts).
-     (doseq [obj lookup-refs] (d/transact db-atm {:tx-data [obj]}))
+     (doseq [obj lookup-refs] (d/transact db-atm {:tx-data [obj]})) ; Yes, one at a time.
      (d/transact db-atm {:tx-data (->> data (data-with-lookups schema) vector)})
      (let [root-eid  (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)
            pre-clean (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})]
