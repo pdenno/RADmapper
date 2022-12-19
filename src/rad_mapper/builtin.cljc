@@ -1763,6 +1763,39 @@
                     (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))))
             (with-meta {:bi/express-template? true}))))
 
+(defn boxit [obj]
+  (cond (string?  obj) {:box/string-val  obj},
+        (number?  obj) {:box/number-val  obj},
+        (keyword? obj) {:box/keyword-val obj},
+        (boolean? obj) {:box/boolean-val obj}))
+
+(defn box-vals
+  "Walk through the form replacing non-map :rm/val with boxed data."
+  [obj]
+  (cond (map? obj)       (reduce-kv (fn [m k v]
+                                      (if (and (= :_rm/val k)
+                                               (some #(% v) [string? number? keyword? boolean?]))
+                                        (assoc m k (boxit v))
+                                        (assoc m k (box-vals v))))
+                                    {} obj)
+        (vector? obj)    (mapv box-vals obj)
+        :else            obj))
+
+(defn unbox-vals
+  "Walk through the form replacing boxed data with the data."
+  [data]
+  (letfn [(box? [obj]
+            (and (map? obj)
+                 (#{:box/string-val :box/number-val :box/keyword-val :box/boolean-val}
+                  (-> obj seq first first))))  ; There is just one key in a boxed object.
+          (uv [obj]
+            (if-let [box-typ (box? obj)]
+              (box-typ obj)
+              (cond (map? obj)      (reduce-kv (fn [m k v] (assoc m k (uv v))) {} obj)
+                    (vector? obj)   (mapv uv obj)
+                    :else           obj)))]
+    (uv data)))
+
 (defn evaluate-express-body
   "Walk through the body of the express replacing qvars with their bset values,
    computing concatenated keys (and NYI) evaluating expressions."
@@ -1779,7 +1812,7 @@
                   (qvar? obj)        (get bset obj)
                   :else              obj))]
       (if *in-reduce?*        ; Or am I missing something? Something about cat keys???
-        (eeb-aux reduce-body)
+        (-> reduce-body eeb-aux box-vals)
         (eeb-aux base-body))))
 
 (defn express-sub
@@ -1793,66 +1826,115 @@
     (es-aux form)))
 
 (defn redex-keys-values
-  "For each map that has a :_rm/user-key and :_rm/Kkey-val,
-   replace the map with a map that has those that key and value."
-  [body]
-  (letfn [(rkv [obj]
-            (cond (and (map? obj)
-                       (contains? obj :_rm/user-key)
-                       (contains? obj :_rm/val))         {(:_rm/user-key obj) (-> obj :_rm/val rkv)}
-                  (map? obj)                             (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)
-                  (vector? obj)                          (mapv rkv obj)
-                  :else                                  obj))]
-    (rkv body)))
+  "For each map that has an :_rm/val, replace the map with a map that has those that key and value.
+   In the case that the express body specified that the attr value is a map and the current value
+   is a vector of maps, merge the maps by their :_rm/user-key."
+  [data schema]
+  (let [ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
+    (letfn [(dvec-immediate [obj]
+              (let [schema-entry ((some ref-ident? (keys obj)) schema)]
+                (if (-> schema schema-entry :_rm/user-vec?)
+                  obj
+                  (update obj :_rmval first)))) ; SNARL!
+            (db-merj [objs]
+              (->> (reduce (fn [r m] (assoc r (:_rm/user-key m) (-> m dvec-immediate :_rm/val rkv))) ; <========= SNARLED UP!
+                           {}
+                           objs)
+                   (into (sorted-map))))
+            (rkv [obj]
+              (cond (and (map? obj)
+                         (some #(= % :_rm/val) (keys obj))) ; Can't use contains? when keys are strings.
+                    (let [schema-key (some ref-ident? (keys obj))]
+                      (cond (-> schema schema-key :_rm/user-vec?)   {(:_rm/user-key obj) (-> obj :_rm/val rkv)}
+                            (== 1 (-> obj :_rm/val count))          {(:_rm/user-key obj) (-> obj :_rm/val first rkv)}
+                            (->> obj :_rm/val (every? map?))        {(:_rm/user-key obj) (-> obj :_rm/val db-merj rkv)} ; SNARL!
+                            :else                                   :bi/devectorize-error))
+                    (map? obj)                             (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)
+                    (vector? obj)                          (mapv rkv obj)
+                    :else                                  obj))]
+      (rkv data))))
 
-(defn cleanup-express
-  "Return the evaluated express body with :_rm removed."
-  [body]
-  (-> body
-      redex-keys-values))
+(defn cleanup-post-db-data
+  "Return the evaluated express body with
+     1) user map keys replacing :_rm
+     2) vector values of :_rm/val replaced with first where user intended single value.
+     3) boxed values unboxed.
+   Argument schema need only have the :db/unique attrs and among those its :_rm/user-vec? value."
+  [data schema]
+  (-> data
+      unbox-vals
+      (redex-keys-values schema)))
 
 (defn merge-schema
   "Merge values (maps) at keys that are :db.ident."
   [schema updates]
   (reduce-kv (fn [m k v] (assoc m k (merge (get m k) v))) schema updates))
 
-(defn reduce-express
-  "This function performs $reduce on an express function.
-   The express function is callable as standalone; in that case, *in-reduce?* = false,
-   and that is used to do some clean-up on the datalog schema-oriented, value produced
-   by the vanilla, reduce-ready result. The reduce-ready result is used with the a
-   binding set to enrich :db/valueType-enriched of the schema attached as :bi/schema metadata.
-   The enriched schema and a map of the not-cleaned-up are placed in a map structure
-   {:_rm/ROOT <the-data>} and dumped into the DB created here.
-   Doing du/resolve-db-id on this object brings back the reduced result
-   (because that is what we mean by reduce on an express body).
+(defn data-lookup-refs
+  "Return a vector of {:db/id [attr val]} corresponding to entities to establish before sending data.
+   From datahike api.cljc:
+                      ;; create a new entity (`-1`, as any other negative value, is a tempid
+                      ;; that will be replaced by Datahike with the next unused eid)
+                      (transact conn [[:db/add -1 :name \"Ivan\"]])"
+  [schema data]
+  (let [lookup-refs (atom [])
+        ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
+    (letfn [(dlr [obj]
+              (cond (map? obj)    (doseq [[k v] (seq obj)]
+                                    (when (ref-ident? k) (swap! lookup-refs conj [:db/add -1 k v]))
+                                    (dlr v))
+                    (vector? obj) (doall (map dlr obj))))]
+      (dlr data)
+      @lookup-refs)))
 
-   Note that this only works because the addition of _rm/attrs that are concatenated keys.
-   (Again, that's what we mean by reduce on an express body.)"
+(defn data-with-lookups
+  "Rewrite the data to use lookup refs."
+  [schema data]
+  (let [ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
+    (letfn [(dal [obj] (cond
+                         (map? obj)         (reduce-kv (fn [m k v]
+                                                         (if (ref-ident? k)
+                                                           (assoc m :db/id [k v])
+                                                           (assoc m k (dal v))))
+                                                       {} obj)
+                         (vector? obj)      (mapv dal obj)
+                         :else obj))]
+            (dal data))))
+
+(defn reduce-express
+  "This function performs $reduce on an express function; *in-reduce?* = true.
+   Prior to this call, query/schematic-express-body defined metadata (:bi/reduce-body and :bi/schema).
+   The data is built-up according to this schema and the b-sets and set as the value of :_rm/ROOT.
+   Lookup-refs are used, and the data is pushed into a database, pulled back, and cleaned up
+   (using the schema, especially :_rm/user-vec?)."
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
-   (let [data (->> (mapv efn b-sets)
+   (let [schema (-> efn meta :bi/schema)
+         data (->> (mapv efn b-sets)
                    walk/keywordize-keys
                    (assoc {} :_rm/ROOT))
-         schema (merge qu/support-schema (-> efn meta :bi/schema))
-         full-schema schema #_(merge-schema schema (qu/schema-updates-from-data schema (-> data :_rm/ROOT first)))
+         lookup-refs (data-lookup-refs schema data)
+         ;; ToDo: Is this needed? Data is boxed.
+         ;;full-schema schema #_(merge-schema schema (qu/schema-updates-from-data schema (-> data :_rm/ROOT first)))
+         full-schema (merge qu/support-schema schema)
          db-schema (qu/schema-from-canonical full-schema (if (util/cljs?) :datascript :datahike))
          zippy (reset! diag {:schema full-schema
+                             :efn efn
+                             :lookup-refs lookup-refs
                              :reduce-body (-> efn meta :bi/reduce-body)
+                             :base-body (-> efn meta :bi/base-body)
                              :db-schema db-schema
                              :b-sets b-sets
                              :data data})
-         db-atm (qu/db-for! data :known-schema db-schema :learn? false)
-         root-eid (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)]
-     (reset! diag {:schema full-schema
-                   :reduce-body (-> efn meta :bi/reduce-body)
-                   :base-body (-> efn meta :bi/base-body)
-                   :db-atm db-atm
-                   :root-eids root-eid
-                   :data data
-                   :b-sets b-sets})
-     (->> (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})
-          cleanup-express))))
+         db-atm (qu/db-for! [] :known-schema db-schema :learn? false)]
+     (swap! diag #(assoc % :db-atm db-atm))
+     ;; Inserting objects 'lookup-ref first' helps us catch errors (e.g. conflicting upserts).
+     (doseq [obj lookup-refs] (d/transact db-atm {:tx-data [obj]}))
+     (d/transact db-atm {:tx-data (->> data (data-with-lookups schema) vector)})
+     (let [root-eid  (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)
+           pre-clean (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})]
+       (swap! diag #(-> % (assoc :root-eid root-eid) (assoc :pre-clean pre-clean)))
+       (cleanup-post-db-data pre-clean schema)))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

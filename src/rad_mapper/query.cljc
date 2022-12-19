@@ -113,15 +113,17 @@
                   (if (empty? all-keys) "" "--")
                   (interpose "|" (map #(-> % str (string/replace "/" "*")) all-keys)))))
 
+;(def ^:dynamic *key?* true)
+
 (defn key-schema
   "Define schema information for a user key (constant string or qvar doesn't matter)."
   [ident k all-keys]
-  {:db/cardinality :db.cardinality/one,
-   :db/valueType :db.type/string,
-   :db/unique :db.unique/identity,
-   :_rm/cat-key all-keys,
-   :_rm/self ident
-   :_rm/user-key (str k)})
+   {:db/cardinality :db.cardinality/one,
+    :db/valueType :db.type/string,
+    :db/unique :db.unique/identity
+    :_rm/cat-key all-keys,
+    :_rm/self ident
+    :_rm/user-key (str k)})
 
 (defn exp-key-schema
   "Define schema information for the key that has as a value an express key.
@@ -176,22 +178,27 @@
                       (assoc (keyword key-key) key-val)
                       (assoc ident `(:rm/express-key ~@(deref key-stack)))
                       (assoc :_rm/val (rb (dissoc obj key-key))))) ; Rest of map is under the :_rm/val
-                (cond (map? obj)            (reduce-kv (fn [m k v] ; Each key is treated
-                                                         (swap! key-stack conj k)
-                                                         (let [ident (schema-ident k @key-stack)
-                                                               res (-> m
-                                                                       (assoc ident `(:rm/express-key ~@(deref key-stack)))
-                                                                       (assoc :_rm/user-key k)
-                                                                       (assoc :_rm/val (rb v)))]
-                                                           (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
-                                                           (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
-                                                           res))
-                                                       {}
-                                                       obj)
+                (cond (map? obj)            (let [result
+                                                  (reduce-kv (fn [r k v] ; Each key is treated
+                                                               (swap! key-stack conj k)
+                                                               (let [ident (schema-ident k @key-stack)
+                                                                     res (conj r
+                                                                               (-> {}
+                                                                                   (assoc ident `(:rm/express-key ~@(deref key-stack)))
+                                                                                   (assoc :_rm/user-key k)
+                                                                                   (assoc :_rm/val (rb v))))]
+                                                                 (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
+                                                                 (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
+                                                                 res))
+                                                             []
+                                                             obj)]
+                                              ;; ToDo: Either this or fix it at :_rm/ROOT later.
+                                              (if (== 1 (count result)) (first result) result))
                      (vector? obj)          (mapv rb obj)
                      :else                  obj)))]
       {:body (rb body)
        :schema @schema})))
+
 
 ;;; ToDo: Check that there is at most one key at each map level. (filter instead of some).
 (defn rewrite-express-keys
@@ -227,7 +234,8 @@
    :box/number-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
    :box/string-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})
 
-(defn schema-updates-from-data
+;;; ToDo: Currently not used and might not ever be useful.
+#_(defn schema-updates-from-data
   "Return a map of :db/valueTypes by studying the data and schema."
   [schema data]
   (let [new-info (atom {})]
@@ -240,19 +248,6 @@
                     (vector? obj)     (doall (map supdate obj))))]
       (supdate data)
       @new-info)))
-
-;;; ToDo: Do I care that I'm only looking at one bset?
-#_(defn learn-schema-from-bset
-  "Update the schema with :db/valueType from an example bset."
-  [known-schema bset]
-  (let [schema (atom known-schema)]
-    (doseq [[qvar bval] (seq bset)]
-      ;; Not all the bs keys need to be used in the express.
-      (when-let [skey (some #(let [[skey smap] %] (when (= qvar (:_rm/qvar smap)) skey)) @schema)]
-        (when-let [typ (db-type-of bval)]
-          (swap! schema #(assoc-in % [skey :db/valueType] typ))
-          #_(swap! schema #(assoc-in % [skey :db/cardinality] :db.cardinality/one)))))
-    @schema))
 
 ;;; BTW, I can make a trivial DB on my laptop using this in 6 milliseconds.
 ;;; ToDo: Where I'm creating DBs for short-term use (e.g. express reduce) we need to d/delete-database when done!
@@ -269,7 +264,7 @@
     (d/create-database db-cfg)
     (let [db-atm (d/connect db-cfg)]
       (d/transact db-atm (if learn? (learn-schema data :known-schema known-schema) known-schema))
-      (d/transact db-atm data)
+      (when (not-empty data) (d/transact db-atm data))
       db-atm))))
 
 #?(:cljs
