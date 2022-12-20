@@ -142,7 +142,7 @@
     (keyword nspace (string/replace (str nam) "/" "*"))
     (keyword s)))
 
-;;; This one, where express-keys are implied by qvar is simpler to process.
+;;; Here :rm/express-key are implied by qvar; they aren't spelled out the base-body.
 ;;;              {'owners':
 ;;;                 {?ownerName:
 ;;;                    {'systems':
@@ -151,10 +151,10 @@
 ;;;                                          'status' : ?status}}}}
 
 ;;; Here you have to essentially make it look like the above plus keep extras like 'owner/id' and 'device/id'.
-;;;              {'owners': {'owner/id'     : key(?ownerName),
-;;;                          'systems'      : [{'system/id'  : key(?systemName),
-;;;                                             'devices'    : [{'device/id' : key(?deviceName),
-;;;                                                              'status'    : ?status}]}]}}
+;;;             {"owners" [{"owner/id" (:rm/express-key ?ownerName),
+;;;                         "systems" [{"system/id" (:rm/express-key ?systemName),
+;;;                                     "devices" [{"device/name" (:rm/express-key ?deviceName),
+;;;                                                 "device/id" ?id, "status" ?status}]}]}]}
 (defn schematic-express-body
   "Return a map containing a schema describing the argument express body and
    the body rewritten to use that schema. The schema will have to be augmented
@@ -162,23 +162,23 @@
    the values of keys is always a :db.value/ref.
    Express keys can only appear in value position of a map.
    Keys (qvar or constant) are always treated things with :_rm/Kkey-val."
-  [body]
-  (let [key-stack (atom []) ; ToDo: currently not popping stack.
+  [base-body]
+  (let [key-stack (atom [])
         schema (atom {})]
     (letfn [(rb [obj] ; Here there is an express-key in a map value.
               (if-let [{:keys [key-key key-val]} (and (map? obj)
                                                       (some  (fn [[k v]] (when (key-exp? v)
                                                                            {:key-key k :key-val (second v)}))
                                                              (seq obj)))]
-                (let [ident (schema-ident key-val @key-stack)]
+                (let [ident (schema-ident key-key @key-stack)]
                   (swap! key-stack conj key-val)
                   (swap! schema #(assoc % ident (key-schema ident key-key @key-stack)))
                   (swap! schema #(assoc % (user-key key-key) (exp-key-schema (user-key key-key) key-key)))
                   (-> {}
-                      (assoc (keyword key-key) key-val)
                       (assoc ident `(:rm/express-key ~@(deref key-stack)))
                       (assoc :_rm/user-key key-key)
-                      (assoc :_rm/val (rb (dissoc obj key-key))))) ; Rest of map is under the :_rm/val
+                      (assoc :_rm/val key-val) ; was (keyword key-key), now :_rm/val
+                      (assoc :_rm/other-content (rb (dissoc obj key-key))))) ; Rest of map is under the :_rm/content
                 (cond (map? obj)            (let [result
                                                   (reduce-kv (fn [r k v] ; Each key is treated
                                                                (swap! key-stack conj k)
@@ -189,6 +189,8 @@
                                                                                    (assoc :_rm/user-key k)
                                                                                    (assoc :_rm/val (rb v))))]
                                                                  (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
+                                                                 (when (vector? v)
+                                                                   (swap! schema #(assoc-in % [ident :_rm/user-vec?] true)))
                                                                  (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
                                                                  res))
                                                              []
@@ -197,7 +199,7 @@
                                               (if (== 1 (count result)) (first result) result))
                      (vector? obj)          (mapv rb obj)
                      :else                  obj)))]
-      {:body (rb body)
+      {:body (rb base-body)
        :schema @schema})))
 
 
@@ -227,13 +229,14 @@
 
 (def support-schema
   "These are added to the schema when reducing on express-body."
-  {:_rm/ROOT        {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
-   :_rm/val         {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
-   :_rm/user-key    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string }
-   :box/boolean-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
-   :box/keyword-val {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
-   :box/number-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
-   :box/string-val  {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})
+  {:_rm/ROOT          {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/val           {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/other-content {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/user-key      {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string }
+   :box/boolean-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
+   :box/keyword-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
+   :box/number-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
+   :box/string-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})
 
 ;;; ToDo: Currently not used and might not ever be useful.
 #_(defn schema-updates-from-data

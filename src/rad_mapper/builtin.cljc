@@ -1825,7 +1825,8 @@
                   :else x))]
     (es-aux form)))
 
-(s/def ::raw-data-elem (s/and map? #(== 3 (count %)) #(contains? % :_rm/val) #(contains? % :_rm/user-key)))
+(s/def ::raw-data-elem (s/and map? #(<= 3 (count %) 4)
+                              #(contains? % :_rm/val) #(contains? % :_rm/user-key)))
 (s/def ::prim-vec (s/and vector?
                          (fn [obj]
                            (every? (fn [elem]
@@ -1836,10 +1837,25 @@
   "Return schema information on the argument if it is a ::raw-data-elem, or nil if it isn't one."
   [obj schema]
   (when (s/valid? ::raw-data-elem obj)
-    (->> (dissoc obj :_rm/val :_rm/user-key) keys first (get schema))))
+    (->> (dissoc obj :_rm/val :_rm/user-key :_rm/other-content) keys first (get schema))))
+
+(defn merge-other-content
+  "The structure of an object in the DB that has an express key has an attribute that
+   establishes that key and possibly other attrs under :_rm/other-content.
+   Here we put that put those other attrs directly into the object as new attributes."
+  [data]
+  data)
+;;  (letfn [(moc [obj]
+;;            (cond (and (map? obj);
+
+(defn careful-merge
+  [m others]
+  (apply merge m others))
+
+(def diag2 (atom nil))
 
 (defn redex-keys-values
-  "For each map that has an :_rm/val, replace the map with a map that has those that key and value.
+  "For each map that has an :_rm/val and :_rm/user-key, replace the map with a map that has those that key and value.
    In the case that the express body specified that the attr value is a map and the current value
    is a vector of maps, merge the maps by their :_rm/user-key."
   [data schema]
@@ -1852,18 +1868,23 @@
                  (into (sorted-map))))
           (rkv ([obj] (rkv obj nil))
                ([obj info]
-                (let [info (or info (schema-info obj schema))]
-                  (cond info
-                        (cond (:_rm/user-vec? info)                {(:_rm/user-key obj) (-> obj :_rm/val rkv)}
-                              (and (s/valid? ::prim-vec obj)
-                                   (== 1 (count obj)))             (first obj) ; Sent from db-merj
-                              (vector? obj)                        (mapv rkv obj)
-                              (== 1 (-> obj :_rm/val count))       {(:_rm/user-key obj) (-> obj :_rm/val first rkv)}
-                              (->> obj :_rm/val (every? map?))     {(:_rm/user-key obj) (-> obj :_rm/val db-merj)}
-                              :else                                :bi/devectorize-error)
-                        (map? obj)                                   (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)
-                        (vector? obj)                                (mapv rkv obj)
-                        :else                                        obj))))]
+                (let [info (or info (schema-info obj schema))] ; Because of the OR, the obj need not be a map.
+                  (cond info ; Empty is ok; happens in testing, at least.
+                        (let [res (cond (:_rm/user-vec? info)                {(:_rm/user-key obj) (->> obj :_rm/val rkv)} ;(mapv #(rkv % info)))}
+                                        (and (s/valid? ::prim-vec obj)
+                                             (== 1 (count obj)))             (first obj)    ; Called from db-merj
+                                        (vector? obj)                        (mapv rkv obj) ; Called from db-merj ; ToDo send info here?
+                                        (== 1 (-> obj :_rm/val count))       {(:_rm/user-key obj) (-> obj :_rm/val first rkv)}
+                                        (->> obj :_rm/val (every? map?))     {(:_rm/user-key obj) (-> obj :_rm/val db-merj)}
+                                        :else                                (do (reset! diag2 {:info info :obj obj})
+                                                                               :bi/devectorize-error))]
+                          (if (and (map? obj) (contains? obj :_rm/other-content) #_(map? res))
+                            (careful-merge res (-> obj :_rm/other-content rkv))
+                            res))
+
+                          (map? obj)                                 (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)
+                          (vector? obj)                              (mapv rkv obj)
+                          :else                                      obj))))]
     (rkv data)))
 
 (defn cleanup-post-db-data
@@ -1878,6 +1899,7 @@
   (as-> data ?d
     (unbox-vals ?d)
     (redex-keys-values ?d schema)
+    (merge-other-content ?d)
     (if (-> schema :_rm/ROOT :_rm/user-vec?)
       (:_rm/ROOT ?d)
       (-> ?d :_rm/ROOT first))))

@@ -974,14 +974,14 @@
                   $bsets := $q($data);
 
                   $map($bsets,
-                       express{{'owners': {'t/type'       : 'OWNER',
-                                           'owner/id'     : key(?ownerName),
-                                           'owner/systems': [{'t/type'         : 'SYSTEM',
-                                                              'system/id'      : key(?systemName),
-                                                              'system/devices' : [{'t/type'         : 'DEVICE',
-                                                                                   'device/id'      : ?id,
-                                                                                   'device/name'    : key(?deviceName),
-                                                                                   'device/status'  : ?status}]}]}}
+                       express{{'owners': [{'t/type'       : 'OWNER',
+                                            'owner/id'     : key(?ownerName),
+                                            'owner/systems': [{'t/type'         : 'SYSTEM',
+                                                               'system/id'      : key(?systemName),
+                                                               'system/devices' : [{'t/type'         : 'DEVICE',
+                                                                                    'device/id'      : ?id,
+                                                                                    'device/name'    : key(?deviceName),
+                                                                                    'device/status'  : ?status}]}]}}
                                 }  )
                   )"
       run))
@@ -1010,11 +1010,11 @@
                   $bsets := $q($data);
 
                   $reduce($bsets,
-                          express(){{'owners': {'owner/id'     : key(?ownerName),
-                                                'systems'      : [{'system/id'  : key(?systemName),
-                                                                   'devices'    : [{'device/name' : key(?deviceName),
-                                                                                    'device/id'   : ?id,
-                                                                                    'status'      : ?status}]}]}}
+                          express(){{'owners': [{'owner/id'     : key(?ownerName),
+                                                 'systems'      : [{'system/id'  : key(?systemName),
+                                                                    'devices'    : [{'device/name' : key(?deviceName),
+                                                                                     'device/id'   : ?id,
+                                                                                     'status'      : ?status}]}]}]}
                                    }  )
                   )"
       run))
@@ -1062,8 +1062,14 @@
                            }"
                  {:rewrite? true}))
 
-(deftest data-cleanup
-  (testing "That cleanup from resolve-db-id :rm/ROOT works."
+;;; {'owners':
+;;;     {?ownerName:
+;;;        {'systems':
+;;;           {?systemName:
+;;;              {?deviceName : {'id'     : ?id,
+;;;                              'status' : ?status}}}}}}
+(deftest data-cleanup-type2
+  (testing "Testing that cleanup works where qvars in key positions." ; No express keys in this data.
     (let [pre-clean
           {:_rm/ROOT
            [#:_rm{:?deviceName--owners|?ownerName|systems|?systemName|?deviceName "owners|owner1|systems|system1|device2",
@@ -1084,5 +1090,29 @@
                         :status--owners|?ownerName|systems|?systemName|?deviceName|status {}}]
       (is (= {"device2" {"id" 200, "status" "Ok"}}
              (bi/cleanup-post-db-data pre-clean schema1)))
-      (is (= {"device2" [{"id" 200, "status" "Ok"}]}
-             (bi/cleanup-post-db-data pre-clean schema1))))))
+      (testing "Testing use of :_rm/user-vec?"
+        (is (= {"device2" [{"id" 200, "status" "Ok"}]}
+               (bi/cleanup-post-db-data pre-clean schema2)))))))
+
+;;; {'owners': [{'owner/id' : key(?ownerName),
+;;;              'systems'  : [{'system/id'  : key(?systemName),
+;;;                             'devices'    : [{'device/name' : key(?deviceName),
+;;;                                              'device/id'   : ?id,
+;;;                                              'status'      : ?status}]}]}]}
+(defn data-cleanup-type1
+  []
+    (let [pre-clean
+          {:_rm/device*name--owners|?ownerName|systems|?systemName|devices
+           "owners|owner2|systems|system1|devices|device4",
+           :_rm/other-content
+           [#:_rm{:status--owners|?ownerName|systems|?systemName|devices|?deviceName|status
+                  "owners|owner2|systems|system1|devices|device4|status",
+                  :user-key "status",
+                  :val ["Ok"]}],
+           :_rm/user-key "device/name",
+           :_rm/val ["device4"]}
+
+          schema #:_rm{:device*name--owners|?ownerName|systems|?systemName|devices {:yes "schema-data!"},
+                       :device*id--owners|?ownerName|systems|?systemName|devices|?deviceName|device*id {:yes "schema-data!"},
+                       :status--owners|?ownerName|systems|?systemName|devices|?deviceName|status {:yes "schema-data!"}}]
+      (bi/redex-keys-values pre-clean schema)))
