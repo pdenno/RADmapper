@@ -94,6 +94,31 @@
       (lsw-aux data)
       (schema-for-db @learned (if datahike? :datahike :datascript)))))
 
+;;;------------------------------ Express reduce-body generation
+(def support-schema
+  "These are added to the schema when reducing on express-body. All of these can appear in data,
+   of course, but the full-schema can have values that do not meet the :db/valueType here.
+   For example, in the full-schema :_rm/user-key of attrs can be a qvar.
+   (BTW that indicates 'qvar-in-key-pos'.)"
+  {:_rm/ROOT          {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/attrs         {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/vals          {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
+   :_rm/val           {:db/cardinality :db.cardinality/one  :db/valueType :db.type/ref}
+   :_rm/user-key      {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string} ;
+   :_rm/ek-val        {:db/cardinality :db.cardinality/one  :db/valueType :db.type/ref}    ; key component used w/ express keys and in output.
+   :box/boolean-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
+   :box/keyword-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
+   :box/number-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
+   :box/string-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})
+
+(defn child-node-type
+  "Argument is the child node of a key (qvar, string, whatever) in the express body.
+   returned is a attribute type from the support schema."
+  [node]
+  (cond (map? node)    :_rm/attrs
+        (vector? node) :_rm/vals
+        :else          :_rm/val))
+
 (defn qvar? [obj] (and (symbol? obj) (starts-with? (name obj) "?")))
 
 (defn key-exp?
@@ -116,22 +141,30 @@
 
 (defn key-schema
   "Define schema information for a user key (constant string or qvar doesn't matter)."
-  [ident k all-keys]
-   {:db/cardinality :db.cardinality/one,
-    :db/valueType :db.type/string,
-    :db/unique :db.unique/identity
-    :_rm/cat-key all-keys,
-    :_rm/self ident
-    :_rm/user-key (str k)})
+  [ident many? k all-keys]
+  {:db/unique :db.unique/identity
+   :db/valueType :db.type/string
+   :db/cardinality (if many? :db.cardinality/many :db.cardinality/one)
+   :_rm/cat-key all-keys
+   :_rm/self ident
+   :_rm/user-key k})
 
 (defn exp-key-schema
   "Define schema information for the key that has as a value an express key.
-   For example owner/id in 'owner/id' : key(?ownerName)"
-  [ident k]
-  {:db/cardinality :db.cardinality/one,
-   :db/valueType :db.type/string, ; Might be overwritten by b-set knowledge.
+   For example, owner/id in 'owner/id' : key(?ownerName).
+   The db.ident name of express keys is just the attribute name keywordized,
+   for example :owner/id. (User is responsible for doing this correctly.)
+   +The values of express keys are NOT a concatenated from nested content as+
+   +is the case for qvar-in-key-pos.  The :db/valueType is determined from bsets+
+   +when $reduce is executed.+"
+  [ident k all-keys]
+  {:db/unique :db.unique/identity
+   :db/valueType :db.type/string,
+   :db/cardinality :db.cardinality/one,
+   :_rm/cat-key all-keys
    :_rm/self ident
-   :_rm/user-key k})
+   :_rm/user-key k ; Will be a qvar.
+   :_rm/exp-key? true})
 
 (defn user-key
   "Return a keyword for a user-defined key. If the argument is a string, it could have a / in it.
@@ -156,52 +189,55 @@
 ;;;                                     "devices" [{"device/name" (:rm/express-key ?deviceName),
 ;;;                                                 "device/id" ?id, "status" ?status}]}]}]}
 (defn schematic-express-body
-  "Return a map containing a schema describing the argument express body and
-   the body rewritten to use that schema. The schema will have to be augmented
-   by :db/valueType information and some b-set data will have to be boxed because
-   the values of keys is always a :db.value/ref.
-   Express keys can only appear in value position of a map.
-   Keys (qvar or constant) are always treated things with :_rm/Kkey-val."
+  "Return a map containing
+      (1) :reduce-body : the express body rewritten rewritten for use in $reduce and,
+      (2) :schema a schema describing all the attributes introduced in the reduce body.
+   The schema produced is a little bit short on information. Examples:
+      (a) Some values will be qvars and thus the type won't be known until a bset applied.
+      (b) Values for :_rm/val and :_rm/vals, though defined db/valueType db.type/ref, could be
+          primitive types. When bset values are substituted, primitives for :_rm/val(s) are boxed.
+   - Note that express keys can only appear in value position of the user's map but on rewriting
+     :rm/express 'catkey' are injected for non-express key attrs and REMOVED for express-key attrs.
+       - The attrs that are user-define express keys have the form:
+         {:slot-name ?qvar :_rm/user-key 'slot-name' :_rm/{val,vals,attrs}}
+   - The values in key-position in the base-body can be qvars strings or whatever.
+   - There is no special processing needed for qvars in key-position."
   [base-body]
   (let [key-stack (atom [])
-        schema (atom {})]
+        schema (atom support-schema)]
     (letfn [(rb [obj] ; Here there is an express-key in a map value.
               (if-let [{:keys [key-key key-val]} (and (map? obj)
                                                       (some  (fn [[k v]] (when (key-exp? v)
                                                                            {:key-key k :key-val (second v)}))
                                                              (seq obj)))]
-                (let [ident (schema-ident key-key @key-stack)]
+                (let [ident (user-key key-key)]  ; user-defined key slots don't need fancy names, but they concatenate.
                   (swap! key-stack conj key-val)
-                  (swap! schema #(assoc % ident (key-schema ident key-key @key-stack)))
-                  (swap! schema #(assoc % (user-key key-key) (exp-key-schema (user-key key-key) key-key)))
-                  (-> {}
-                      (assoc ident `(:rm/express-key ~@(deref key-stack)))
-                      (assoc :_rm/user-key key-key)
-                      (assoc :_rm/val key-val) ; was (keyword key-key), now :_rm/val
-                      (assoc :_rm/other-content (rb (dissoc obj key-key))))) ; Rest of map is under the :_rm/content
-                (cond (map? obj)            (let [result
-                                                  (reduce-kv (fn [r k v] ; Each key is treated
-                                                               (swap! key-stack conj k)
-                                                               (let [ident (schema-ident k @key-stack)
-                                                                     res (conj r
-                                                                               (-> {}
-                                                                                   (assoc ident `(:rm/express-key ~@(deref key-stack)))
-                                                                                   (assoc :_rm/user-key k)
-                                                                                   (assoc :_rm/val (rb v))))]
-                                                                 (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
-                                                                 (when (vector? v)
-                                                                   (swap! schema #(assoc-in % [ident :_rm/user-vec?] true)))
-                                                                 (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
-                                                                 res))
-                                                             []
-                                                             obj)]
-                                              ;; ToDo: Either this or fix it at :_rm/ROOT later.
-                                              (if (== 1 (count result)) (first result) result))
-                     (vector? obj)          (mapv rb obj)
-                     :else                  obj)))]
-      {:body (rb base-body)
-       :schema @schema})))
+                  (swap! schema #(assoc % ident (exp-key-schema ident key-val @key-stack))) ; schema for an express key
+                  (-> {ident `(:rm/express-key ~@(deref key-stack))}
+                      (assoc     :_rm/user-key       (-> ident str (subs 1)))
+                      (assoc     :_rm/ek-val         key-val)
+                      (assoc     :_rm/attrs          (rb (dissoc obj key-key)))))
+                      ;(assoc-in [:_rm/attrs 0 ident] key-val) ; Later!
 
+                (cond (map? obj)    (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
+                                                 (swap! key-stack conj k)
+                                                 (let [ident (schema-ident k @key-stack)
+                                                       ident-val `(:rm/express-key ~@(deref key-stack))
+                                                       attr (child-node-type v)
+                                                       child (rb v)
+                                                       res (conj r (-> {}
+                                                                       (assoc ident ident-val)
+                                                                       (assoc :_rm/user-key k)
+                                                                       (assoc attr child)))]
+                                                   (swap! schema #(assoc % ident (key-schema ident (vector? child) k @key-stack)))
+                                                   (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
+                                                   res))
+                                               []
+                                               obj)
+                     (vector? obj)    (mapv rb obj)
+                     :else            obj)))]
+      {:reduce-body (rb base-body) ;
+       :schema @schema})))
 
 ;;; ToDo: Check that there is at most one key at each map level. (filter instead of some).
 (defn rewrite-express-keys
@@ -227,31 +263,19 @@
                     :else obj))]
       (rew-keys body))))
 
-(def support-schema
-  "These are added to the schema when reducing on express-body."
-  {:_rm/ROOT          {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
-   :_rm/val           {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
-   :_rm/other-content {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
-   :_rm/user-key      {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string }
-   :box/boolean-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
-   :box/keyword-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
-   :box/number-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/number}
-   :box/string-val    {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string}})
-
-;;; ToDo: Currently not used and might not ever be useful.
-#_(defn schema-updates-from-data
-  "Return a map of :db/valueTypes by studying the data and schema."
-  [schema data]
-  (let [new-info (atom {})]
-    (letfn [(supdate [obj]
-              (cond (map? obj)        (doseq [[k v] (seq obj)]
-                                             (when (contains? schema k)
-                                               (when-let [typ (db-type-of v)]
-                                                 (swap! new-info #(assoc-in % [k :db/valueType] typ))))
-                                             (supdate v))
-                    (vector? obj)     (doall (map supdate obj))))]
-      (supdate data)
-      @new-info)))
+;;; Might go away; everything is is a :db/valueType :db.type/ref owing to boxing.
+#_(defn schema-updates-from-bset
+  "Return a map in schema-canonical form (i.e. db.ident as keys) defining the :db/valueType of
+   full-schema entries that have qvars as their :_rm/user-key. These are attributes defined by
+   express keys."
+  [schema bset]
+  (reset! diag {:schema schema :bset bset})
+  (->> (reduce-kv (fn [m k v] (if (-> v :_rm/user-key qvar?) (assoc m k v) m)) {} schema)
+       (reduce-kv (fn [m k v] (let [qvar (:_rm/user-key v)]
+                                (if (contains? bset qvar)
+                                  (assoc m k {:db/valueType (-> (get bset qvar) db-type-of)})
+                                  m)))
+                  {})))
 
 ;;; BTW, I can make a trivial DB on my laptop using this in 6 milliseconds.
 ;;; ToDo: Where I'm creating DBs for short-term use (e.g. express reduce) we need to d/delete-database when done!

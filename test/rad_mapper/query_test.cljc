@@ -1012,9 +1012,96 @@
                   $reduce($bsets,
                           express(){{'owners': [{'owner/id'     : key(?ownerName),
                                                  'systems'      : [{'system/id'  : key(?systemName),
-                                                                    'devices'    : [{'device/name' : key(?deviceName),
-                                                                                     'device/id'   : ?id,
-                                                                                     'status'      : ?status}]}]}]}
+                                                                    'devices'    : [{'device/id'     : key(?id),
+                                                                                     'device/name'   : ?deviceName,
+                                                                                     'device/status' : ?status}]}]}]}
+                                   }  )
+                  )"
+      run))
+
+
+(defn tryme1-small
+  [] ; This is use of keys and no namespaces
+  (-> "($data := {'systems':
+ {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'},
+                                    'device2': {'id': 200, 'status': 'Ok'}},
+                         'owner2': {'device3': {'id': 300, 'status': 'Ok'},
+                                    'device4': {'id': 400, 'status': 'Ok'}}}},
+  'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'},
+                                    'device6': {'id': 600, 'status': 'Ok'}},
+                         'owner2': {'device7': {'id': 700, 'status': 'Ok'},
+                                    'device8': {'id': 800, 'status': 'Ok'}}}}}};
+
+                  $q := query(){ [?s ?systemName ?x]
+                                 [($match(?systemName, /system\\d/))]
+                                 [?x :owners ?y]
+                                 [?y ?ownerName ?z]
+                                 [($match(?ownerName, /owner\\d/))]
+                                 [?z ?deviceName ?d]
+                                 [($match(?deviceName, /device\\d/))]
+                                 [?d :id ?id]
+                                 [?d :status ?status] };
+
+                  $bsets := $q($data);
+
+                  $reduce($bsets,
+                          express(){{'devices'    : [{'device/id'     : key(?id),
+                                                      'device/name'   : ?deviceName,
+                                                      'device/status' : ?status}]}
+                                   }  )
+                  )"
+      run))
+
+(defn tryme1-small-data
+  [] ; This is use of keys and no namespaces
+  (-> "($data := {'systems':
+                   {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'},
+                                                      'device2': {'id': 200, 'status': 'Ok'}}}}
+                    'system2': {'owners': {'owner1': {'device5': {'id': 500, 'status': 'Ok'}}}}}}
+
+                  $q := query(){ [?s ?systemName ?x]
+                                 [($match(?systemName, /system\\d/))]
+                                 [?x :owners ?y]
+                                 [?y ?ownerName ?z]
+                                 [($match(?ownerName, /owner\\d/))]
+                                 [?z ?deviceName ?d]
+                                 [($match(?deviceName, /device\\d/))]
+                                 [?d :id ?id]
+                                 [?d :status ?status] };
+
+                  $bsets := $q($data);
+
+                  $reduce($bsets,
+                          express(){{'owners': [{'owner/id'     : key(?ownerName),
+                                                 'systems'      : [{'system/id'  : key(?systemName),
+                                                                    'devices'    : [{'device/id'     : key(?id),
+                                                                                     'device/name'   : ?deviceName,
+                                                                                     'device/status' : ?status}]}]}]}
+                                    })
+                  )"
+      run))
+
+
+(defn tryme1-smallest
+  [] ; This is use of keys and no namespaces
+  (-> "($data := {'systems':
+                   {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}}}}}};
+
+                  $q := query(){ [?s ?systemName ?x]
+                                 [($match(?systemName, /system\\d/))]
+                                 [?x :owners ?y]
+                                 [?y ?ownerName ?z]
+                                 [($match(?ownerName, /owner\\d/))]
+                                 [?z ?deviceName ?d]
+                                 [($match(?deviceName, /device\\d/))]
+                                 [?d :id ?id]
+                                 [?d :status ?status] };
+
+                  $bsets := $q($data);
+
+                  $reduce($bsets,
+                          express(){{'devices'    : [{'device/id'     : key(?id),
+                                                      'device/status' : ?status}]}
                                    }  )
                   )"
       run))
@@ -1047,7 +1134,31 @@
                                  }
                          )
                  )"
+      run))
+
+(defn tryme2-smallest []
+  (-> "($data := {'systems':
+                    {'system1': {'owners': {'owner1': {'device1': {'id': 100, 'status': 'Ok'}}}}}};
+                     $q := query(){ [?s ?systemName ?x]
+                                    [($match(?systemName, /system\\d/))]
+                                    [?x :owners ?y]
+                                    [?y ?ownerName ?z]
+                                    [($match(?ownerName, /owner\\d/))]
+                                    [?z ?deviceName ?d]
+                                    [($match(?deviceName, /device\\d/))]
+                                    [?d :id ?id]
+                                    [?d :status ?status] };
+
+                  $bsets := $q($data);
+
+                  $reduce($bsets,
+                          express()
+                                 { {'result': {?deviceName : {'id'     : ?id}}}
+                                 }
+                         )
+                 )"
               run))
+
 
 
 (defn tryme-rew []

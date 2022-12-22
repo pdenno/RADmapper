@@ -163,11 +163,11 @@
 (defrewrite :ExpressDef [m]
   (let [params    (-> m :params rewrite)
         base-body (binding [*inside-express?* true] (-> m :body rewrite))
-        {:keys [body schema]}  (qu/schematic-express-body base-body)]
+        {:keys [reduce-body schema]}  (qu/schematic-express-body base-body)]
     `(~'bi/express {:params      '~(remove map? params)
                     :options     '~(some #(when (map? %) %) params)
                     :base-body   '~base-body
-                    :reduce-body '~body
+                    :reduce-body '~reduce-body
                     :schema      '~schema})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
