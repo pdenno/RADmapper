@@ -1748,19 +1748,20 @@
         be used with binding sets.
      The function returned has meta {express? true} so that, for example, $reduce
      knows that there should be a database involved."
-  [& {:keys [params options base-body reduce-body schema]}]
+  [& {:keys [params options base-body reduce-body schema key-order]}]
     (if (empty? params)
       ;; The immediate function:
         (-> (fn [bset] (evaluate-express-body bset base-body reduce-body))
             ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/reduce-body for debugging.
             (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
-                        :bi/base-body base-body :bi/reduce-body reduce-body}))
+                        :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))
         ;; body has template params that must be replaced; new-body.
         (-> (fn [& psubs]
               (let [new-base-body   (express-sub base-body   (zipmap params psubs))
                     new-reduce-body (express-sub reduce-body (zipmap params psubs))]
                 (-> (fn [bset] (evaluate-express-body bset new-base-body new-reduce-body))
-                    (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema}))))
+                    (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
+                                :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))))
             (with-meta {:bi/express-template? true}))))
 
 (defn boxit [obj]
@@ -1826,51 +1827,67 @@
     (es-aux form)))
 
 (defn domain-attr
-  "Return schema info of the one domain attribute in the argument reduce-schematic object."
+  "Return schema info of the one domain attribute in the argument 'schematic-body' reduced object."
   [obj dschema]
   (some #(when (contains? dschema %) (get dschema %)) (keys obj)))
 
-;;; This is the 'universal' version.
-(defn redex-keys-values  ; BEST
-    [data schema]
-    (swap! diag #(assoc % :redex-data data))
-    (let [support-key? (-> qu/support-schema keys set)
-          dschema (reduce-kv (fn [m k v] (if (support-key? k) m (assoc m k v))) {} schema)]
-      (letfn [(rkv [obj]
-                (cond  (map? obj)
-                       (cond (contains? obj :_rm/attrs)
-                             (let [{:_rm/keys [exp-key?]} (domain-attr obj dschema)]
-                               (swap! diag #(-> % (assoc :the-obj obj) (assoc  :exp-key? exp-key?)))
-                               (->> (reduce (fn [m attr] (assoc m (:_rm/user-key attr) (rkv attr)))
-                                            (if exp-key? {(:_rm/user-key obj) (:_rm/ek-val obj)} {})
-                                            (:_rm/attrs obj))
-                                    (into (sorted-map)))) ; ToDo: sorted-map-by if not qvar-key?
-                             (contains? obj :_rm/vals) (rkv (get obj :_rm/vals))
-                             (contains? obj :_rm/val ) (rkv (get obj :_rm/val )))
-                       (vector? obj) (mapv rkv obj)
-                       :else         obj))]
-        ;; ToDo: We start like this to pick up the outer-most structure, but why is that necessary?
-        {(-> data :_rm/ROOT first :_rm/user-key) (rkv (-> data :_rm/ROOT first))})))
-
-(defn cleanup-post-db-data
-  "Return the evaluated express body with
-     1) user map keys replacing :_rm keys,
-     2) vector values of :_rm/val replaced with first where user intended single value.
-     3) boxed values unboxed.
-   Argument schema
-     a) should have :_rm/ROOT (to 'deroot' it, if necessary
-     b) need only have other entries that are :db/unique attrs."
+;;; "redex" is reduce on express body.
+(defn redex-keys-values
   [data schema]
-  (as-> data ?d
-    (unbox-vals ?d)
-    (do (swap! diag #(assoc % :unboxed ?d)) ?d)
-    (redex-keys-values ?d schema)))
+  (let [support-key? (-> qu/support-schema keys set)
+        dschema (reduce-kv (fn [m k v] (if (support-key? k) m (assoc m k v))) {} schema)]
+    (letfn [(rkv [obj]
+              (cond  (map? obj)
+                     (cond (contains? obj :_rm/attrs) ; qvar-in-key-pos maps, express key maps...any map!
+                           (let [{:_rm/keys [exp-key?]} (domain-attr obj dschema)]
+                             (reduce (fn [m attr] (assoc m (:_rm/user-key attr) (rkv attr)))
+                                     (if exp-key?
+                                       (-> {(:_rm/user-key obj) (:_rm/ek-val obj)}
+                                           (assoc :_rm/ek-val   (:_rm/ek-val obj))) ; For subsequent sorting
+                                       {})
+                                     (:_rm/attrs obj)))
+                           (contains? obj :_rm/vals) (rkv (get obj :_rm/vals))
+                           (contains? obj :_rm/val ) (rkv (get obj :_rm/val )))
+                     (vector? obj) (mapv rkv obj)
+                     :else         obj))]
+      ;; ToDo: We start like this to pick up the outer-most structure, but why is that necessary?
+      {(-> data :_rm/ROOT first :_rm/user-key) (rkv (-> data :_rm/ROOT first))})))
 
-;;; Might go away; everything is is a :db/valueType :db.type/ref owing to boxing.
-#_(defn merge-schema
-  "Merge values (maps) at keys that are :db.ident."
-  [schema updates]
-  (reduce-kv (fn [m k v] (assoc m k (merge (get m k) v))) schema updates))
+(defn sort-by-body
+  "Walk through redex-keys-values-processed output sorting
+     (a) its vectors of express-keyed  maps by by their express-keys (_:rm/ek-val) and
+     (b) its maps by their keys." ; If nothing else, this make testing easier!
+  [data key-order]
+  (let [known-key? (set key-order)]
+    (letfn [(compar [k1 k2]
+              (if (and (known-key? k1) (known-key? k2))
+                (< (.indexOf key-order k1) (.indexOf key-order k2))
+                (compare k1 k2)))
+            (ek-vec? [obj]
+              (and (vector? obj)
+                   (every? #(contains? % :_rm/ek-val) obj)))
+            (sbek [obj]
+              (cond (ek-vec? obj)     (->> (sort-by :_rm/ek-val obj) (mapv #(dissoc % :_rm/ek-val)) sbek),
+                    (vector? obj)     (mapv sbek obj),
+                    (map? obj)        (->> (reduce-kv (fn [m k v] (assoc m k (sbek v))) {} obj)
+                                           (into (sorted-map-by compar))),
+                    :else             obj))]
+    (sbek data))))
+
+(defn redex-data-cleanup
+  "Return the evaluated express body in the form expected of output from $reduce on
+   and express body. This entails:
+     1) user express body keys replacing :_rm 'domain' keys,
+     2) maps, vectors, and values replacing :_rm/attrs :_rm/vals and :_rm/val respectively,
+     3) boxed values unboxed,
+     4) and (by default), things sorted nicely.
+   schema argument should be 'full-schema' (containing :_rm entries).
+   key-order argument is the order of keys found in the base body."
+  [data schema key-order]
+  (-> data
+      unbox-vals
+      (redex-keys-values schema)
+      (sort-by-body key-order)))
 
 (defn create-lookup-refs
   "Return a vector of {:db/id [attr val]} corresponding to entities to establish before sending data.
@@ -1911,14 +1928,12 @@
    The result is the value of the the express body reduced by the data."
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
-   (reset! diag {:reduce-body (-> efn meta :bi/reduce-body)})
    (let [full-schema (-> efn meta :bi/schema)
          data        (->> (mapv efn b-sets) walk/keywordize-keys)
          lookup-refs (create-lookup-refs full-schema data)
          data        (data-with-lookups full-schema data)
-         ;full-schema (merge-schema schema (qu/schema-updates-from-bset schema (first b-sets)))
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
-         zippy       (reset! diag {:schema      full-schema
+         #_#_zippy       (reset! diag {:schema      full-schema
                                    :efn         efn
                                    :lookup-refs lookup-refs
                                    :reduce-body (-> efn meta :bi/reduce-body)
@@ -1927,7 +1942,7 @@
                                    :b-sets      b-sets
                                    :data        data})
          db-atm      (qu/db-for! [] :known-schema db-schema :learn? false)]
-     (swap! diag #(assoc % :db-atm db-atm))
+     #_(swap! diag #(assoc % :db-atm db-atm))
      ;; Inserting objects lookup-refs and data one at a time helps us catch errors.
      (doseq [obj lookup-refs] (d/transact db-atm {:tx-data [obj]})) ; lookup-refs MUST be one at a time!
      (doseq [obj data] (d/transact db-atm {:tx-data [{:_rm/ROOT obj}]}))
@@ -1936,8 +1951,7 @@
      ;;       So I want that to merge or look like $map on the base-body?
      (let [root-eid  (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)
            pre-clean (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})]
-       (swap! diag #(-> % (assoc :root-eid root-eid) (assoc :pre-clean pre-clean)))
-       (cleanup-post-db-data pre-clean full-schema)))))
+       (redex-data-cleanup pre-clean full-schema (-> efn meta :bi/key-order))))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

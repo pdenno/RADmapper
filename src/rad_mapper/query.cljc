@@ -145,7 +145,7 @@
   {:db/unique :db.unique/identity
    :db/valueType :db.type/string
    :db/cardinality (if many? :db.cardinality/many :db.cardinality/one)
-   :_rm/cat-key all-keys
+   :_rm/cat-key all-keys ; ToDo: This is just for debugging, I think.
    :_rm/self ident
    :_rm/user-key k})
 
@@ -161,7 +161,7 @@
   {:db/unique :db.unique/identity
    :db/valueType :db.type/string,
    :db/cardinality :db.cardinality/one,
-   :_rm/cat-key all-keys
+   :_rm/cat-key all-keys ; ToDo: This is just for debugging, I think.
    :_rm/self ident
    :_rm/user-key k ; Will be a qvar.
    :_rm/exp-key? true})
@@ -175,7 +175,7 @@
     (keyword nspace (string/replace (str nam) "/" "*"))
     (keyword s)))
 
-;;; Here :rm/express-key are implied by qvar; they aren't spelled out the base-body.
+;;; Here :rm/express-key are implied by qvar; they aren't spelled out in the base-body.
 ;;;              {'owners':
 ;;;                 {?ownerName:
 ;;;                    {'systems':
@@ -262,20 +262,6 @@
                     (vector? obj) (doall (mapv rew-keys obj))
                     :else obj))]
       (rew-keys body))))
-
-;;; Might go away; everything is is a :db/valueType :db.type/ref owing to boxing.
-#_(defn schema-updates-from-bset
-  "Return a map in schema-canonical form (i.e. db.ident as keys) defining the :db/valueType of
-   full-schema entries that have qvars as their :_rm/user-key. These are attributes defined by
-   express keys."
-  [schema bset]
-  (reset! diag {:schema schema :bset bset})
-  (->> (reduce-kv (fn [m k v] (if (-> v :_rm/user-key qvar?) (assoc m k v) m)) {} schema)
-       (reduce-kv (fn [m k v] (let [qvar (:_rm/user-key v)]
-                                (if (contains? bset qvar)
-                                  (assoc m k {:db/valueType (-> (get bset qvar) db-type-of)})
-                                  m)))
-                  {})))
 
 ;;; BTW, I can make a trivial DB on my laptop using this in 6 milliseconds.
 ;;; ToDo: Where I'm creating DBs for short-term use (e.g. express reduce) we need to d/delete-database when done!

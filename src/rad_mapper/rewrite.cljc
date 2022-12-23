@@ -160,24 +160,30 @@
       (re-pattern (cl-format nil "~A" body))
       (re-pattern (cl-format nil "(?~A)~A" flag-str body)))))
 
+(def key-order "ExpressDef key string in the order they appear; use for pretty printing results" (atom []))
+
 (defrewrite :ExpressDef [m]
+  (reset! key-order [])
   (let [params    (-> m :params rewrite)
         base-body (binding [*inside-express?* true] (-> m :body rewrite))
+        order @key-order
         {:keys [reduce-body schema]}  (qu/schematic-express-body base-body)]
     `(~'bi/express {:params      '~(remove map? params)
                     :options     '~(some #(when (map? %) %) params)
                     :base-body   '~base-body
                     :reduce-body '~reduce-body
+                    :key-order   ~order
                     :schema      '~schema})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
-;;; Below they are interleaved.
+;;; Below the code is interleaved.
 (defrewrite :ObjExp [m]
   `(-> {}
        ~@(map rewrite (:kv-pairs m))))
 
 (defrewrite :ExpressMap [m]
   (reduce (fn [res kv-pair]
+            (when (-> kv-pair :key string?) (swap! key-order #(conj % (:key kv-pair))))
             (assoc res (-> kv-pair :key rewrite) (-> kv-pair :val rewrite)))
           {}
           (:kv-pairs m)))
