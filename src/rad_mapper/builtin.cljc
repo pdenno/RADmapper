@@ -1834,18 +1834,19 @@
 ;;; "redex" is reduce on express body.
 (defn redex-keys-values
   [data schema]
+  (swap! diag #(assoc % :redex-data data))
   (let [support-key? (-> qu/support-schema keys set)
         dschema (reduce-kv (fn [m k v] (if (support-key? k) m (assoc m k v))) {} schema)]
     (letfn [(rkv [obj]
-              (cond  (map? obj)
-                     (cond (contains? obj :_rm/attrs) ; qvar-in-key-pos maps, express key maps...any map!
+              (cond  (map? obj) ; 1st is any map, but for :_rm/attrs may be missing because empty (just express key).
+                     (cond (or (contains? obj :_rm/attrs) (contains? obj :_rm/ek-val))
                            (let [{:_rm/keys [exp-key?]} (domain-attr obj dschema)]
                              (reduce (fn [m attr] (assoc m (:_rm/user-key attr) (rkv attr)))
                                      (if exp-key?
                                        (-> {(:_rm/user-key obj) (:_rm/ek-val obj)}
                                            (assoc :_rm/ek-val   (:_rm/ek-val obj))) ; For subsequent sorting
                                        {})
-                                     (:_rm/attrs obj)))
+                                     (:_rm/attrs obj))) ; Could be empty; then just express key and :_rm/ek-val
                            (contains? obj :_rm/vals) (rkv (get obj :_rm/vals))
                            (contains? obj :_rm/val ) (rkv (get obj :_rm/val )))
                      (vector? obj) (mapv rkv obj)
@@ -1853,6 +1854,7 @@
       ;; ToDo: We start like this to pick up the outer-most structure, but why is that necessary?
       {(-> data :_rm/ROOT first :_rm/user-key) (rkv (-> data :_rm/ROOT first))})))
 
+;;; ToDo: Do sort-by-body when *in-reduce* = false. Might not be straightforward!
 (defn sort-by-body
   "Walk through redex-keys-values-processed output sorting
      (a) its vectors of express-keyed  maps by by their express-keys (_:rm/ek-val) and
@@ -1870,6 +1872,7 @@
               (cond (ek-vec? obj)     (->> (sort-by :_rm/ek-val obj) (mapv #(dissoc % :_rm/ek-val)) sbek),
                     (vector? obj)     (mapv sbek obj),
                     (map? obj)        (->> (reduce-kv (fn [m k v] (assoc m k (sbek v))) {} obj)
+9                                           (reduce-kv (fn [m k v] (if (= k :_rm/ek-val) m (assoc m k v))) {})
                                            (into (sorted-map-by compar))),
                     :else             obj))]
     (sbek data))))
@@ -1933,7 +1936,7 @@
          lookup-refs (create-lookup-refs full-schema data)
          data        (data-with-lookups full-schema data)
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
-         #_#_zippy       (reset! diag {:schema      full-schema
+         zippy       (reset! diag {:schema      full-schema
                                    :efn         efn
                                    :lookup-refs lookup-refs
                                    :reduce-body (-> efn meta :bi/reduce-body)
@@ -1951,6 +1954,7 @@
      ;;       So I want that to merge or look like $map on the base-body?
      (let [root-eid  (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)
            pre-clean (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})]
+       (swap! diag #(assoc % :pre-clean pre-clean))
        (redex-data-cleanup pre-clean full-schema (-> efn meta :bi/key-order))))))
 
 ;;;---- not express ------------

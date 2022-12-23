@@ -215,9 +215,9 @@
                   (swap! schema #(assoc % ident (exp-key-schema ident key-val @key-stack))) ; schema for an express key
                   (-> {ident `(:rm/express-key ~@(deref key-stack))}
                       (assoc     :_rm/user-key       (-> ident str (subs 1)))
-                      (assoc     :_rm/ek-val         key-val)
-                      (assoc     :_rm/attrs          (rb (dissoc obj key-key)))))
-                      ;(assoc-in [:_rm/attrs 0 ident] key-val) ; Later!
+                      (assoc     :_rm/ek-val         key-val) ; This goes away if I can make the assoc-in work! <==========
+                      (assoc     :_rm/attrs          (rb (dissoc obj key-key)))
+                      #_(assoc-in [:_rm/attrs 0 ident] key-val))) ; Later! ; In which I'd call it :_rm/map
 
                 (cond (map? obj)    (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
                                                  (swap! key-stack conj k)
