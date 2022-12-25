@@ -264,9 +264,8 @@
         (swap! where-atm #(conj % pat))))
     {:where `'~(deref where-atm)
      :in `'~(into dbs (-> @pred-subs keys))
-     :dbs `'~dbs
-     :pred-args (-> @pred-subs vals vec)
-     }))
+     :dbs `'~dbs ; ToDo: :dbs not used; calculated in builtin, I think.
+     :pred-args (-> @pred-subs vals vec)}))
 
 (defrewrite :QueryDef [m]
   (let [pats (->> m :patterns (filter #(= (:typ %) :QueryPattern)))]
@@ -275,7 +274,7 @@
       `(~'bi/query
         {:body ~where
          :in ~in
-         :dbs ~dbs
+         :dbs ~dbs ; ToDo: :dbs not used; calculated in builtin, I think.
          :pred-args ~pred-args
          :params '~(mapv rewrite (:params m))
          :options ~(-> m :options rewrite)}))

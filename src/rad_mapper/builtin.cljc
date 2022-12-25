@@ -1598,12 +1598,7 @@
   [data]
   (qu/db-for! data))
 
-;;;============================= Mapping Context, query, express ======================
-
-;;; Thoughts on schema
-;;;   - Learned schema are sufficient for source data (uses qu/db-for!)
-;;;   - What is provided as argument overrides what is learned in $query.
-;;;   - $express could be with an argument schema.
+;;;============================= query, express ======================
 (defn $schemaFor
   "Study the argument data and heuristically suggest the types and multiplicity of data.
    Note that this function does not make a guess at what the keys (db/key) are."
@@ -1738,7 +1733,7 @@
 ;;;      (2) the use of :db.unique/identity for 'assoc-in-like' mapping over bodies instantiated by bsets.
 ;;;      (3) the differences in how the two key positions are handled (express keys vs. qvar in key position).
 ;;;      (4) the avoidance of constant keys in the DB and :_rm/constant-parent (RENAME IT LIKE THIS???)
-(declare evaluate-express-body express-sub cleanup-express)
+(declare evaluate-express-body express-sub)
 
 (defn express
   "Return an function that either
@@ -1833,20 +1828,6 @@
                   :else x))]
     (es-aux form)))
 
-(defn body-type
-  "Characterize the type of the express body (base-body) so as to know how to interpret the :_rm/ROOT."
-  [bbody]
-  (cond (and (map? bbody)
-             (some #(and (seq? %) (= :rm/express-key (first %)))
-                   (vals bbody)))                                      :body/keyed-map
-        (map? bbody)                                                   :body/map
-        :else                                                          :body/other))
-
-(defn domain-attr
-  "Return schema info of the one domain attribute in the argument 'schematic-body' reduced object."
-  [obj dschema]
-  (some #(when (contains? dschema %) (get dschema %)) (keys obj)))
-
 ;;; "redex" is reduce on express body.
 (defn redex-keys-values
   "Rewrite the :_rm/ROOT object retrieved from the database so that it matches the shape that
@@ -1866,7 +1847,7 @@
                                      (assoc :_rm/ek-val   (:_rm/ek-val obj))) ; For subsequent sorting
                                  (:_rm/attrs obj)) ; Could be empty; then just express key and :_rm/ek-val
 
-                         (contains? obj :_rm/attrs) ; ordinary or qvar key. Each attr defines a key and
+                         (contains? obj :_rm/attrs) ; ordinary or qvar key. Each attr defines one key and value.
                          {(:_rm/user-key obj) (reduce (fn [m attr]
                                                         (let [[k v] (-> attr rkv seq first vec)] ; It is (and map? count==1)
                                                           (assoc m k v)))
