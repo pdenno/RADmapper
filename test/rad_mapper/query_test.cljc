@@ -757,82 +757,150 @@
                               }  )
                   )")))))
 
-;;;======================================= express body reduction tests ========================
-(deftest express-body-reduction-smallest
-  (testing "Testing a very small express body Type 1 reduction (express keys)."
-    (is (= {"devices" [{"device/id" 100} {"device/id" 200}]}
-           (run "$reduce([{?deviceName : 'device1', ?id : 100},
+(deftest express-body-map-small
+  (testing "Test small express body $map with various body topology (not that it matters much!)."
+    (testing "Testing Type 1 (express keys) -- vector."
+      (run-test "$map([{?deviceName : 'device1', ?id : 100},
+                       {?deviceName : 'device2', ?id : 200}],
+                      express{{'device/id' : key(?id)}})"
+
+               [{"device/id" 100} {"device/id" 200}]))
+
+    (testing "Testing Type 2 (qvar-in-key-pos) -- vector."
+       (run-test "$map([{?deviceName : 'device1', ?id : 100},
+                        {?deviceName : 'device2', ?id : 200}],
+                      express{{?deviceName : {'id' : ?id}}})"
+
+                 [{"device1" {"id" 100}}, {"device2" {"id" 200}}]))))
+
+;;;=========================== express body $reduce / $map tests ========================
+;;; Currently, express body must be a map structure. I think iteration can be
+;;; addressed either through use of $map and $merge or a vector under the key
+;;; as in the tests below (e.g. express-body-reduce-small).
+;;; Also, the reduce on the body could be part of a larger expression.
+(deftest express-body-reduce-small
+  (testing "Test small express body $reduce with various body topology."
+    (testing "Testing Type 1 (express keys) -- map."
+      (run-test "$reduce([{?deviceName : 'device1', ?id : 100},
                           {?deviceName : 'device2', ?id : 200}],
-                         express{{'devices' : [{'device/id' : key(?id)}]}})"))))
-  (testing "Testing a very small express body reduction."
-    (is (= {"result" {"device1" {"id" 100}, "device2" {"id" 200}}}
-           (run "$reduce([{?deviceName : 'device1', ?id : 100},
+                         express{{'devices' : [{'device/id' : key(?id)}]}})"
+
+                {"devices" [{"device/id" 100} {"device/id" 200}]}))
+
+    (testing "Testing Type 2 (qvar-in-key-pos) -- map."
+      (run-test "$reduce([{?deviceName : 'device1', ?id : 100},
                           {?deviceName : 'device2', ?id : 200}]
-                         express(){{'result' : {?deviceName : {'id' : ?id}}}})")))))
+                         express{{'devices' : {?deviceName : {'id' : ?id}}}})"
 
-(deftest express-body-reduction-type1
+                {"devices" {"device1" {"id" 100}, "device2" {"id" 200}}}))))
+
+(deftest express-body-reduce-medium-type1
+  (testing "Test medium-sized express body $reduce / $maps with various body topology."
+    (testing "Testing Type 1 (express keys)"
+      (run-test "$reduce([{?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status : 'Ok', ?ownerName : 'owner1'},
+                          {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status : 'Ok', ?ownerName : 'owner2'}],
+
+                         express(){{'owners': [{'owner/id' : key(?ownerName),
+                                                'systems'  : [{'system/id'  : key(?systemName),
+                                                               'devices'    : [{'device/id'     : key(?id),
+                                                                                'device/name'   : ?deviceName,
+                                                                                'device/status' : ?status}]}]}]}})"
+                {"owners"
+                 [{"owner/id" "owner1",
+                   "systems" [{"system/id" "system1",
+                               "devices" [{"device/id" 100, "device/name" "device1", "device/status" "Ok"}]}]}
+                  {"owner/id" "owner2",
+                   "systems" [{"system/id" "system2",
+                               "devices" [{"device/id" 800, "device/name" "device8", "device/status" "Ok"}]}]}]}))))
+
+(deftest express-body-reduce-medium-type2
+  (testing "Test medium-sized express body $reduce / $maps with various body topology."
+    (testing "Testing Type 2 (qvar-in-key-pos)"
+      (run-test "$reduce([{?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status : 'Ok', ?ownerName : 'owner1'},
+                          {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status : 'Ok', ?ownerName : 'owner2'}],
+
+                         express{ {'owners':
+                                    {?ownerName:
+                                       {'systems':
+                                          {?systemName:
+                                             {?deviceName : {'id'     : ?id,
+                                                           'status' : ?status}}}}}}})"
+
+             {"owners" {"owner1" {"systems" {"system1" {"device1" {"id" 100, "status" "Ok"}}}}
+                        "owner2" {"systems" {"system2" {"device8" {"id" 800, "status" "Ok"}}}}}}))))
+
+(deftest express-body-reduce-medium-mixed
+  (testing "Test mediuum-sized express body with mixed keys/qvars."
+    (run-test "$reduce([{?systemName : 'system1', ?id : 100, ?ownerName : 'owner1'},
+                        {?systemName : 'system2', ?id : 800, ?ownerName : 'owner2'}],
+
+                       express{ {?ownerName : {'systems'  : [{'system/id'  : key(?systemName),
+                                                              'devices'    : [{'device/id'     : key(?id)}]}]}} })"
+
+              {"owner1" {"systems" [{"system/id" "system1", "devices" [{"device/id" 100}]}]}
+               "owner2" {"systems" [{"system/id" "system2", "devices" [{"device/id" 800}]}]}})))
+
+(deftest express-body-reduce-type1
   (testing "Testing express body type 1 reduction (use of express keys)"
-    (is (= {"owners"
-            [{"owner/id" "owner1",
-              "systems" [{"system/id" "system1",
-                          "devices" [{"device/id" 100, "device/name" "device1", "device/status" "Ok"}
-                                     {"device/id" 200, "device/name" "device2", "device/status" "Ok"}]}
-                         {"system/id" "system2",
-                          "devices" [{"device/id" 500, "device/name" "device5", "device/status" "Ok"}
-                                     {"device/id" 600, "device/name" "device6", "device/status" "Ok"}]}]}
-             {"owner/id" "owner2",
-              "systems" [{"system/id" "system1",
-                          "devices" [{"device/id" 300, "device/name" "device3", "device/status" "Ok"}
-                                     {"device/id" 400, "device/name" "device4", "device/status" "Ok"}]}
-                         {"system/id" "system2",
-                          "devices" [{"device/id" 700, "device/name" "device7", "device/status" "Ok"}
-                                     {"device/id" 800, "device/name" "device8", "device/status" "Ok"}]}]}]}
-           (run "($bsets := [{?systemName : 'system1', ?deviceName : 'device3', ?id : 300, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system1', ?deviceName : 'device4', ?id : 400, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system2', ?deviceName : 'device5', ?id : 500, ?status : 'Ok', ?ownerName : 'owner1'},
-                             {?systemName : 'system2', ?deviceName : 'device7', ?id : 700, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system2', ?deviceName : 'device6', ?id : 600, ?status : 'Ok', ?ownerName : 'owner1'},
-                             {?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status : 'Ok', ?ownerName : 'owner1'},
-                             {?systemName : 'system1', ?deviceName : 'device2', ?id : 200, ?status : 'Ok', ?ownerName : 'owner1'}];
+    (run-test "($bsets := [{?systemName : 'system1', ?deviceName : 'device3', ?id : 300, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system1', ?deviceName : 'device4', ?id : 400, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system2', ?deviceName : 'device5', ?id : 500, ?status : 'Ok', ?ownerName : 'owner1'},
+                           {?systemName : 'system2', ?deviceName : 'device7', ?id : 700, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system2', ?deviceName : 'device6', ?id : 600, ?status : 'Ok', ?ownerName : 'owner1'},
+                           {?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status : 'Ok', ?ownerName : 'owner1'},
+                           {?systemName : 'system1', ?deviceName : 'device2', ?id : 200, ?status : 'Ok', ?ownerName : 'owner1'}];
 
-                  $reduce($bsets,
-                          express(){{'owners': [{'owner/id' : key(?ownerName),
-                                                 'systems'  : [{'system/id'  : key(?systemName),
-                                                                'devices'    : [{'device/id'     : key(?id),
-                                                                                 'device/name'   : ?deviceName,
-                                                                                  'device/status' : ?status}]}]}]}
-                          }))")))))
+                $reduce($bsets,
+                        express(){{'owners': [{'owner/id' : key(?ownerName),
+                                               'systems'  : [{'system/id'  : key(?systemName),
+                                                              'devices'    : [{'device/id'     : key(?id),
+                                                                               'device/name'   : ?deviceName,
+                                                                               'device/status' : ?status}]}]}]}}))"
 
-(deftest express-body-reduction-type2
+             {"owners" [{"owner/id" "owner1",
+                         "systems" [{"system/id" "system1",
+                                     "devices" [{"device/id" 100, "device/name" "device1", "device/status" "Ok"}
+                                                {"device/id" 200, "device/name" "device2", "device/status" "Ok"}]}
+                                    {"system/id" "system2",
+                                     "devices" [{"device/id" 500, "device/name" "device5", "device/status" "Ok"}
+                                                {"device/id" 600, "device/name" "device6", "device/status" "Ok"}]}]}
+                        {"owner/id" "owner2",
+                         "systems" [{"system/id" "system1",
+                                     "devices" [{"device/id" 300, "device/name" "device3", "device/status" "Ok"}
+                                                {"device/id" 400, "device/name" "device4", "device/status" "Ok"}]}
+                                    {"system/id" "system2",
+                                     "devices" [{"device/id" 700, "device/name" "device7", "device/status" "Ok"}
+                                                {"device/id" 800, "device/name" "device8", "device/status" "Ok"}]}]}]})))
+
+(deftest express-body-reduce-type2
   (testing "Testing express body type 1 reduction (use of express keys)"
-    (is (= {"owners"
-            {"owner1" {"systems" {"system1" {"device1" {"id" 100, "status" "Ok"},
-                                             "device2" {"id" 200, "status" "Ok"}},
-                                  "system2" {"device5" {"id" 500, "status" "Ok"},
-                                             "device6" {"id" 600, "status" "Ok"}}}},
-             "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
-                                             "device4" {"id" 400, "status" "Ok"}},
-                                  "system2" {"device7" {"id" 700, "status" "Ok"},
-                                             "device8" {"id" 800, "status" "Ok"}}}}}}
-           (run "($bsets := [{?systemName : 'system1', ?deviceName : 'device3', ?id : 300, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system1', ?deviceName : 'device4', ?id : 400, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system2', ?deviceName : 'device5', ?id : 500, ?status : 'Ok', ?ownerName : 'owner1'},
-                             {?systemName : 'system2', ?deviceName : 'device7', ?id : 700, ?status : 'Ok', ?ownerName : 'owner2'},
-                             {?systemName : 'system2', ?deviceName : 'device6', ?id : 600, ?status : 'Ok', ?ownerName : 'owner1'},
-                             {?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status : 'Ok', ?ownerName : 'owner1'},
-                             {?systemName : 'system1', ?deviceName : 'device2', ?id : 200, ?status : 'Ok', ?ownerName : 'owner1'}];
+    (run-test "($bsets := [{?systemName : 'system1', ?deviceName : 'device3', ?id : 300, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system1', ?deviceName : 'device4', ?id : 400, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system2', ?deviceName : 'device5', ?id : 500, ?status : 'Ok', ?ownerName : 'owner1'},
+                           {?systemName : 'system2', ?deviceName : 'device7', ?id : 700, ?status : 'Ok', ?ownerName : 'owner2'},
+                           {?systemName : 'system2', ?deviceName : 'device6', ?id : 600, ?status : 'Ok', ?ownerName : 'owner1'},
+                           {?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status : 'Ok', ?ownerName : 'owner1'},
+                           {?systemName : 'system1', ?deviceName : 'device2', ?id : 200, ?status : 'Ok', ?ownerName : 'owner1'}];
 
-                  $reduce($bsets,
-                          express()
-                                 {  {'owners':
-                                       {?ownerName:
-                                          {'systems':
-                                             {?systemName:
-                                                {?deviceName : {'id'     : ?id,
-                                                                'status' : ?status}}}}}}
-                                 }))")))))
+                $reduce($bsets,
+                        express()
+                               {  {'owners':
+                                     {?ownerName:
+                                        {'systems':
+                                           {?systemName:
+                                              {?deviceName : {'id'     : ?id,
+                                                              'status' : ?status}}}}}}}))"
+
+             {"owners" {"owner1" {"systems" {"system1" {"device1" {"id" 100, "status" "Ok"},
+                                                        "device2" {"id" 200, "status" "Ok"}},
+                                             "system2" {"device5" {"id" 500, "status" "Ok"},
+                                                        "device6" {"id" 600, "status" "Ok"}}}},
+                        "owner2" {"systems" {"system1" {"device3" {"id" 300, "status" "Ok"},
+                                                        "device4" {"id" 400, "status" "Ok"}},
+                                             "system2" {"device7" {"id" 700, "status" "Ok"},
+                                                        "device8" {"id" 800, "status" "Ok"}}}}}})))
 
 (deftest express-body-rewriting []
   (testing "Testing rewriting of an express body"
@@ -928,3 +996,14 @@
                                                           'status' : ?status}}}}}}
                            }"
                  {:rewrite? true})))))
+
+;;; For clojure; Kaocha does this better!
+(defn check-all-express []
+  {:express-body-map-small             (express-body-map-small)
+   :express-body-reduce-small          (express-body-reduce-small)
+   :express-body-reduce-medium-type1   (express-body-reduce-medium-type1)
+   :express-body-reduce-medium-type2   (express-body-reduce-medium-type2)
+   :express-body-reduce-medium-mixed   (express-body-reduce-medium-mixed)
+   :express-body-reduce-type1          (express-body-reduce-type1)
+   :express-body-reduce-type2          (express-body-reduce-type2)
+   :express-body-rewriting             (express-body-rewriting)})

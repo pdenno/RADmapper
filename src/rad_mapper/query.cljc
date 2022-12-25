@@ -141,30 +141,14 @@
 
 (defn key-schema
   "Define schema information for a user key (constant string or qvar doesn't matter)."
-  [ident many? k all-keys]
-  {:db/unique :db.unique/identity
-   :db/valueType :db.type/string
-   :db/cardinality (if many? :db.cardinality/many :db.cardinality/one)
-   :_rm/cat-key all-keys ; ToDo: This is just for debugging, I think.
-   :_rm/self ident
-   :_rm/user-key k})
-
-(defn exp-key-schema
-  "Define schema information for the key that has as a value an express key.
-   For example, owner/id in 'owner/id' : key(?ownerName).
-   The db.ident name of express keys is just the attribute name keywordized,
-   for example :owner/id. (User is responsible for doing this correctly.)
-   +The values of express keys are NOT a concatenated from nested content as+
-   +is the case for qvar-in-key-pos.  The :db/valueType is determined from bsets+
-   +when $reduce is executed.+"
-  [ident k all-keys]
-  {:db/unique :db.unique/identity
-   :db/valueType :db.type/string,
-   :db/cardinality :db.cardinality/one,
-   :_rm/cat-key all-keys ; ToDo: This is just for debugging, I think.
-   :_rm/self ident
-   :_rm/user-key k ; Will be a qvar.
-   :_rm/exp-key? true})
+  [ident k all-keys & {:keys [exp-key?]}]
+  (cond-> {:db/unique :db.unique/identity
+           :db/valueType :db.type/string
+           :db/cardinality :db.cardinality/one
+           :_rm/cat-key all-keys          ; ToDo: This is just for debugging, I think.
+           :_rm/self ident
+           :_rm/user-key k}               ; Will be a qvar if exp-key? = true
+    exp-key? (assoc :_rm/exp-key? true))) ; ToDo: This is just for debugging, I think. Data has :_rm/ek-val.
 
 (defn user-key
   "Return a keyword for a user-defined key. If the argument is a string, it could have a / in it.
@@ -210,30 +194,29 @@
                                                       (some  (fn [[k v]] (when (key-exp? v)
                                                                            {:key-key k :key-val (second v)}))
                                                              (seq obj)))]
-                (let [ident (user-key key-key)]  ; user-defined key slots don't need fancy names, but they concatenate.
+                (let [ident (user-key key-key)]   ; user-defined key slots don't need fancy names, but they concatenate.
                   (swap! key-stack conj key-val)
-                  (swap! schema #(assoc % ident (exp-key-schema ident key-val @key-stack))) ; schema for an express key
-                  (-> {ident `(:rm/express-key ~@(deref key-stack))}
-                      (assoc     :_rm/user-key       (-> ident str (subs 1)))
-                      (assoc     :_rm/ek-val         key-val) ; This goes away if I can make the assoc-in work! <==========
-                      (assoc     :_rm/attrs          (rb (dissoc obj key-key)))
-                      #_(assoc-in [:_rm/attrs 0 ident] key-val))) ; Later! ; In which I'd call it :_rm/map
-
-                (cond (map? obj)    (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
-                                                 (swap! key-stack conj k)
-                                                 (let [ident (schema-ident k @key-stack)
-                                                       ident-val `(:rm/express-key ~@(deref key-stack))
-                                                       attr (child-node-type v)
-                                                       child (rb v)
-                                                       res (conj r (-> {}
-                                                                       (assoc ident ident-val)
-                                                                       (assoc :_rm/user-key k)
-                                                                       (assoc attr child)))]
-                                                   (swap! schema #(assoc % ident (key-schema ident (vector? child) k @key-stack)))
-                                                   (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
-                                                   res))
-                                               []
-                                               obj)
+                  (swap! schema #(assoc % ident (key-schema ident key-val @key-stack :exp-key? true)))
+                   (-> {ident `(:rm/express-key  ~@(deref key-stack))}
+                       (assoc :_rm/user-key      (-> ident str (subs 1)))
+                       (assoc :_rm/ek-val        key-val)
+                       (assoc :_rm/attrs         (rb (dissoc obj key-key))))) ; Other attrs (_:rm/attrs) is a vector of maps because...
+                                                                              ; ...each has its own data such as :_rm/user-key.
+                (cond (map? obj)      (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
+                                                   (swap! key-stack conj k)
+                                                   (let [ident (schema-ident k @key-stack)
+                                                         ident-val `(:rm/express-key ~@(deref key-stack))
+                                                         attr (child-node-type v)
+                                                         child (rb v)
+                                                         res (conj r (-> {}
+                                                                         (assoc ident ident-val)
+                                                                         (assoc :_rm/user-key k)
+                                                                         (assoc attr child)))]
+                                                     (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
+                                                     (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
+                                                     res))
+                                                 []   ; Returning a vector of maps, which in the case of (dissoc obj key-key)...
+                                                 obj) ; ...is the value of :_rm/attrs
                      (vector? obj)    (mapv rb obj)
                      :else            obj)))]
       {:reduce-body (rb base-body) ;

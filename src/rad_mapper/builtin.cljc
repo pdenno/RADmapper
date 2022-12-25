@@ -1783,7 +1783,8 @@
         :else            obj))
 
 (defn unbox-vals
-  "Walk through the form replacing boxed data with the data."
+  "Walk through the form replacing boxed data with the data.
+   In the reduce DB, for simplicity, all values are :db.type/ref."
   [data]
   (letfn [(box? [obj]
             (and (map? obj)
@@ -1797,24 +1798,30 @@
                     :else           obj)))]
     (uv data)))
 
+(s/def ::b-set (s/and map? #(every? qvar? (keys %))))
+
 (defn evaluate-express-body
   "Walk through the body of the express replacing qvars with their bset values,
    computing concatenated keys (and NYI) evaluating expressions."
   [bset base-body reduce-body]
-  (letfn [(sub-bset [key-exp bset] ; Generate a value for a :rm/express-key expression.
-            (->> (map #(if (qvar? %) (get bset %) %) (rest key-exp)) ; There can be constants in catkey.
-                 (map str)
-                 (interpose "|")
-                 (apply str)))
-          (eeb-aux [obj]
-            (cond (map? obj)         (reduce-kv (fn [m k v] (assoc m k (eeb-aux v))) {} obj)
-                  (vector? obj)      (mapv eeb-aux obj)
-                  (qu/key-exp? obj)  (sub-bset obj bset)
-                  (qvar? obj)        (get bset obj)
-                  :else              obj))]
+  (if (s/valid? ::b-set bset)
+    (letfn [(sub-bset [key-exp bset] ; Generate a value for a :rm/express-key expression.
+              (if *in-reduce?*
+                (->> (map #(if (qvar? %) (get bset %) %) (rest key-exp)) ; There can be constants in catkey.
+                     (map str)
+                     (interpose "|")
+                     (apply str))
+                (get bset (second key-exp))))
+            (eeb-aux [obj]
+              (cond (map? obj)         (reduce-kv (fn [m k v] (assoc m (eeb-aux k) (eeb-aux v))) {} obj)
+                    (vector? obj)      (mapv eeb-aux obj)
+                    (qu/key-exp? obj)  (sub-bset obj bset)
+                    (qvar? obj)        (get bset obj)
+                    :else              obj))]
       (if *in-reduce?*        ; Or am I missing something? Something about cat keys???
         (-> reduce-body eeb-aux box-vals)
-        (eeb-aux base-body))))
+        (eeb-aux base-body)))
+    (throw (ex-info "Argument is not a binding set:" {:arg bset}))))
 
 (defn express-sub
   "Walk through form replacing template parameters in sub-map with their values."
@@ -1826,6 +1833,15 @@
                   :else x))]
     (es-aux form)))
 
+(defn body-type
+  "Characterize the type of the express body (base-body) so as to know how to interpret the :_rm/ROOT."
+  [bbody]
+  (cond (and (map? bbody)
+             (some #(and (seq? %) (= :rm/express-key (first %)))
+                   (vals bbody)))                                      :body/keyed-map
+        (map? bbody)                                                   :body/map
+        :else                                                          :body/other))
+
 (defn domain-attr
   "Return schema info of the one domain attribute in the argument 'schematic-body' reduced object."
   [obj dschema]
@@ -1833,28 +1849,40 @@
 
 ;;; "redex" is reduce on express body.
 (defn redex-keys-values
-  [data schema]
-  (swap! diag #(assoc % :redex-data data))
-  (let [support-key? (-> qu/support-schema keys set)
-        dschema (reduce-kv (fn [m k v] (if (support-key? k) m (assoc m k v))) {} schema)]
-    (letfn [(rkv [obj]
-              (cond  (map? obj) ; 1st is any map, but for :_rm/attrs may be missing because empty (just express key).
-                     (cond (or (contains? obj :_rm/attrs) (contains? obj :_rm/ek-val))
-                           (let [{:_rm/keys [exp-key?]} (domain-attr obj dschema)]
-                             (reduce (fn [m attr] (assoc m (:_rm/user-key attr) (rkv attr)))
-                                     (if exp-key?
-                                       (-> {(:_rm/user-key obj) (:_rm/ek-val obj)}
-                                           (assoc :_rm/ek-val   (:_rm/ek-val obj))) ; For subsequent sorting
-                                       {})
-                                     (:_rm/attrs obj))) ; Could be empty; then just express key and :_rm/ek-val
-                           (contains? obj :_rm/vals) (rkv (get obj :_rm/vals))
-                           (contains? obj :_rm/val ) (rkv (get obj :_rm/val )))
-                     (vector? obj) (mapv rkv obj)
-                     :else         obj))]
-      ;; ToDo: We start like this to pick up the outer-most structure, but why is that necessary?
-      {(-> data :_rm/ROOT first :_rm/user-key) (rkv (-> data :_rm/ROOT first))})))
+  "Rewrite the :_rm/ROOT object retrieved from the database so that it matches the shape that
+   was (1) encoded in the schema, and (2) built-up through objects using the reduce body.
+   Since all the work was done in those two tasks, what remains here is just to make ordinary
+   maps, vectors, and values from the retrieved content. There are three kinds of maps to deal with:
+     - The ones with express keys (have :_rm/ek-val)  get their express key processed first and then their :_rm/attrs.
+     - The ones with just :_rm/attrs are similar but the value of the :_rm/user-key is the reduced :_rm/attrs.
+     - The ones without :_rm/attrs are maps of just one key."
+  [data]
+  ;(swap! diag #(assoc % :redex-data data))
+  (letfn [(rkv [obj]
+            (cond  (map? obj) ; 1st cond is any map, but :_rm/attrs may be missing because empty (just map with express key).
+                   (cond (contains? obj :_rm/ek-val) ; express key
+                         (reduce (fn [m attr] (merge m (rkv attr)))
+                                 (-> {(:_rm/user-key obj) (:_rm/ek-val obj)}
+                                     (assoc :_rm/ek-val   (:_rm/ek-val obj))) ; For subsequent sorting
+                                 (:_rm/attrs obj)) ; Could be empty; then just express key and :_rm/ek-val
 
-;;; ToDo: Do sort-by-body when *in-reduce* = false. Might not be straightforward!
+                         (contains? obj :_rm/attrs) ; ordinary or qvar key. Each attr defines a key and
+                         {(:_rm/user-key obj) (reduce (fn [m attr]
+                                                        (let [[k v] (-> attr rkv seq first vec)] ; It is (and map? count==1)
+                                                          (assoc m k v)))
+                                                      {}
+                                                      (:_rm/attrs obj))}
+                         ;; leaf attrs of a map (no attrs themselves)
+                         (contains? obj :_rm/vals) {(:_rm/user-key obj) (-> obj :_rm/vals rkv)}
+                         (contains? obj :_rm/val ) {(:_rm/user-key obj) (-> obj :_rm/val  rkv)})
+                   (vector? obj) (mapv rkv obj)
+                   :else         obj))]
+    (if (== 1 (count data))
+      (-> data first rkv)
+      ;; This in the case that the body has a qvar-in-key-pos at the top level.
+      (->> data (map rkv) (apply merge)))))
+
+;;; ToDo: Do sort-by-body when *in-reduce* = false. Where to put it might not be straightforward!
 (defn sort-by-body
   "Walk through redex-keys-values-processed output sorting
      (a) its vectors of express-keyed  maps by by their express-keys (_:rm/ek-val) and
@@ -1872,7 +1900,7 @@
               (cond (ek-vec? obj)     (->> (sort-by :_rm/ek-val obj) (mapv #(dissoc % :_rm/ek-val)) sbek),
                     (vector? obj)     (mapv sbek obj),
                     (map? obj)        (->> (reduce-kv (fn [m k v] (assoc m k (sbek v))) {} obj)
-9                                           (reduce-kv (fn [m k v] (if (= k :_rm/ek-val) m (assoc m k v))) {})
+                                           (reduce-kv (fn [m k v] (if (= k :_rm/ek-val) m (assoc m k v))) {})
                                            (into (sorted-map-by compar))),
                     :else             obj))]
     (sbek data))))
@@ -1886,10 +1914,10 @@
      4) and (by default), things sorted nicely.
    schema argument should be 'full-schema' (containing :_rm entries).
    key-order argument is the order of keys found in the base body."
-  [data schema key-order]
+  [data key-order]
   (-> data
       unbox-vals
-      (redex-keys-values schema)
+      redex-keys-values
       (sort-by-body key-order)))
 
 (defn create-lookup-refs
@@ -1936,7 +1964,7 @@
          lookup-refs (create-lookup-refs full-schema data)
          data        (data-with-lookups full-schema data)
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
-         zippy       (reset! diag {:schema      full-schema
+         #_#_zippy       (reset! diag {:schema      full-schema
                                    :efn         efn
                                    :lookup-refs lookup-refs
                                    :reduce-body (-> efn meta :bi/reduce-body)
@@ -1945,17 +1973,20 @@
                                    :b-sets      b-sets
                                    :data        data})
          db-atm      (qu/db-for! [] :known-schema db-schema :learn? false)]
-     #_(swap! diag #(assoc % :db-atm db-atm))
+     ;(swap! diag #(assoc % :db-atm db-atm))
      ;; Inserting objects lookup-refs and data one at a time helps us catch errors.
      (doseq [obj lookup-refs] (d/transact db-atm {:tx-data [obj]})) ; lookup-refs MUST be one at a time!
      (doseq [obj data] (d/transact db-atm {:tx-data [{:_rm/ROOT obj}]}))
-     ;; ToDo: Address case where the user doesn't wrap the body in a vector on map with a constant key.
-     ;;       In that case the query is [?top ...] for multiple root-eids, each at :_rm/ROOT.
-     ;;       So I want that to merge or look like $map on the base-body?
-     (let [root-eid  (d/q '[:find ?top . :where [?top :_rm/ROOT]] @db-atm)
-           pre-clean (du/resolve-db-id {:db/id root-eid} db-atm #{:db/id})]
-       (swap! diag #(assoc % :pre-clean pre-clean))
-       (redex-data-cleanup pre-clean full-schema (-> efn meta :bi/key-order))))))
+     ;; There can be multiple roots.
+     ;; That makes sense to me when the body can starts with a qvar-in-key-pos.
+     ;; ToDo: There can also be multiple roots in other situations. There is duplicate data!
+     ;;  {:db/id 16, :_rm/ROOT [#:db{:id 13}]}
+     ;;  {:db/id 18, :_rm/ROOT [#:db{:id 13}]}
+     ;; This implies one extra, useless entry per b-set. Can it be avoided?
+     (let [root-eids (d/q '[:find [?ref ...] :where [?top :_rm/ROOT ?ref]] @db-atm)
+           pre-clean (mapv #(du/resolve-db-id {:db/id %} db-atm #{:db/id}) root-eids)]
+       ;(swap! diag #(-> % (assoc :root-eids root-eids) (assoc :pre-clean pre-clean)))
+       (redex-data-cleanup pre-clean (-> efn meta :bi/key-order))))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
