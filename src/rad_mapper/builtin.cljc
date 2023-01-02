@@ -17,7 +17,6 @@
       :cljs [datascript.core              :as d])
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
-   #?(:cljs ["jsonata"  :as ja])
    #?(:cljs ["nata-borrowed"  :as nb])
    #?(:cljs [goog.crypt.base64 :as jsb64])
    [rad-mapper.db-util            :as du]

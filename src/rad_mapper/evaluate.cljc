@@ -137,7 +137,7 @@
 
 (defn processRM
   "A top-level function for all phases of translation.
-   parse-string, rewrite and execute, but with controls for partial evaluation, debugging etc.
+   parse-string, rewrite, and execute, but with controls for partial evaluation, debugging etc.
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
