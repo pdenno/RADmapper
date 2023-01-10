@@ -107,7 +107,8 @@
   [full-form opts]
   (let [min-level (util/default-min-log-level)
         run-sci?   (or (util/cljs?) (:sci? opts))]
-    (when (or (:debug-eval? opts) (= min-level :debug))
+    (when (or (:debug-eval? opts)  ; I'm suppressing this in run-sci?/cljs. Need to investigate taoensso.timbre/*config* #{"*"} :debug.
+              (and (not run-sci?) (= min-level :debug)))
       (util/config-log :info) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox).
       (log/info (cl-format nil "*****  Running ~S *****" (if run-sci? "SCI" "eval")))
       (-> full-form pretty-form pprint))
@@ -141,14 +142,14 @@
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
-   #_(assert (every? #(#{:rewrite? :executable? :execute? :sci? :debug-eval? :debug-parse? :debug-rewrite?} %)
+   (assert (every? #(#{:rewrite? :executable? :execute? :sci? :debug-eval? :debug-parse? :debug-rewrite?} %)
                      (keys opts)))
    (let [rewrite?    (or (:execute? opts) (:executable? opts) (:rewrite? opts))
          executable? (or (:execute? opts) (:executable? opts))
          sci?        (or (:sci? opts) (util/cljs?))
          ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
      (binding [rewm/*debugging?* (:debug-rewrite? opts)
-               pm/*debugging?* (:debug-parse? opts)]
+               pm/*debugging?*   (:debug-parse? opts)]
        ;; Note that s/check-asserts = true can produce non-JSONata like behavior by means of
        ;; throwing an error where JSONata might just return ** No Match **
        (if (or rewm/*debugging?* pm/*debugging?*) (s/check-asserts true) (s/check-asserts false))

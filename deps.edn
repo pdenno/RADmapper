@@ -53,6 +53,9 @@
                                         :sign-releases? false ; signing problem (see mznp deps.edn)
                                         :artifact "RADmapper-1.0.29.jar"}}
 
+           :build    {:deps {io.github.clojure/tools.build {:git/tag "v0.9.0" :git/sha "8c93e0c"}}
+                      :ns-default build}
+
            ;; clj -M:morpheus -d graphs -f svg -e 'clojure.core/.*|:clj-kondo/unknown-namespace/.*|:cljs.core/.*' src
            :var-deps-graph {:extra-deps      {thomasa/morpheus {:git/url "https://github.com/benedekfazekas/morpheus.git"
                                                                 :git/sha "9d6f2c1ede8be7ab4508065fe6b7e40e0c099ab6"}}

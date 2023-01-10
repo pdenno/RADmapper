@@ -13,6 +13,15 @@
 ;;;  - cljs complains about not finding x/element-nss, which I don't see in the  0.2.0-alpha8 source at all.
 ;;;    (Yet it does work in clj!) I suppose reading xml isn't something I need in cljs, but it would be
 ;;;    nice to know what is going on here.
+;;; ToDo: Get some more types in here, and in implementation generally.
+(defn db-type-of
+  "Return a Datahike schema :db/valueType object for the argument"
+  [obj]
+  (cond (string? obj)  :db.type/string
+        (number? obj)  :db.type/number
+        (keyword? obj) :db.type/keyword
+        (map? obj)     :db.type/ref
+        (boolean? obj) :db.type/boolean))
 
 ;;; This seems to cause problems in recursive resolution. (See resolve-db-id)"
 (defn db-ref?

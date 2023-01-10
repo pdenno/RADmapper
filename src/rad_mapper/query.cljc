@@ -1,21 +1,12 @@
 (ns rad-mapper.query
   "supporting code for query and express"
   (:require
-   [clojure.string :refer [starts-with?] :as string]
-   [clojure.walk   :refer [keywordize-keys]]
+   [clojure.string     :refer [starts-with?] :as string]
+   [clojure.walk       :refer [keywordize-keys]]
+   [rad-mapper.db-util :refer [db-type-of]]
    #?(:clj  [datahike.api         :as d]
       :cljs [datascript.core      :as d])
-   [taoensso.timbre               :as log]))
-
-;;; ToDo: Get some more types in here, and in implementation generally.
-(defn db-type-of
-  "Return a Datahike schema :db/valueType object for the argument"
-  [obj]
-  (cond (string? obj)  :db.type/string
-        (number? obj)  :db.type/number
-        (keyword? obj) :db.type/keyword
-        (map? obj)     :db.type/ref
-        (boolean? obj) :db.type/boolean))
+   [taoensso.timbre :as log]))
 
 (defn sample-vec
   "Run db-type-of on just some of the data in vec."

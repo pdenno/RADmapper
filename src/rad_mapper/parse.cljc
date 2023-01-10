@@ -49,10 +49,12 @@
                "key" :tk/key
                "query" :tk/query
                "true" :tk/true})
-(def syntactic? ; chars that are valid tokens in themselves.
+(def syntactic?
+  "Chars that are valid tokens in themselves."
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \? \`})
 
-(def long-syntactic? ; chars that COULD start a multi-character syntactic elements.
+(def long-syntactic?
+  "chars that COULD start a multi-character syntactic elements. These are checked before syntactic? thus overlap permitted."
   #{\<, \>, \=, \., \:, \/, \', \" \?, \~, \{, \| \!}) ; Don't put eol-comment (//) here. \/ is for regex vs divide.
 
 (def other? #{\(, \), \{, \}, \[, \], \:, \,, \;})
@@ -239,11 +241,12 @@
   (let [ws (whitesp string-block)
         s (subs string-block (count ws))
         c (-> s first)
+        zippy (println "s=" s)
         result
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
           (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})            ; EOF
-               (when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"
+               (when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"  ; #"(?s)(/\*.*\*/).*" ; NOT WORKING <==============
                                                   :clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*")
                                                s)]   ; comment; JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
                  {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
@@ -267,7 +270,7 @@
                     {:ws ws :raw id :tkn {:typ :PatternRole :role-name id}})))
                (throw (ex-info "Char starts no known token:" {:raw c :line line}))))]
     (when *debugging-tokenizer?*
-      (log/info (cl-format nil "***result = ~S string strg = ~S" result string-block)))
+      (log/debug (cl-format nil "***result = ~S string strg = ~S" result string-block)))
     result))
 
 (defn tokens-from-string
@@ -370,10 +373,11 @@
   "Move head of :tokens to :head ('consuming' the old :head) With 2 args, test :head first."
   ([pstate] (eat-token pstate ::pass))
   ([pstate test]
-   (when *debugging?* (log/info (cl-format nil "~AEAT ~A  (type ~A)"
+   (when *debugging?* (log/debug (cl-format nil "~AEAT ~A  (type ~A)"
                                            (util/nspaces (* 3 (-> pstate :tags count dec)))
                                            (pp/write (:head pstate) :readably false :stream nil)
-                                           (-> pstate :head util/class-name name))))
+                                           #?(:clj (-> pstate :head util/class-name name)
+                                              :cljs "unknown (cljs)"))))
    (match-head pstate test)
    ;; The actual work of eating a token
    (let [ps1 (if (-> pstate :tokens empty?) (refresh-tokens pstate) pstate) ; 3 of 3, refreshing tokens.
@@ -431,21 +435,6 @@
                   0
                   (subvec tvec 0 pos)))))
 
-#_(defmacro defparse [tag [pstate & keys-form] & body]
-  `(defmethod parse ~tag [~'tag ~pstate ~@(or keys-form '(& _))]
-     (when *debugging?*
-       (log/info (cl-format nil "~A==> ~A" (util/nspaces (* 3 (-> ~pstate :tags count))) ~tag)))
-     (as-> ~pstate ~pstate
-       (update ~pstate :call-count inc) ; ToDo: (maybe) There was a max calls check here based on the token count,
-       (update ~pstate :tags conj ~tag) ; but with the buffered reading enhancement, we don't have token count.
-       (update ~pstate :local #(into [{:locals-for ~tag}] %))
-       (let [res# (do ~@body)] (if (seq? res#) (doall res#) res#))
-       (cond-> ~pstate (-> ~pstate :tags not-empty) (update :tags pop))
-       (update ~pstate :local #(vec (rest %)))
-       (do (when *debugging?*
-             (log/info (cl-format nil "~A<-- ~A   ~S" (util/nspaces (* 3 (-> ~pstate :tags count))) ~tag (:result ~pstate))))
-           (ps-assert ~pstate)))))
-
 (defn store
   "This and recall are used to keep parsed content tucked away on the parse state object."
   ([ps key] (store ps key (:result ps)))
@@ -485,7 +474,7 @@
      (if (not= (:head pstate) ::eof)
        (throw (ex-info "Tokens remain:" {:tokens (:tokens pstate)}))
         #_(do (when *debugging?*
-                (log/info (cl-format nil "~%*** Tokens remain. pstate=~A ~%" pstate)))
+                (log/debug (cl-format nil "~%*** Tokens remain. pstate=~A ~%" pstate)))
            pstate)
        pstate))))
 
@@ -514,7 +503,7 @@
    (parse-list pstate char-open char-close char-sep :ptag/exp))
   ([pstate char-open char-close char-sep item-tag]
    (when *debugging?*
-     (log/info (cl-format nil ">>>>>>>>>>>>>> parse-list (~A) >>>>>>>>>>>>>>>>>>" item-tag)))
+     (log/debug (cl-format nil ">>>>>>>>>>>>>> parse-list (~A) >>>>>>>>>>>>>>>>>>" item-tag)))
    (let [final-ps
          (as-> pstate ?ps
            (eat-token ?ps char-open)
@@ -534,7 +523,7 @@
                  (recur (cond-> ?ps1 (= char-sep (:head ?ps1)) (eat-token char-sep)))))))]
      (when *debugging?*
        (println "\nCollected" (:result final-ps))
-       (log/info (cl-format nil "<<<<<<<<<<<<<<<<<<<<< parse-list (~A) <<<<<<<<<<<<<<<<<<<<<<<" item-tag)))
+       (log/debug (cl-format nil "<<<<<<<<<<<<<<<<<<<<< parse-list (~A) <<<<<<<<<<<<<<<<<<<<<<<" item-tag)))
      final-ps)))
 
 ;;; ToDo: Just in-line these?

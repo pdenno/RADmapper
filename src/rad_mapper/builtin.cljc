@@ -1647,10 +1647,19 @@
 
 ;;; ToDo: This needs some thought. Should probably only happen when the qvar binds a data key.
 ;;;       Could use schema analysis such as used on the express body!
-(defn unkeywordize-bsets
+;;; 2023-01-07: I'm not running it! This causes errors by not keeping roles (keywords) as roles in user data.
+;;;             I don't understand the rationale for this. The role position is either a keyword or qvar.
+;;;             I wrote it for $reduce on express. So that's what needs to be investigated.
+#_(defn unkeywordize-bsets
   "Data pushed into the DB had to have keywords for map keys. This undoes that."
   [bsets]
-  (mapv #(reduce-kv (fn [m k v] (if (keyword? v) (assoc m k (name v)) (assoc m k v))) {} %) bsets))
+  (mapv #(reduce-kv (fn [m k v] (if (keyword? v)
+                                  (if (namespace v)
+                                    (assoc m k (str (namespace v) "/" (name v)))
+                                    (assoc m k (name v)))
+                                  (assoc m k v)))
+                    {} %)
+        bsets))
 
 ;;; ToDo: Did I make a mistake in the User's Guide by calling the entire returned value of query (a vector) a binding set?
 ;;;       According to this code, I should have called it a "collection of bsets".
@@ -1673,7 +1682,7 @@
                                                        (if (e-qvar? k) m (assoc m k v)))
                                                      {}
                                                      bset)))
-        true                       unkeywordize-bsets
+        #_#_false                      unkeywordize-bsets
         true                       (vec))
       (with-meta ?bsets {:bi/b-set? true}))))
 
@@ -1694,6 +1703,8 @@
         (let [param-subs (zipmap params args)] ; the closure.
           (-> (fn [& data|dbs]
                 (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
+                  (println "Running parametric")
+                  (swap! diag #(-> % (assoc :body body) (assoc :pred-args pred-args) (assoc :param-subs param-subs)))
                   (query-fn-aux db-atms body in pred-args param-subs options)))
               (with-meta {:bi/fn-type :query-fn
                           :bi/expected-arg-cnt (max 1 (->> body ; ToDo: Is this right?
@@ -1745,18 +1756,18 @@
   [& {:keys [params options base-body reduce-body schema key-order]}]
     (if (empty? params)
       ;; The immediate function:
-        (-> (fn [bset] (evaluate-express-body bset base-body reduce-body))
-            ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/reduce-body for debugging.
-            (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
-                        :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))
-        ;; body has template params that must be replaced; new-body.
-        (-> (fn [& psubs]
-              (let [new-base-body   (express-sub base-body   (zipmap params psubs))
-                    new-reduce-body (express-sub reduce-body (zipmap params psubs))]
-                (-> (fn [bset] (evaluate-express-body bset new-base-body new-reduce-body))
-                    (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
-                                :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))))
-            (with-meta {:bi/express-template? true}))))
+      (-> (fn [bset] (evaluate-express-body bset base-body reduce-body))
+          ;; :bi/schema is not needed for simple evaluation, only reduce evaluation. :bi/reduce-body for debugging.
+          (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
+                      :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))
+      ;; body has template params that must be replaced; new-body.
+      (-> (fn [& psubs]
+            (let [new-base-body   (express-sub base-body   (zipmap params psubs))
+                  new-reduce-body (express-sub reduce-body (zipmap params psubs))]
+              (-> (fn [bset] (evaluate-express-body bset new-base-body new-reduce-body))
+                  (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
+                              :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))))
+          (with-meta {:bi/express-template? true}))))
 
 (defn boxit [obj]
   (cond (string?  obj) {:box/string-val  obj},
@@ -1872,7 +1883,7 @@
     (letfn [(compar [k1 k2]
               (if (and (known-key? k1) (known-key? k2))
                 (< (.indexOf key-order k1) (.indexOf key-order k2))
-                (compare k1 k2)))
+                (compare (str k1) (str k2)))) ; ToDo: See notes 2023-01-09 about symbols as keys.
             (ek-vec? [obj]
               (and (vector? obj)
                    (every? #(contains? % :_rm/ek-val) obj)))
@@ -1883,7 +1894,30 @@
                                            (reduce-kv (fn [m k v] (if (= k :_rm/ek-val) m (assoc m k v))) {})
                                            (into (sorted-map-by compar))),
                     :else             obj))]
-    (sbek data))))
+      (sbek data))))
+
+(defn redex-restore-values
+  "Restoring values might sound like a paleocon objective, but here we are referring to user data
+   that was originally not string-valued yet is forced into being a string because it needed to
+   serve as :_rm/user-key and is qvar-in-key-pos.
+   :_rm/user-key requires :db.type/string and such data, serving as :db.unique/identity can't be boxed.
+   util/read-str, (that is  ?(:clj read-string, :cljs cljs.reader/read-string) is used to
+   restore the value of :_rm/user-key."
+  [data schema]
+  (let [restore-attr? (reduce-kv (fn [res k v]
+                                   (if (contains? v :_rm/original-key-type) ; Schema entry has this only if qvar-in-key-pos...
+                                     (conj res k)                           ; ...and bsets indicate that data isn't :db.valueType/string.
+                                     res))
+                                 #{} schema)]
+    (letfn [(rrv [obj]
+              (cond (map? obj)     (if (and (some #(contains? obj %) restore-attr?)
+                                            (contains? obj :_rm/user-key))
+                                     (-> (reduce-kv (fn [m k v] (assoc m k (rrv v))) {} obj)
+                                         (update :_rm/user-key util/read-str))
+                                     (reduce-kv (fn [m k v] (assoc m k (rrv v))) {} obj))
+                    (vector? obj)  (mapv rrv obj)
+                    :else          obj))]
+      (rrv data))))
 
 (defn redex-data-cleanup
   "Return the evaluated express body in the form expected of output from $reduce on
@@ -1894,11 +1928,13 @@
      4) and (by default), things sorted nicely.
    schema argument should be 'full-schema' (containing :_rm entries).
    key-order argument is the order of keys found in the base body."
-  [data key-order]
+  [data key-order schema]
   (-> data
       unbox-vals
+      (redex-restore-values schema)
       redex-keys-values
       (sort-by-body key-order)))
+
 
 (defn create-lookup-refs
   "Return a vector of {:db/id [attr val]} corresponding to entities to establish before sending data.
@@ -1906,30 +1942,66 @@
                       ;; create a new entity ('-1', as any other negative value, is a tempid
                       ;; that will be replaced by Datahike with the next unused eid)
                       (transact conn [[:db/add -1 :name \"Ivan\"]])"
-  [schema data]
+  [schema data cljs?]
   (let [lookup-refs (atom #{})
+        cnt (atom 0)
         ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
     (letfn [(dlr [obj]
-              (cond (map? obj)    (doseq [[k v] (seq obj)] ; v should already be a string
-                                    (when (ref-ident? k) (swap! lookup-refs conj [:db/add -1 k v]))
+              (cond (map? obj)    (doseq [[k v] (seq obj)] ; v should already be a string. ToDo: It isnt!
+                                    (when (ref-ident? k) (swap! lookup-refs conj
+                                                                (if cljs?
+                                                                  {:db/id (swap! cnt inc) k v}
+                                                                  [:db/add -1 k v])))
                                     (dlr v))
                     (vector? obj) (doall (map dlr obj))))]
       (dlr data)
       (-> @lookup-refs vec))))
 
 (defn data-with-lookups
-  "Rewrite the data to use lookup refs."
+  "(1) Rewrite the data to use lookup refs.
+   (2) Ensure that :_rm/user-key is a string. If necessary, this will be undone later."
   [schema data]
   (let [ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
     (letfn [(dal [obj] (cond
                          (map? obj)         (reduce-kv (fn [m k v]
-                                                         (if (ref-ident? k)
-                                                           (assoc m :db/id [k v])
-                                                           (assoc m k (dal v))))
+                                                         (cond (ref-ident? k) (assoc m :db/id [k v]),
+                                                               ;; ToDo: I don't think boxing the value is an option here.
+                                                               (= k :_rm/user-key) (assoc m k (str v)),
+                                                               :else (assoc m k (dal v))))
                                                        {} obj)
                          (vector? obj)      (mapv dal obj)
                          :else obj))]
-            (dal data))))
+      (dal data))))
+
+(defn bset-db-types
+  "Return a map each qvar's db-type (e.g :db.type/string) except in cases where the bsets do not exhibit a homogeneous type.
+   In that case the qvar's value in the map returned is set to :_rm/must-be-boxed." ; _rm/must-be-boxed is not yet used.
+  [bsets]
+  (as-> (reduce-kv (fn [m k v] (assoc m k (du/db-type-of v))) {} (first bsets)) ?types
+    (reduce (fn [res qvar]
+              (if (every? (fn [val] (= (get ?types qvar) (du/db-type-of val)))
+                          (map #(get % qvar) (rest bsets)))
+                res
+                (assoc res qvar :_rm/must-be-boxed)))
+            ?types
+            (keys ?types))))
+
+(defn update-schema-for-bsets
+  "The schema necessarily uses strings for :_rm/user-key.
+   However, it the user's data might use something else (particularly numbers).
+   Here we check whether bset qvars that are also :_rm/user-key qvar are in fact strings.
+   Where they are not (e.g. when they are numbers), we add :_rm/orignal-key-type to the schema entry."
+  [schema bsets]
+  (let [bset-type (bset-db-types bsets)]
+    (reduce-kv (fn [m k v]
+                 (let [v-type (bset-type (:_rm/user-key v))]
+                   (if (and (qvar? (:_rm/user-key v))           ; :_rm/user-key is used in two ways. If the schema indicates an express key...
+                            (not   (= :db.type/string v-type))  ; ...then just use the qvar as-is. Otherwise, it is qvar-in-key-pos...
+                            (not   (:_rm/exp-key? v)))          ; ...and the original key type must be restored by read-string.
+                     (assoc m k (assoc v :_rm/original-key-type v-type))
+                     (assoc m k v))))
+               {}
+               schema)))
 
 (defn reduce-express
   "This function performs $reduce on an express function; *in-reduce?* = true.
@@ -1939,12 +2011,12 @@
    The result is the value of the the express body reduced by the data."
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
-   (let [full-schema (-> efn meta :bi/schema)
+   (let [full-schema (-> efn meta :bi/schema (update-schema-for-bsets b-sets))
          data        (->> (mapv efn b-sets) walk/keywordize-keys)
-         lookup-refs (create-lookup-refs full-schema data)
+         lookup-refs (create-lookup-refs full-schema data (util/cljs?))
          data        (data-with-lookups full-schema data)
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
-         #_#_zippy       (reset! diag {:schema      full-schema
+         zippy       (reset! diag {:schema      full-schema
                                    :efn         efn
                                    :lookup-refs lookup-refs
                                    :reduce-body (-> efn meta :bi/reduce-body)
@@ -1953,20 +2025,25 @@
                                    :b-sets      b-sets
                                    :data        data})
          db-atm      (qu/db-for! [] :known-schema db-schema :learn? false)]
-     ;(swap! diag #(assoc % :db-atm db-atm))
+     ;;(swap! diag #(assoc % :db-atm db-atm))
      ;; Inserting objects lookup-refs and data one at a time helps us catch errors.
-     (doseq [obj lookup-refs] (d/transact db-atm {:tx-data [obj]})) ; lookup-refs MUST be one at a time!
-     (doseq [obj data] (d/transact db-atm {:tx-data [{:_rm/ROOT obj}]}))
+     (if (util/cljs?)
+       (d/transact db-atm lookup-refs)
+       (doseq [obj lookup-refs] (d/transact db-atm [obj]))) ; lookup-refs MUST be one at a time in datahike!?!
      ;; There can be multiple roots.
      ;; That makes sense to me when the body can starts with a qvar-in-key-pos.
+     (if (util/cljs?)
+       (doseq [obj data] (d/transact db-atm [{:_rm/ROOT obj}]))
+       (doseq [obj data] (d/transact db-atm {:tx-data [{:_rm/ROOT obj}]}))) ; This one good for debugging.
      ;; ToDo: There can also be multiple roots in other situations. There is duplicate data!
      ;;  {:db/id 16, :_rm/ROOT [#:db{:id 13}]}
      ;;  {:db/id 18, :_rm/ROOT [#:db{:id 13}]}
-     ;; This implies one extra, useless entry per b-set. Can it be avoided?
+     ;; This implies one extra, useless entry per b-set. Can it be avoided? Maybe not;
+     ;; What the data indicates is that "more than one thing can have a :_rm/ROOT". Hard to argue with that!
      (let [root-eids (d/q '[:find [?ref ...] :where [?top :_rm/ROOT ?ref]] @db-atm)
            pre-clean (mapv #(du/resolve-db-id {:db/id %} db-atm #{:db/id}) root-eids)]
-       ;(swap! diag #(-> % (assoc :root-eids root-eids) (assoc :pre-clean pre-clean)))
-       (redex-data-cleanup pre-clean (-> efn meta :bi/key-order))))))
+       (swap! diag #(-> % (assoc :root-eids root-eids) (assoc :pre-clean pre-clean)))
+       (redex-data-cleanup pre-clean (-> efn meta :bi/key-order) full-schema)))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!

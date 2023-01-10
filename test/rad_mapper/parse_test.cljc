@@ -96,14 +96,13 @@
               {:tkn ::par/eof}]
              (test-tokenize "true?:foo/bar::foo/bat"))))
 
-    (testing "Problems with comments?" ; ToDo: Currently cljs won't pass this! (See directive in one-token-from-string.)
-      #?(:clj
+    (testing "Problems with comments?" ; ToDo: Currently cljs has multi-line /* comments */ turned off.
          (is (= [{:line 1, :col 1, :tkn 1}
                  {:tkn 2, :line 2, :col 20}
                  {:tkn ::par/eof}]
                 (test-tokenize
                  " 1       /*Foo*/
-                   2       /*Bar*/")))))))
+                   2       /*Bar*/"))))))
 
 (deftest regexp
   (testing "Testing translation of regular expression"

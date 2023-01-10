@@ -281,6 +281,15 @@
         (vector? obj) (mapv json-like obj),
         :else obj))
 
+;;; ToDo: If
+(defn stringify-role
+  "Turn a RM role (a keyword) into a string; if the argument isn't a keyword just return it."
+  [role]
+  (cond (and (or (keyword? role) (symbol? role))
+             (not-empty (namespace role)))           (str (namespace role) "/" (name role)),
+        (keyword? role)                              (name role),
+        :else                                        role))
+
 ;;;=============================================================================
 ;;; Utils for macros (It seems the CLJS macros file cannot have functions in it.
 ;;;=============================================================================

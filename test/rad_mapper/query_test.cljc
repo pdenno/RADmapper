@@ -245,8 +245,8 @@
 
 ;;; This creates a function. :params are empty, so this is the "immediate" type.
 (def efn (bi/express {:params [],
-                      :body '{"instance-of" "FixedType"
-                              "content" ?content}}))
+                      :base-body '{"instance-of" "FixedType"
+                                   "content" ?content}}))
 
 ;;; This creates a higher-order function. This is the "immediate" type.
 (def param-efn (bi/express '{:params [$type],
@@ -256,27 +256,48 @@
 (def pefn (param-efn "MyType"))
 
 (deftest express-basics
-  (testing "Testing basic express"
-    (testing "rewriting"
+  (testing "Testing basic express."
+    (testing "Testing rewriting."
 
-    (testing "The function has metadata."
-      (is (= '#:bi{:params [b-set], :express? true, :options nil}
+    (testing "Testing that the function has metadata."
+      (is (= '#:bi{:params [b-set], :express? true, :options nil, :schema nil,
+                   :base-body {"instance-of" "FixedType", "content" ?content},
+                   :reduce-body nil, :key-order nil}
              (meta efn))))
 
-    (testing "The function is executable with a binding set, creating content."
+    (testing "Testing that the function is executable with a binding set, creating content."
       (is (= {"instance-of" "FixedType", "content" "someContent"}
              (-> (efn '{?content "someContent"}) remove-meta))))
 
-    (testing "e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
-      (is (= (run-rew "express($type) {  {'instance-of'  : $type,
-                                          'content'      : ?class-iri }
-                                       }")
-       '(bi/express {:params '($type), :options 'nil, :body '{"instance-of" $type, "content" ?class-iri}}))))
+    (testing "Testing e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
+      ;; Some issue with quotes here. Tedious!
+      #_(is (= {:reduce-body
+              [#:_rm{:instance-of--instance-of (:rm/express-key "instance-of"),
+                     :user-key "instance-of",
+                     :val '$type}
+                #:_rm{:content--content (:rm/express-key "content"),
+                      :user-key "content",
+                      :val '?class-iri}],
+              :params '($type),
+              :key-order ["instance-of" "content"],
+              :options 'nil,
+              :base-body {"instance-of" '$type, "content" '?class-iri}}
+             (-> (run-rew "express($type) {  {'instance-of'  : $type,
+                                              'content'      : ?class-iri }
+                                          }")
+                 second
+                 (dissoc :schema)))))
 
-    (testing "the function returned is higher-order..."
+    (testing "Testing the function returned is higher-order..."
 
-      (testing "The function has the same metadata."
-        (is (= '#:bi{:params [b-set], :express? true, :options nil}
+      (testing "Testing that the function has the same metadata."
+        (is (= '#:bi{:params [b-set],
+               :express? true,
+               :options nil,
+               :schema nil,
+               :base-body nil,
+               :reduce-body nil,
+               :key-order nil}
                (meta pefn))))
 
       ;; ToDo: Next two need investigation.
@@ -675,7 +696,8 @@
                    $reduce($bSets, $eFn) )"
                 {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234, "name" "Alice"}))
 
-    (testing "More like what you are looking for"
+    (testing "More like what you are looking for."
+      (testing "Testing (additionally!) that non-string user-keys (the 'id' here) are returned to their original type."
       (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
 
@@ -695,7 +717,7 @@
                    $reduce($bSets, $eFn) )"
 
                 {123 {"aData" "Bob-A-data", "bData" "Bob-B-data", "name" "Bob"},
-                 234 {"aData" "Alice-A-data", "bData" "Alice-B-data", "name" "Alice"}}))))
+                 234 {"aData" "Alice-A-data", "bData" "Alice-B-data", "name" "Alice"}})))))
 
 (deftest qif
   (testing "QIF"
@@ -1007,3 +1029,11 @@
    :express-body-reduce-type1          (express-body-reduce-type1)
    :express-body-reduce-type2          (express-body-reduce-type2)
    :express-body-rewriting             (express-body-rewriting)})
+
+
+(defn parse-test-not-here []
+  (ev/processRM :ptag/query-patterns
+  "[$DBb ?e2 :id    ?id]       /* Match on ID. */
+   [$DBa ?e1 :name  $name]     /* Parametric on name */
+   [$DBa ?e1 :name  ?name]     /* So that we capture name */"
+  {:rewrite? true}))
