@@ -231,6 +231,25 @@
     (assoc  ?ps :string-block (->> ?ps :line-seq (take block-size) (map #(str % "\n")) (apply str)))
     (update ?ps :line-seq #(drop block-size %))))
 
+;;; ToDo: Reading of blocks can mean that we don't have a complete comment. This could get more.
+(defn read-comment
+  "The regular expression in one-token-from-string for finding a comment works fine in clj but  blows right past the */ in cljs.
+   This returns the correct token structure, {:ws ws :raw cm :tkn {:typ :Comment :text cm}}, in both clj and cljs."
+  [string-block]
+  (let [ws (whitesp string-block)
+        s (subs string-block (count ws))
+        comment (loop [lines (str/split-lines s)
+                       open-count  (if (re-matches #"\s*/\*.*" (first lines)) 1 0)
+                       close-count (if (re-matches #".*\*/.*"  (first lines)) 1 0)
+                       res (first lines)]
+                  (cond (= open-count close-count)    (str/trim res)
+                        (-> lines second not)         res ; To Do: as above, block could be insufficient.
+                        :else                         (recur (rest lines)
+                                                             (if (re-matches #"\s*/\*.*" (second lines)) (inc  open-count) open-count)
+                                                             (if (re-matches #".*\*/.*"  (second lines)) (inc close-count) close-count)
+                                                             (str res "\n" (second lines)))))]
+    {:ws ws :raw comment :tkn {:typ :Comment :text comment}}))
+
 (def ^:dynamic *debugging-tokenizer?* false)
 
 (defn one-token-from-string
@@ -238,18 +257,15 @@
    Tokenization returns maps with :tkn as a STRING for things that you might expect a keyword or symbol.
    For example + is the string \"+\". Parsing returns :op/add for this."
   [string-block line] ; line is just for error reporting.
+  (when *debugging-tokenizer?*  (println (cl-format nil "-----> string-block = ~S " string-block)))
   (let [ws (whitesp string-block)
         s (subs string-block (count ws))
         c (-> s first)
-        zippy (println "s=" s)
         result
         (if (empty? s)
-          {:ws ws :raw "" :tkn ::end-of-block},  ; Lazily pulling lines from line-seq; need more.
-          (or  (and (empty? s) {:ws ws :raw "" :tkn ::eof})            ; EOF
-               (when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"  ; #"(?s)(/\*.*\*/).*" ; NOT WORKING <==============
-                                                  :clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*")
-                                               s)]   ; comment; JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
-                 {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
+          {:ws ws :raw "" :tkn ::end-of-block},   ; Lazily pulling lines from line-seq; need more.
+          ;; The problem with use of the clj regex in cljs is that it reads through the
+          (or  (when (re-matches #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*" s) (read-comment string-block))
                (and (long-syntactic? c) (read-long-syntactic s ws))    ; string literals, /regex-pattern/ ++, <=, == etc.
                (when-let [[_ num] (re-matches #"(?s)([-]?\d+(\.\d+(e[+-]?\d+)?)?).*" s)] ; + cannot be used as a unary operator.
                  {:ws ws :raw num :tkn (util/read-str num)}),          ; number
@@ -270,8 +286,9 @@
                     {:ws ws :raw id :tkn {:typ :PatternRole :role-name id}})))
                (throw (ex-info "Char starts no known token:" {:raw c :line line}))))]
     (when *debugging-tokenizer?*
-      (log/debug (cl-format nil "***result = ~S string strg = ~S" result string-block)))
+      (println (cl-format nil "<----- result = ~S" result)))
     result))
+
 
 (defn tokens-from-string
   "Return pstate with :tokens and :string-block updated as the effect of tokenizing

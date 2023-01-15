@@ -1,15 +1,15 @@
 ;;; https://github.com/borkdude/clj-kondo/blob/master/doc/config.md
 {:lint-as {#_#_rad-mapper.builtins/defn*      clojure.core/defn
-           mount.core/defstate              clj-kondo.lint-as/def-catch-all           
+           mount.core/defstate              clj-kondo.lint-as/def-catch-all
            rad-mapper.builtins/init-step    clojure.core/defmacro
-           rad-mapper.builtins/init-step-m  clojure.core/defmacro           
+           rad-mapper.builtins/init-step-m  clojure.core/defmacro
            rad-mapper.builtins/map-step     clojure.core/defmacro
            rad-mapper.builtins/map-step-m   clojure.core/defmacro
            rad-mapper.builtins/primary      clojure.core/defmacro
-           rad-mapper.builtins/primary-m    clojure.core/defmacro           
+           rad-mapper.builtins/primary-m    clojure.core/defmacro
            rad-mapper.builtins/defn*        clojure.core/defn
            rad-mapper.builtins/defn$        clojure.core/defn
-           rad-mapper.parse/defparse        clojure.core/defn
+           rad-mapper.parse/defparse        clojure.core/defmethod
            rad-mapper.schema-db/defparse    clojure.core/defn
            rad-mapper.rewrite/defrewrite    clojure.core/defn
 
