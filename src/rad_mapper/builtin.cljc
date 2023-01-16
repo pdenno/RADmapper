@@ -1703,7 +1703,6 @@
         (let [param-subs (zipmap params args)] ; the closure.
           (-> (fn [& data|dbs]
                 (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
-                  (println "Running parametric")
                   (swap! diag #(-> % (assoc :body body) (assoc :pred-args pred-args) (assoc :param-subs param-subs)))
                   (query-fn-aux db-atms body in pred-args param-subs options)))
               (with-meta {:bi/fn-type :query-fn

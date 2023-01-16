@@ -45,14 +45,13 @@
 (defn run
   "Run the exp through whatever steps are specified; defaults to :execute and
    removes any metadata from value returned and its substructure."
-  [exp & {:keys [rewrite? debug? debug-parse? debug-eval? keep-meta? sci?]}]
+  [exp & {:keys [rewrite? debug-parse? debug-eval? keep-meta? sci?]}]
   (let [execute? (not rewrite?)]
     (cond->> (ev/processRM
               :ptag/exp exp
               {:rewrite? rewrite?
                :execute? execute?
                :sci?     sci?
-               :debug?   debug?
                :debug-parse? debug-parse?
                :debug-eval? debug-eval?})
       true (reset! diag)

@@ -5,7 +5,7 @@
    [clojure.spec.alpha  :as s]
    [clojure.test        :refer [deftest is testing]]
    [rad-mapper.evaluate :as ev]
-   [rad-mapper.parse    :as par]))
+   [rad-mapper.parse :as par]))
 
 (defn tokenize-head
   "test-tokenize (below) doesn't produce tokens (except for head) it creates maps
@@ -42,24 +42,24 @@
 (deftest tokenizer
   (testing "Tokenizer:"
 
-    (testing "basic tests"
+    (testing "Testing basics"
       (is (= [{:tkn {:typ :StringLit :value "This is a string."}, :line 1, :col 1}       {:tkn ::par/eof}]
              (test-tokenize "'This is a string.'")))
       (is (= [{:tkn {:typ :StringLit :value "hello's world"}, :line 1, :col 1}           {:tkn ::par/eof}]
              (test-tokenize "'hello\\'s world'")))
       (is (= [{:tkn {:typ :Field, :field-name "`foo ?`"}, :line 1, :col 1} {:tkn ::par/eof}]
-             (test-tokenize "`foo ?`")))
-      ;; ToDo: Looks fine.
-      #_(is (= [{:tkn {:base "/wo/", :flags {:ignore-case? true}}, :line 1, :col 1}
-              {:tkn \), :line 1, :col 6} {:tkn ::par/eof}]
-               (test-tokenize "/wo/i)")))
-      (is (= [{:tkn \[, :line 1}
-              {:tkn 1,  :line 1}
-              {:tkn \], :line 1}
+             (test-tokenize "`foo ?`")))) ; Fields use backquote; otherwise, it is a StringLit.
+
+    (testing "Testing regex"
+      (is (= [{:line 1, :col 1, :tkn {:typ :RegExp, :base "/wo/", :flags {:ignore-case? true}}}
               {:tkn ::par/eof}]
+             (test-tokenize "/wo/i"))))
+
+    (testing "Testing multi-line comments"
+      (is (= [{:tkn \[} {:tkn 1} {:tkn \]} {:tkn ::par/eof}]
              (->> (test-tokenize "/*  This is my
                                       multi-line comment */ [1]")
-                  (mapv #(dissoc % :col))))))
+                  (mapv #(dissoc % :col :line))))))
 
     (testing "token stream"
       (is (= [{:tkn :tk/true, :line 1, :col 1}
