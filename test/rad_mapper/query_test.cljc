@@ -675,7 +675,7 @@
                 '[{?id 123, ?name "Bob", ?aData "Bob-A-data", ?bData "Bob-B-data"}]))
 
 
-    ;; Can just swap to $map in REPL for this one.
+    ;; Illustrate swapping to $map with this one.
     (testing "Now we express the result by processing the b-sets."
       (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
@@ -695,6 +695,18 @@
 
                    $reduce($bSets, $eFn) )"
                 {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234, "name" "Alice"}))
+
+    (testing "Same thing with the bSets hand-coded."
+      (is (= (-> (run "( $bSets := [{?id : 123, ?name : 'Bob',   ?aData : 'Bob-A-data',   ?bData : 'Bob-B-data'}
+                                    {?id : 234, ?name : 'Alice', ?aData : 'Alice-A-data', ?bData : 'Alice-B-data'}]
+
+                          $eFn := express(){{'name' : ?name, 'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}};
+
+                          $reduce($bSets, $eFn) )")
+                 set)
+             #{{"name" "Alice" "aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234}
+               {"name" "Bob"   "aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}})))
+
 
     (testing "More like what you are looking for."
       (testing "Testing (additionally!) that non-string user-keys (the 'id' here) are returned to their original type."

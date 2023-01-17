@@ -23,16 +23,18 @@
 ;;; binary-op? is an example map from string things to :op/things: {"*" :op/multiply,...}.
 ;;;
 ;;; The 'parse state' (AKA pstate) is a map with keys:
-;;;   :result  - the parse structure from the most recent call to (parse :<some-rule-tag> pstate)
-;;;   :tokens  - tokenized content that needs to be parsed into :model. First on this vector is also :tkn.
-;;;   :tags    - a stack of tags indicating where in the grammar it is parsing (used for debugging)
-;;;   :head    - current token, not yet consumed. It is also the first token on :tokens.
-;;;   :line    - line in which token appears.
-;;;   :col     - column where token starts.
-;;;   :local   - temporarily stored parse content used later to form a complete grammar element.
-;;;              It is a vector (stack) of maps. On entry, defparse pushes a new empty map on it;
-;;;              on exit, it pops it. Macros store and recall push onto the top map of the stack.
-;;;              For example use, see :ptag/MapSpec and parse-list.
+;;;   :result    - the parse structure from the most recent call to (parse :<some-rule-tag> pstate)
+;;;   :tokens    - tokenized content that needs to be parsed into :model. First on this vector is also :tkn.
+;;;   :tags      - a stack of tags indicating where in the grammar it is parsing (used for debugging)
+;;;   :head      - current token, not yet consumed. It is also the first token on :tokens.
+;;;   :line      - line in which token appears.
+;;;   :col       - column where token starts.
+;;;   :local     - temporarily stored parse content used later to form a complete grammar element.
+;;;                It is a vector (stack) of maps. On entry, defparse pushes a new empty map on it;
+;;;                on exit, it pops it. Macros store and recall push onto the top map of the stack.
+;;;                For example use, see :ptag/MapSpec and parse-list.
+;;;  :local-ptr  - The pointer used to find current place (for the grammar element being worked on)
+;;;                in stored content.
 
 ;;; ToDo:
 ;;;   - Rethink the lexer/parser dichotomy. See Lezer, for example. My continue-tag stuff and regex is pretty bad!
@@ -341,23 +343,22 @@
              :else (recur (tokenize ps)))))))
 
 ;;; ============ Parser Utilities ============================================================
-(defn line-msg
-  "Return a string 'Line <n>: ' or 'Line <n>: <msg', depending on args."
-  ([pstate] (line-msg pstate ""))
-  ([pstate msg & args]
-   (if (not-empty args)
-     (cl-format nil "Line ~A: ~A ~{~A~^, ~}~% ~A" (-> pstate :tokens first :line) msg args pstate)
-     (cl-format nil "Line ~A: ~A~% ~A"            (-> pstate :tokens first :line) msg pstate))))
-
 (def diag (atom nil))
+(def report-pstate? "This is used for generating error messages. It is false for the exerciser." (atom false))
 
 (defn ps-throw
-  "A special throw to eliminate to clean up line-seq and "
-  [pstate msg data]
-  (as-> pstate ?ps
-    (dissoc ?ps :line-seq) ; So REPL won't freak out over the reader being closed...
-    (reset! diag {:pstate ?ps :msg msg :data data})
-    (throw (ex-info (line-msg ?ps msg) data))))
+  "Throw with a message naming the line and column where the parser was reading.
+   Also (if throwing with report-pstate?=true) remove the :line-seq (a clj/java thing),
+   which is unprintable. (Throws again if you try to print it.)"
+  [pstate msg arg-map]
+  (let [arg-strs (reduce-kv (fn [res k v] (-> res (conj (name k)) (conj v))) [] arg-map)
+        report   (cl-format nil "(~A, ~A): ~A ~{~A: ~A ~^~%~} ~%~A"
+                            (:line pstate) (:col pstate) msg arg-strs
+                            (if @report-pstate? (format "pstate = %s \n" pstate) ""))]
+    (as-> pstate ?ps
+      (dissoc ?ps :line-seq) ; So REPL won't freak out over the reader being closed...
+      (do (reset! diag {:pstate ?ps :msg msg :arg-map arg-map}) ?ps)
+      (throw (ex-info report arg-map)))))
 
 (defn look
   "Sets a value in the :look map of pstate and might do some tokenizing in the process.
@@ -395,7 +396,8 @@
 (defn eat-token
   "Move head of :tokens to :head ('consuming' the old :head) With 2 args, test :head first."
   ([pstate] (eat-token pstate ::pass))
-  ([pstate test]
+  ([pstate test] (eat-token pstate test nil))
+  ([pstate test dbg-msg]
    (when *debugging?* (log/debug (cl-format nil "~AEAT ~A  (type ~A)"
                                            (util/nspaces (* 3 (-> pstate :tags count dec)))
                                            (pp/write (:head pstate) :readably false :stream nil)
@@ -405,10 +407,14 @@
    ;; The actual work of eating a token
    (let [ps1 (if (-> pstate :tokens empty?) (refresh-tokens pstate) pstate) ; 3 of 3, refreshing tokens.
          next-up (-> ps1 :tokens first)]
-     #_(log/info (cl-format nil "Eating ~A, next-up = ~A" (:head ps1) (:tkn next-up)))
+     #_(if (empty? dbg-msg)
+       (println (cl-format nil "(~A, ~A) : Eating ~S next-up=~S" (:line ps1) (:col ps1)            (:head ps1) next-up))
+       (println (cl-format nil "(~A, ~A) : Eating ~S next-up=~S ****~A****" (:line ps1) (:col ps1) (:head ps1) next-up dbg-msg)))
      (as-> ps1 ?ps
-       (assoc ?ps :head (if next-up (:tkn next-up) ::eof)) ; One of two places :head is set; the other is make-pstate.
-       (assoc ?ps :tokens (-> ?ps :tokens rest vec))       ; 2 of 3, setting :tokens.
+       (update ?ps :line #(or (:line next-up) %))
+       (update ?ps :col  #(or (:col  next-up) %))
+       (assoc  ?ps :head  (if next-up (:tkn next-up) ::eof)) ; One of two places :head is set; the other is make-pstate.
+       (update ?ps :tokens #(-> % rest vec))       ; 2 of 3, setting :tokens.
        (ps-assert ?ps)))))
 
 (defn token-vec [ps] (into (-> ps :head vector) (mapv :tkn (:tokens ps))))
@@ -461,12 +467,12 @@
 (defn store
   "This and recall are used to keep parsed content tucked away on the parse state object."
   ([ps key] (store ps key (:result ps)))
-  ([ps key val] (assoc-in ps [:local 0 key] val)))
+  ([ps key val] (assoc-in ps [:local (:local-ptr ps) key] val)))
 
 (defn recall
   "This and store are used to keep parsed content tucked away on the parse state object."
   [ps key]
-  (-> ps :local first key))
+  (-> ps :local (get (:local-ptr ps)) key))
 
 (def foo-obj :yes)
 (defn foo [] :bar)
@@ -475,8 +481,11 @@
   "Make a parse state map and start tokenizing."
   [reader-or-str]
   (as-> {:head nil ; In this order for easy debugging.
+         :line 1   ; Will be updated by eat-token.
+         :col  1   ; Will be updated by eat-token.
          :tags []
          :local []
+         :local-ptr -1 ; Pointer into :local stack for nested parse-list.
          :look {}
          :tokens []
          :string-block ""
@@ -528,29 +537,40 @@
   ([pstate char-open char-close char-sep]
    (parse-list pstate char-open char-close char-sep :ptag/exp))
   ([pstate char-open char-close char-sep item-tag]
+   ;;(println ">>>>> item-tag = " item-tag)
    (when *debugging?*
      (log/debug (cl-format nil ">>>>>>>>>>>>>> parse-list (~A) >>>>>>>>>>>>>>>>>>" item-tag)))
    (let [final-ps
          (as-> pstate ?ps
-           (eat-token ?ps char-open)
-           (assoc-in ?ps [:local 0 :items] [])
+           (eat-token ?ps char-open (str "pl(open)-" item-tag))
+           (update ?ps :local-ptr inc)
+           (assoc-in ?ps [:local (:local-ptr ?ps) :items] [])
+           (assoc-in ?ps [:local (:local-ptr ?ps) :for-tag] item-tag) ; for debugging.
            (loop [ps ?ps]
              (cond
-               (= ::eof (:head ps))
-               (ps-throw ps "parsing a list" {:tag item-tag}),
-               (= char-close (:head ps))
-               (as-> ps ?ps1
-                 (eat-token ?ps1)
-                 (assoc ?ps1 :result (recall ?ps1 :items))),
-               :else
-               (as-> ps ?ps1
-                 (parse item-tag ?ps1)
-                 (update-in ?ps1 [:local 0 :items] conj (:result ?ps1))
-                 (recur (cond-> ?ps1 (= char-sep (:head ?ps1)) (eat-token char-sep)))))))]
+               (= ::eof (:head ps))        (ps-throw ps "End of file parsing a list of" {:tag item-tag}),
+               (= char-close (:head ps))   (let [pps (as-> ps ?ps1
+                                                       (eat-token ?ps1 ::pass (str "pl(close}-" item-tag))
+                                                       (assoc ?ps1 :result (-> ?ps1 :local (get (:local-ptr ?ps1)) :items)))]
+                                             ;(println "<<<<< item-tag = " item-tag)
+                                             pps)
+               :else                       (as-> ps ?ps1
+                                             (parse item-tag ?ps1)
+                                             (update-in ?ps1 [:local (:local-ptr ?ps1) :items] conj (:result ?ps1))
+                                             (if (#{char-sep char-close} (:head ?ps1))
+                                               ?ps1 ; Should either end here or continue with a separator.
+                                               (ps-throw ?ps1 (format "In a list, expected %s or %s." char-sep char-close)
+                                                         {:got (:head ?ps1)}))
+                                             (recur (cond-> ?ps1
+                                                      (= char-sep (:head ?ps1))
+                                                      (eat-token char-sep (str "pl(sep)-" item-tag))))))))]
      (when *debugging?*
        (println "\nCollected" (:result final-ps))
        (log/debug (cl-format nil "<<<<<<<<<<<<<<<<<<<<< parse-list (~A) <<<<<<<<<<<<<<<<<<<<<<<" item-tag)))
-     final-ps)))
+     (reset! diag final-ps)
+     (-> final-ps
+         (update :local #(-> % rest vec))
+         (update :local-ptr dec)))))
 
 ;;; ToDo: Just in-line these?
 (defn jvar? [x]         (s/valid? ::Jvar x))
@@ -598,14 +618,14 @@
     (let [bin-op (-> ps :head bin-op-plus?)]
     (if (not bin-op)
       (assoc ps :result {:typ :OpOperandSeq :op-operand-seq oseq})
-      (let [p (if (#{\[ \}} (:head ps))
-                (as-> ps ?ps
-                  (store ?ps :operator (-> ?ps :head bin-op-plus?))
-                  (parse :ptag/base-exp ?ps :operand-2? true))
-                (as-> ps ?ps
-                  (store ?ps :operator bin-op)
-                  (eat-token ?ps) ; ToDo: I think this is necessarily \.
-                  (parse :ptag/base-exp ?ps :operand-2? true)))]
+      (let [p (cond (#{\[ \}} (:head ps))    (as-> ps ?ps
+                                               (store ?ps :operator (-> ?ps :head bin-op-plus?))
+                                               (parse :ptag/base-exp ?ps :operand-2? true))
+                    (= \. (:head ps))        (as-> ps ?ps
+                                               (store ?ps :operator bin-op)
+                                               (eat-token ?ps ::pass "bin-op-continue") ; ToDo: I think this is necessarily \.
+                                               (parse :ptag/base-exp ?ps :operand-2? true))
+                    :else                    (ps-throw ps "Expected continuation of path," {:got (:head ps)}))]
         (recur p (-> oseq (conj (recall p :operator)) (conj (:result p)))))))))
 
 ;;; ToDo:
@@ -631,10 +651,10 @@
               (qvar? tkn)
               (field? tkn))                           (as-> ps ?ps                   ; <jvar>, <qvar> or `backquoted field`
                                                         (assoc ?ps :result tkn)
-                                                        (eat-token ?ps))
+                                                        (eat-token ?ps ::pass "base-exp/field"))
           (symbol? tkn)                               (as-> ps ?ps                   ; <field> (not part of param-struct)
                                                         (assoc ?ps :result {:typ :Field :field-name (name tkn)})
-                                                        (eat-token ?ps)),
+                                                        (eat-token ?ps ::pass "base-exp/symbol")),
           :else
           (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
                     {:got tkn}))))
@@ -682,10 +702,10 @@
   [ps]
   (cond (-> ps :head symbol?)  (as-> ps ?ps
                                  (assoc ?ps :result {:typ :Field :field-name (?ps :head name)})
-                                 (eat-token ?ps))
+                                 (eat-token ?ps ::pass "field/symbol"))
         (-> ps :head field?)   (as-> ps ?ps
                                  (assoc ?ps :result (:head ?ps))
-                                 (eat-token ?ps))
+                                 (eat-token ?ps ::pass "field/field"))
         :else                  (ps-throw ps "expected a path field" {:got (:head ps)})))
 
 (defparse :ptag/param
@@ -727,11 +747,11 @@
     (if (-> ?ps :head qvar?)
       (as-> ?ps ?ps1
         (store ?ps1 :key (:head ?ps))
-        (eat-token ?ps1))
+        (eat-token ?ps1 ::pass "obj-kv-pair"))
       (as-> ?ps ?ps1
         (parse :ptag/string ?ps1)
         (store ?ps1 :key)))
-    (eat-token ?ps \:)
+    (eat-token ?ps \: "obj-kv-pair")
     (parse :ptag/exp ?ps)
     (assoc ?ps :result {:typ (if in-express? :ExpressKVPair :KVPair)
                         :key (recall ?ps :key)
@@ -835,7 +855,7 @@
   [ps]
   (let [tkn (:head ps)]
     (if (string-lit? tkn)
-      (-> ps (assoc :result (:value tkn)) eat-token)
+      (-> ps (assoc :result (:value tkn)) (eat-token ::pass "string"))
       (ps-throw ps "expected a string literal" {:got tkn}))))
 
 ;;; <literal> ::= string | number | 'true' | 'false' | regex | <obj> | <array>
@@ -843,8 +863,8 @@
   [ps]
   (reset! diag {:ps ps})
   (let [tkn (:head ps)]
-    (cond (string-lit? tkn)               (-> ps (assoc :result (:value tkn)) eat-token),
-          (literal? tkn)                  (-> ps (assoc :result tkn) eat-token),
+    (cond (string-lit? tkn)               (-> ps (assoc :result (:value tkn)) (eat-token ::pass "literal/string")),
+          (literal? tkn)                  (-> ps (assoc :result tkn) (eat-token ::pass "literal/literal")),
           (= tkn \{)                      (parse :ptag/obj-exp ps),
           (= tkn \[)                      (parse :ptag/array ps),
           :else (ps-throw ps "expected a literal string, number, 'true', 'false' regex, obj, range, or array."
@@ -931,7 +951,7 @@
     (if (-> ?ps :head jvar?)
       (as-> ?ps ?ps1
         (store ?ps1 :db (:head ?ps1))
-        (eat-token ?ps1))
+        (eat-token ?ps1 ::pass "q-pattern-tuple"))
       ?ps)
     (store ?ps :ent (:head ?ps))
     (eat-token ?ps qvar?)
@@ -940,7 +960,7 @@
     (if (qvar? (:head ?ps))
       (as-> ?ps ?ps1
           (store ?ps1 :data (:head ?ps1))
-          (eat-token ?ps1))
+          (eat-token ?ps1 ::pass "q-pattern-tuple(2)"))
       (as-> ?ps ?ps1
           (parse :ptag/exp ?ps1)
           (store ?ps1 :data)))
@@ -959,7 +979,7 @@
     (eat-token ?ps :tk/function)
     (parse-list ?ps \( \) \, :ptag/jvar)
     (store ?ps :jvars)
-    (eat-token ?ps \{)
+    (eat-token ?ps \{ "fn-def")
     (parse :ptag/exp ?ps)
     (store ?ps :body)
     (eat-token ?ps \})
@@ -985,7 +1005,7 @@
         (parse-list ?ps1 \( \) \, :ptag/jvar|options) ; was :ptag/jvar.
         (store ?ps1 :params))
       ?ps)
-    (eat-token ?ps \{)
+    (eat-token ?ps \{ "query-def")
     (parse :ptag/query-patterns ?ps)
     (eat-token ?ps \})
     (assoc ?ps :result {:typ :QueryDef
@@ -1001,7 +1021,7 @@
   (if (-> ps :head jvar?)
     (as-> ps ?ps
       (assoc ?ps :result (:head ?ps))
-      (eat-token ?ps))
+      (eat-token ?ps ::pass "jvar|option"))
     (parse :ptag/options-map ps)))
 
 ;;; ToDo: These aren't jvars, probably want some sort of optional parameter syntax.
@@ -1017,7 +1037,7 @@
           (parse-list ?ps1 \( \) \, :ptag/jvar|options)
           (store ?ps1 :params))
         ?ps)
-      (eat-token ?ps \{)
+      (eat-token ?ps \{ "express-def")
       (parse :ptag/obj-exp ?ps)
       (store ?ps :body)
       (eat-token ?ps \})
@@ -1092,7 +1112,7 @@
     (if (oval? tkn)
       (as-> ps ?ps
         (assoc ?ps :result tkn)
-        (eat-token ?ps))
+        (eat-token ?ps ::pass "option-val"))
       (parse-list ps \[ \] \, :ptag/option-val-atom))))
 
 ;;; <option-val-atom> ::= <symbol> | <qvar> | <boolean>
@@ -1102,5 +1122,5 @@
     (if (oval? tkn)
       (as-> ps ?ps
         (assoc ?ps :result tkn)
-        (eat-token ?ps))
+        (eat-token ?ps ::pass "option-val-atom"))
       (ps-throw ps "Expected a symbol, qvar or boolean." {:got tkn}))))
