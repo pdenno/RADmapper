@@ -33,8 +33,6 @@
 ;;;                It is a vector (stack) of maps. On entry, defparse pushes a new empty map on it;
 ;;;                on exit, it pops it. Macros store and recall push onto the top map of the stack.
 ;;;                For example use, see :ptag/MapSpec and parse-list.
-;;;  :local-ptr  - The pointer used to find current place (for the grammar element being worked on)
-;;;                in stored content.
 
 ;;; ToDo:
 ;;;   - Rethink the lexer/parser dichotomy. See Lezer, for example. My continue-tag stuff and regex is pretty bad!
@@ -122,8 +120,8 @@
                                   (if (str/starts-with? in "\\") (subs in 2) (subs in 1))
                                   (str/starts-with? in "/")
                                   (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))]
-    (when (and base (not (index-of base new-line)))
-      (let [flags (or (-> (re-matches #"(?s)([i,m,u,g,s,y]{1,6}).*" (subs st (count base))) second) "") ; Was (?sm). Does that make sense?
+    (when (and base (not (index-of base new-line))) ; Flags are after the closing /
+      (let [flags (or (-> (re-matches #"(?s)([imugsy]{1,6}).*" (subs st (count base))) second) "") ; Was (?sm). Does that make sense?
             flag-map (cond-> {}
                        (index-of flags \i) (assoc :ignore-case? true)
                        (index-of flags \m) (assoc :multi-line? true)
@@ -163,7 +161,7 @@
   "read a query var"
   [st]
   (let [s (-> st str/split-lines first)]
-    (if-let [[_ matched] (re-matches #"(\?[a-z,A-Z][a-zA-Z0-9\-\_]*).*" s)]
+    (if-let [[_ matched] (re-matches #"(\?[a-zA-Z][a-zA-Z0-9\-\_]*).*" s)]
       {:raw matched :tkn {:typ :Qvar :qvar-name matched}}
       (throw (ex-info  "String does not start a legal query variable:" {:string  s})))))
 
@@ -179,6 +177,42 @@
         {:raw matched :tkn {:typ :PatternRole :role-name (util/read-str matched)}})
       (throw (ex-info "String does not start a legal pattern role:" {:string st})))))
 
+(defn whitesp
+  "Evaluates to whitespace at head of string or empty string if none."
+  [s] ; https://stackoverflow.com/questions/15020669/clojure-multiline-regular-expression
+  (if s (or (nth (re-matches #"(?s)(\s+).*$" s) 1) "") ""))
+
+(defn read-eol-comment
+  "Return a token object:
+   {:tkn :eol-comment :ws ws :raw <// string to the end of the line>} :value <string to the end of the line>}."
+  [st ws]
+  (let [line (-> st str/split-lines first)
+        line (subs line (count ws))
+        [raw text] (re-matches #"//(.*)$" line)]
+    {:tkn {:typ :EOL-comment :text text} :raw raw :ws ws}))
+
+;;; ToDo: Reading of blocks can mean that we don't have a complete comment. read-comment should get more (and give up at some point).
+(defn read-c-comment
+  "Return a token object (keys :ws, :raw, and :tkn {:typ :Comment :text <the text>} for a c-style comment.
+   This is called with a string-block possibly containing whitespace before '/*'.
+   N.B.: I haven't found a regex for JS/CLJS that doesn't blows right past the */."
+  [string-block]
+  (let [ws (whitesp string-block)
+        s (subs string-block (count ws))
+        o-regex  (re-pattern #"\s*/\*.*")
+        c-regex  (re-pattern #"(.*\*/).*")
+        comment (loop [lines (str/split-lines s)
+                       open-count  (if (re-matches o-regex (first lines)) 1 0)
+                       close-count (if (re-matches c-regex (first lines)) 1 0)
+                       res (first lines)]
+                  (cond (== open-count close-count)   (subs res 0 (+ (.indexOf  res "*/") 2)) ; Could be all on the first line too.
+                        (-> lines second not)         nil            ; Wasn't all on first line, and ended.  Also, see ToDo above.
+                        :else                         (recur (rest lines)
+                                                             (if (re-matches o-regex (second lines)) (inc  open-count) open-count)
+                                                             (if (re-matches c-regex (second lines)) (inc close-count) close-count)
+                                                             (str res "\n" (->> lines second (re-matches c-regex) second)))))]
+    {:ws ws :raw comment :tkn {:typ :C-comment :text comment}}))
+
 (defn read-long-syntactic
   "Return a map containing a :tkn and :raw string for 'long syntactic' lexemes,
    which include arbitray query vars and roles too."
@@ -186,7 +220,7 @@
   (let [len (count st)
         c0  (nth st 0)
         c1  (and (> len 1) (nth st 1))]
-    (when-let [res (cond (and (= c0 \/) (= c1 \/)) {:raw "//" :tkn :eol-comment},
+    (when-let [res (cond (and (= c0 \/) (= c1 \/)) (read-eol-comment st ws),
                          (= c0 \/) (regex-or-divide st),
                          (#{\' \"} c0) (quoted-string st c0),
                          (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (read-qvar st),
@@ -220,11 +254,6 @@
           (#{\space \tab \newline} c) n
           :else (recur (inc n)))))))
 
-(defn whitesp
-  "Evaluates to whitespace at head of string or empty string if none."
-  [s] ; https://stackoverflow.com/questions/15020669/clojure-multiline-regular-expression
-  (if s (or (nth (re-matches #"(?s)(\s+).*$" s) 1) "") ""))
-
 ;;; ToDo: See split-at.
 (defn get-more
   "Update :string-block and :line-seq by getting more lines from the line-seq lazy seq."
@@ -232,27 +261,6 @@
   (as-> pstate ?ps
     (assoc  ?ps :string-block (->> ?ps :line-seq (take block-size) (map #(str % "\n")) (apply str)))
     (update ?ps :line-seq #(drop block-size %))))
-
-;;; ToDo: Reading of blocks can mean that we don't have a complete comment. read-comment should get more (and give up at some point).
-(defn read-comment
-  "The regular expression in one-token-from-string for finding a comment works fine in clj but  blows right past the */ in cljs.
-   This returns the correct token structure, {:ws ws :raw cm :tkn {:typ :Comment :text cm}}, in both clj and cljs."
-  [string-block]
-  (let [ws (whitesp string-block)
-        s (subs string-block (count ws))
-        o-regex  (re-pattern #"\s*/\*.*")
-        c-regex  (re-pattern #"(.*\*/).*")
-        comment (loop [lines (str/split-lines s)
-                       open-count  (if (re-matches o-regex (first lines)) 1 0)
-                       close-count (if (re-matches c-regex (first lines)) 1 0)
-                       res (first lines)]
-                  (cond (= open-count close-count)    (str/trim res) ; Could be all on the first line too.
-                        (-> lines second not)         nil            ; Wasn't all on first line, and ended.  Alos, see ToDo above.
-                        :else                         (recur (rest lines)
-                                                             (if (re-matches o-regex (second lines)) (inc  open-count) open-count)
-                                                             (if (re-matches c-regex (second lines)) (inc close-count) close-count)
-                                                             (str res "\n" (->> lines second (re-matches c-regex) second)))))]
-    {:ws ws :raw comment :tkn {:typ :Comment :text comment}}))
 
 (def ^:dynamic *debugging-tokenizer?* false)
 
@@ -269,7 +277,7 @@
         (if (empty? s)
           {:ws ws :raw "" :tkn ::end-of-block},   ; Lazily pulling lines from line-seq; need more.
           ;; The problem with use of the clj regex in cljs is that it reads past the closing */
-          (or  (when (re-matches #"(?s)/\*.*" s) (read-comment string-block)) ; JS needs the (?s) even though it is not used!
+          (or  (when (re-matches #"(?s)/\*.*" s) (read-c-comment string-block)) ; JS needs the (?s) even though it is not used!
                #_(when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"  ; #"(?s)(/\*.*\*/).*" ; NOT WORKING cljs <==============
                                                     :clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*")
                                                s)]   ; comment; JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
@@ -298,6 +306,12 @@
       (println (cl-format nil "<----- result = ~S" result)))
     result))
 
+;;; ToDo: I've lost track of what happens to c-style comments; they aren't in the argument pstate here!
+(defn filter-comments
+  "Update :tokens to remove :eol-comment" ; ToDo: Someday store those comments!
+  [pstate]
+  (update pstate :tokens (fn [tkns] (filterv #(not (#{:EOL-comment :C-comment} (-> % :tkn :typ))) tkns))))
+
 (defn tokens-from-string
   "Return pstate with :tokens and :string-block updated as the effect of tokenizing
    :string-block into :tokens."
@@ -314,7 +328,7 @@
         (update ?ps :string-block #(subs % (+ (count (:raw lex)) (count (:ws lex)))))
         (update ?ps :cursor #(+ % new-lines))
         (if (= ::end-of-block (:tkn lex))
-          ?ps
+          (filter-comments ?ps)
           (recur
            (if (= (-> lex :tkn :typ) :Comment)
              (update ?ps :comments conj tkn)
@@ -352,9 +366,9 @@
    which is unprintable. (Throws again if you try to print it.)"
   [pstate msg arg-map]
   (let [arg-strs (reduce-kv (fn [res k v] (-> res (conj (name k)) (conj v))) [] arg-map)
-        report   (cl-format nil "(~A, ~A): ~A ~{~A: ~A ~^~%~} ~%~A"
+        report   (cl-format nil "(~A, ~A): ~A ~{~A: ~A~} ~%~A"
                             (:line pstate) (:col pstate) msg arg-strs
-                            (if @report-pstate? (format "pstate = %s \n" pstate) ""))]
+                            (if @report-pstate? (cl-format nil "pstate = ~A~%" pstate) ""))]
     (as-> pstate ?ps
       (dissoc ?ps :line-seq) ; So REPL won't freak out over the reader being closed...
       (do (reset! diag {:pstate ?ps :msg msg :arg-map arg-map}) ?ps)
@@ -396,8 +410,7 @@
 (defn eat-token
   "Move head of :tokens to :head ('consuming' the old :head) With 2 args, test :head first."
   ([pstate] (eat-token pstate ::pass))
-  ([pstate test] (eat-token pstate test nil))
-  ([pstate test dbg-msg]
+  ([pstate test]
    (when *debugging?* (log/debug (cl-format nil "~AEAT ~A  (type ~A)"
                                            (util/nspaces (* 3 (-> pstate :tags count dec)))
                                            (pp/write (:head pstate) :readably false :stream nil)
@@ -407,9 +420,6 @@
    ;; The actual work of eating a token
    (let [ps1 (if (-> pstate :tokens empty?) (refresh-tokens pstate) pstate) ; 3 of 3, refreshing tokens.
          next-up (-> ps1 :tokens first)]
-     #_(if (empty? dbg-msg)
-       (println (cl-format nil "(~A, ~A) : Eating ~S next-up=~S" (:line ps1) (:col ps1)            (:head ps1) next-up))
-       (println (cl-format nil "(~A, ~A) : Eating ~S next-up=~S ****~A****" (:line ps1) (:col ps1) (:head ps1) next-up dbg-msg)))
      (as-> ps1 ?ps
        (update ?ps :line #(or (:line next-up) %))
        (update ?ps :col  #(or (:col  next-up) %))
@@ -467,15 +477,12 @@
 (defn store
   "This and recall are used to keep parsed content tucked away on the parse state object."
   ([ps key] (store ps key (:result ps)))
-  ([ps key val] (assoc-in ps [:local (:local-ptr ps) key] val)))
+  ([ps key val] (assoc-in ps [:local 0 key] val)))
 
 (defn recall
   "This and store are used to keep parsed content tucked away on the parse state object."
   [ps key]
-  (-> ps :local (get (:local-ptr ps)) key))
-
-(def foo-obj :yes)
-(defn foo [] :bar)
+  (get-in ps [:local 0 key]))
 
 (defn make-pstate
   "Make a parse state map and start tokenizing."
@@ -485,7 +492,6 @@
          :col  1   ; Will be updated by eat-token.
          :tags []
          :local []
-         :local-ptr -1 ; Pointer into :local stack for nested parse-list.
          :look {}
          :tokens []
          :string-block ""
@@ -537,40 +543,33 @@
   ([pstate char-open char-close char-sep]
    (parse-list pstate char-open char-close char-sep :ptag/exp))
   ([pstate char-open char-close char-sep item-tag]
-   ;;(println ">>>>> item-tag = " item-tag)
    (when *debugging?*
      (log/debug (cl-format nil ">>>>>>>>>>>>>> parse-list (~A) >>>>>>>>>>>>>>>>>>" item-tag)))
    (let [final-ps
          (as-> pstate ?ps
-           (eat-token ?ps char-open (str "pl(open)-" item-tag))
-           (update ?ps :local-ptr inc)
-           (assoc-in ?ps [:local (:local-ptr ?ps) :items] [])
-           (assoc-in ?ps [:local (:local-ptr ?ps) :for-tag] item-tag) ; for debugging.
+           (eat-token ?ps char-open)
            (loop [ps ?ps]
              (cond
                (= ::eof (:head ps))        (ps-throw ps "End of file parsing a list of" {:tag item-tag}),
-               (= char-close (:head ps))   (let [pps (as-> ps ?ps1
-                                                       (eat-token ?ps1 ::pass (str "pl(close}-" item-tag))
-                                                       (assoc ?ps1 :result (-> ?ps1 :local (get (:local-ptr ?ps1)) :items)))]
-                                             ;(println "<<<<< item-tag = " item-tag)
-                                             pps)
+
+               (= char-close (:head ps))   (as-> ps ?ps1
+                                             (eat-token ?ps1)
+                                             (assoc ?ps1 :result (get-in ?ps1 [:local 0 :collection/items]))),
+
                :else                       (as-> ps ?ps1
                                              (parse item-tag ?ps1)
-                                             (update-in ?ps1 [:local (:local-ptr ?ps1) :items] conj (:result ?ps1))
+                                             (update-in ?ps1 [:local 0 :collection/items] conj (:result ?ps1))
                                              (if (#{char-sep char-close} (:head ?ps1))
                                                ?ps1 ; Should either end here or continue with a separator.
-                                               (ps-throw ?ps1 (format "In a list, expected %s or %s." char-sep char-close)
+                                               (ps-throw ?ps1 (cl-format nil "In a list, expected ~A or ~A." char-sep char-close)
                                                          {:got (:head ?ps1)}))
                                              (recur (cond-> ?ps1
-                                                      (= char-sep (:head ?ps1))
-                                                      (eat-token char-sep (str "pl(sep)-" item-tag))))))))]
+                                                      (= char-sep (:head ?ps1)) (eat-token char-sep)))))))]
      (when *debugging?*
        (println "\nCollected" (:result final-ps))
        (log/debug (cl-format nil "<<<<<<<<<<<<<<<<<<<<< parse-list (~A) <<<<<<<<<<<<<<<<<<<<<<<" item-tag)))
      (reset! diag final-ps)
-     (-> final-ps
-         (update :local #(-> % rest vec))
-         (update :local-ptr dec)))))
+     final-ps)))
 
 ;;; ToDo: Just in-line these?
 (defn jvar? [x]         (s/valid? ::Jvar x))
@@ -610,6 +609,8 @@
                                            (-> ?ps :result :op-operand-seq))}))
           :else base-ps)))
 
+;;; ToDo: I think continuing from a reduce is not allowed in JSONata.
+;;;       Also, user lands here when they forget a comma betwen objects, for example: "[{'hi' : 1} {'world': 2}]".
 (s/def ::OpOperandSeq (s/keys :req-un [::op-operand-seq]))
 (defparse :ptag/bin-op-continuation
   [ps]
@@ -618,14 +619,14 @@
     (let [bin-op (-> ps :head bin-op-plus?)]
     (if (not bin-op)
       (assoc ps :result {:typ :OpOperandSeq :op-operand-seq oseq})
-      (let [p (cond (#{\[ \}} (:head ps))    (as-> ps ?ps
-                                               (store ?ps :operator (-> ?ps :head bin-op-plus?))
-                                               (parse :ptag/base-exp ?ps :operand-2? true))
-                    (= \. (:head ps))        (as-> ps ?ps
-                                               (store ?ps :operator bin-op)
-                                               (eat-token ?ps ::pass "bin-op-continue") ; ToDo: I think this is necessarily \.
-                                               (parse :ptag/base-exp ?ps :operand-2? true))
-                    :else                    (ps-throw ps "Expected continuation of path," {:got (:head ps)}))]
+      (let [p (cond (#{\[ \}} (:head ps))          (as-> ps ?ps
+                                                     (store ?ps :operator (-> ?ps :head bin-op-plus?))
+                                                     (parse :ptag/base-exp ?ps :operand-2? true)),
+                    (-> ps :head bin-op-plus?)     (as-> ps ?ps
+                                                     (store ?ps :operator bin-op)
+                                                     (eat-token ?ps)
+                                                     (parse :ptag/base-exp ?ps :operand-2? true)),
+                    :else                          (ps-throw ps "Expected continuation of path," {:got (:head ps)}))]
         (recur p (-> oseq (conj (recall p :operator)) (conj (:result p)))))))))
 
 ;;; ToDo:
@@ -651,10 +652,10 @@
               (qvar? tkn)
               (field? tkn))                           (as-> ps ?ps                   ; <jvar>, <qvar> or `backquoted field`
                                                         (assoc ?ps :result tkn)
-                                                        (eat-token ?ps ::pass "base-exp/field"))
+                                                        (eat-token ?ps))
           (symbol? tkn)                               (as-> ps ?ps                   ; <field> (not part of param-struct)
                                                         (assoc ?ps :result {:typ :Field :field-name (name tkn)})
-                                                        (eat-token ?ps ::pass "base-exp/symbol")),
+                                                        (eat-token ?ps)),
           :else
           (ps-throw ps "Expected a unary-op, (, {, [, fn-call, literal, $id, or ?qvar."
                     {:got tkn}))))
@@ -702,10 +703,10 @@
   [ps]
   (cond (-> ps :head symbol?)  (as-> ps ?ps
                                  (assoc ?ps :result {:typ :Field :field-name (?ps :head name)})
-                                 (eat-token ?ps ::pass "field/symbol"))
+                                 (eat-token ?ps))
         (-> ps :head field?)   (as-> ps ?ps
                                  (assoc ?ps :result (:head ?ps))
-                                 (eat-token ?ps ::pass "field/field"))
+                                 (eat-token ?ps))
         :else                  (ps-throw ps "expected a path field" {:got (:head ps)})))
 
 (defparse :ptag/param
@@ -747,11 +748,11 @@
     (if (-> ?ps :head qvar?)
       (as-> ?ps ?ps1
         (store ?ps1 :key (:head ?ps))
-        (eat-token ?ps1 ::pass "obj-kv-pair"))
+        (eat-token ?ps1))
       (as-> ?ps ?ps1
         (parse :ptag/string ?ps1)
         (store ?ps1 :key)))
-    (eat-token ?ps \: "obj-kv-pair")
+    (eat-token ?ps \:)
     (parse :ptag/exp ?ps)
     (assoc ?ps :result {:typ (if in-express? :ExpressKVPair :KVPair)
                         :key (recall ?ps :key)
@@ -855,7 +856,7 @@
   [ps]
   (let [tkn (:head ps)]
     (if (string-lit? tkn)
-      (-> ps (assoc :result (:value tkn)) (eat-token ::pass "string"))
+      (-> ps (assoc :result (:value tkn)) eat-token)
       (ps-throw ps "expected a string literal" {:got tkn}))))
 
 ;;; <literal> ::= string | number | 'true' | 'false' | regex | <obj> | <array>
@@ -863,8 +864,8 @@
   [ps]
   (reset! diag {:ps ps})
   (let [tkn (:head ps)]
-    (cond (string-lit? tkn)               (-> ps (assoc :result (:value tkn)) (eat-token ::pass "literal/string")),
-          (literal? tkn)                  (-> ps (assoc :result tkn) (eat-token ::pass "literal/literal")),
+    (cond (string-lit? tkn)               (-> ps (assoc :result (:value tkn)) eat-token)
+          (literal? tkn)                  (-> ps (assoc :result tkn) eat-token),
           (= tkn \{)                      (parse :ptag/obj-exp ps),
           (= tkn \[)                      (parse :ptag/array ps),
           :else (ps-throw ps "expected a literal string, number, 'true', 'false' regex, obj, range, or array."
@@ -951,7 +952,7 @@
     (if (-> ?ps :head jvar?)
       (as-> ?ps ?ps1
         (store ?ps1 :db (:head ?ps1))
-        (eat-token ?ps1 ::pass "q-pattern-tuple"))
+        (eat-token ?ps1))
       ?ps)
     (store ?ps :ent (:head ?ps))
     (eat-token ?ps qvar?)
@@ -960,7 +961,7 @@
     (if (qvar? (:head ?ps))
       (as-> ?ps ?ps1
           (store ?ps1 :data (:head ?ps1))
-          (eat-token ?ps1 ::pass "q-pattern-tuple(2)"))
+          (eat-token ?ps1))
       (as-> ?ps ?ps1
           (parse :ptag/exp ?ps1)
           (store ?ps1 :data)))
@@ -979,7 +980,7 @@
     (eat-token ?ps :tk/function)
     (parse-list ?ps \( \) \, :ptag/jvar)
     (store ?ps :jvars)
-    (eat-token ?ps \{ "fn-def")
+    (eat-token ?ps \{)
     (parse :ptag/exp ?ps)
     (store ?ps :body)
     (eat-token ?ps \})
@@ -1005,7 +1006,7 @@
         (parse-list ?ps1 \( \) \, :ptag/jvar|options) ; was :ptag/jvar.
         (store ?ps1 :params))
       ?ps)
-    (eat-token ?ps \{ "query-def")
+    (eat-token ?ps \{)
     (parse :ptag/query-patterns ?ps)
     (eat-token ?ps \})
     (assoc ?ps :result {:typ :QueryDef
@@ -1021,7 +1022,7 @@
   (if (-> ps :head jvar?)
     (as-> ps ?ps
       (assoc ?ps :result (:head ?ps))
-      (eat-token ?ps ::pass "jvar|option"))
+      (eat-token ?ps))
     (parse :ptag/options-map ps)))
 
 ;;; ToDo: These aren't jvars, probably want some sort of optional parameter syntax.
@@ -1037,7 +1038,7 @@
           (parse-list ?ps1 \( \) \, :ptag/jvar|options)
           (store ?ps1 :params))
         ?ps)
-      (eat-token ?ps \{ "express-def")
+      (eat-token ?ps \{)
       (parse :ptag/obj-exp ?ps)
       (store ?ps :body)
       (eat-token ?ps \})
@@ -1112,7 +1113,7 @@
     (if (oval? tkn)
       (as-> ps ?ps
         (assoc ?ps :result tkn)
-        (eat-token ?ps ::pass "option-val"))
+        (eat-token ?ps))
       (parse-list ps \[ \] \, :ptag/option-val-atom))))
 
 ;;; <option-val-atom> ::= <symbol> | <qvar> | <boolean>
@@ -1122,5 +1123,5 @@
     (if (oval? tkn)
       (as-> ps ?ps
         (assoc ?ps :result tkn)
-        (eat-token ?ps ::pass "option-val-atom"))
+        (eat-token ?ps ::pass))
       (ps-throw ps "Expected a symbol, qvar or boolean." {:got tkn}))))

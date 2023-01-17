@@ -691,22 +691,23 @@
 
                    $bSets := $qFn($DBa, $DBb);
 
-                   $eFn := express(){{'name' : ?name, 'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}};
+                   $eFn := express{{?name : {'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}}};
 
                    $reduce($bSets, $eFn) )"
-                {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234, "name" "Alice"}))
+
+                {"Alice" {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234},
+                 "Bob"   {"aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}}))
 
     (testing "Same thing with the bSets hand-coded."
-      (is (= (-> (run "( $bSets := [{?id : 123, ?name : 'Bob',   ?aData : 'Bob-A-data',   ?bData : 'Bob-B-data'}
-                                    {?id : 234, ?name : 'Alice', ?aData : 'Alice-A-data', ?bData : 'Alice-B-data'}]
+      (run-test "( $bSets := [{?id : 123, ?name : 'Bob',   ?aData : 'Bob-A-data',   ?bData : 'Bob-B-data'},
+                              {?id : 234, ?name : 'Alice', ?aData : 'Alice-A-data', ?bData : 'Alice-B-data'}];
 
-                          $eFn := express(){{'name' : ?name, 'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}};
+                  $eFn := express(){{?name : {'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}}};
 
-                          $reduce($bSets, $eFn) )")
-                 set)
-             #{{"name" "Alice" "aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234}
-               {"name" "Bob"   "aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}})))
+                  $reduce($bSets, $eFn) )"
 
+                {"Alice" {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234},
+                 "Bob"   {"aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}})))
 
     (testing "More like what you are looking for."
       (testing "Testing (additionally!) that non-string user-keys (the 'id' here) are returned to their original type."
@@ -729,7 +730,7 @@
                    $reduce($bSets, $eFn) )"
 
                 {123 {"aData" "Bob-A-data", "bData" "Bob-B-data", "name" "Bob"},
-                 234 {"aData" "Alice-A-data", "bData" "Alice-B-data", "name" "Alice"}})))))
+                 234 {"aData" "Alice-A-data", "bData" "Alice-B-data", "name" "Alice"}}))))
 
 (deftest qif
   (testing "QIF"
@@ -823,7 +824,7 @@
 
     (testing "Testing Type 2 (qvar-in-key-pos) -- map."
       (run-test "$reduce([{?deviceName : 'device1', ?id : 100},
-                          {?deviceName : 'device2', ?id : 200}]
+                          {?deviceName : 'device2', ?id : 200}],
                          express{{'devices' : {?deviceName : {'id' : ?id}}}})"
 
                 {"devices" {"device1" {"id" 100}, "device2" {"id" 200}}}))))

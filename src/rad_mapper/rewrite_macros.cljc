@@ -17,7 +17,7 @@
 ;;;       It is necessary when using dynamic binding or want state in an atom to be seen.
 (defmacro defrewrite [tag [obj & keys-form] & body]
   `(defmethod rewrite-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
-     (when *debugging?* (cl-format *out* "~A==> ~A~%" (util/nspaces (count @tags)) ~tag))
+     (when *debugging?* (println (cl-format nil "~A==> ~A" (util/nspaces (count @tags)) ~tag)))
      (swap! tags #(conj % ~tag))
      (swap! locals #(into [{}] %))
      (let [res# (do ~@body)
@@ -25,5 +25,5 @@
      (swap! tags   #(-> % rest vec))
      (swap! locals #(-> % rest vec))
      (do (when *debugging?*
-           (cl-format *out* "~A<-- ~A returns ~S~%" (util/nspaces (count @tags)) ~tag result#))
+           (println (cl-format nil "~A<-- ~A returns ~S" (util/nspaces (count @tags)) ~tag result#)))
          result#))))

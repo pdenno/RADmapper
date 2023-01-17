@@ -265,8 +265,7 @@
       (is (parse-ok? "$fn1($fn2($v).a.b)"))
       (is (parse-ok? "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"))
 
-      ;; ToDo: I need to look at JSONata use of \; on this one.
-      (is (parse-ok? "( $x := 1; $f($x) $g($x) )")))))
+      (is (parse-ok? "( $x := 1; $f($x); $g($x) )")))))
 
 (deftest design
   (testing "Design (parse):"
@@ -319,4 +318,28 @@
 
     (testing "Like try.jsonata page."
       (is (parse-ok? "( $:= $read('data/testing/jsonata/try.json');
-                          $sum(Account.Order.Product.(Price*Quantity)) )")))))
+                        $sum(Account.Order.Product.(Price*Quantity)) )")))))
+
+(deftest comments
+  (testing "Comments are ignored."
+    (is (=
+         [{:tkn \(}
+          {:tkn {:typ :Jvar, :jvar-name "$x"}}
+          {:tkn ":="}
+          {:tkn 1}
+          {:tkn \;}
+          {:tkn {:typ :Jvar, :jvar-name "$y"}}
+          {:tkn ":="}
+          {:tkn 2}
+          {:tkn \;}
+          {:tkn {:typ :Jvar, :jvar-name "$z"}}
+          {:tkn ":="}
+          {:tkn 3}
+          {:tkn \)}
+          {:tkn ::par/eof}]
+         (->> (test-tokenize
+               "( $x := 1;
+                  /* C-style-comment */ $y := 2;
+                  // EOL-comment: You do not see me!
+                  $z := 3 )")
+              (mapv #(dissoc % :line :col)))))))

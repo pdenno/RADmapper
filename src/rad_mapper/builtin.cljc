@@ -797,24 +797,26 @@
    specified in the decimal format section of the XPath F&O 3.1 specification."
   ([number picture]  ($formatNumber number picture {}))
   ([number picture options]
-  #?(:clj
-     (let [pic (str/replace picture "e" "E")
-           opts (-> options keywordize-keys first)
-           symbols (DecimalFormatSymbols.)]
-       (.setExponentSeparator symbols "e")
-       (doseq [[k v] opts]
-         (case k ; ToDo: More of these.
-           :zero-digit (.setZeroDigit symbols (nth v 0))
-           :minus-sign (.setMinusSign symbols (nth v 0))
-           nil))
-       (let [df (DecimalFormat. pic symbols)]
-         (doseq [[k _v] opts]
-           (case k ; ToDo: More of these.
-             :per-mille (.setMultiplier df 1000)
-             nil))
-         (.format df number)))
-     :cljs
-     (nb/formatNumber number picture (clj->js options)))))
+   #?(:clj
+      (let [pic (str/replace picture "e" "E")
+            opts (keywordize-keys options)
+            symbols (DecimalFormatSymbols.)]
+        (.setExponentSeparator symbols "e")
+        ;; ToDo: More options.
+        (doseq [k (keys opts)]
+          (when-not (#{:zero-digit :minus-sign :per-mille} k)
+            (log/warn "$formatNumber: Unimplemented option:" (name k))))
+        (doseq [[k v] (seq opts)]
+          (case k
+            :zero-digit (.setZeroDigit symbols (nth v 0))
+            :minus-sign (.setMinusSign symbols (nth v 0))
+            nil))
+        (let [df (DecimalFormat. pic symbols)]
+          (doseq [[k _v] (seq opts)]
+            (when (=  k :per-mille) (.setMultiplier df 1000)))
+          (.format df number)))
+      :cljs
+      (nb/formatNumber number picture (clj->js options)))))
 
 ;;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
 
