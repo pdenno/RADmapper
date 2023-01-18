@@ -293,3 +293,30 @@
 
     (run-test "[{'phone' : {'mobile' : '123-456-7890'}}].phone.mobile"
               "123-456-7890")))
+
+(deftest user-data
+  (testing "Testing use of :user-data in processRM"
+    (testing "Testing a simple use case"
+      #_(is (= "hello world!"
+           (ev/processRM :ptag/exp "$x1" {:user-data "$x1 := 'hello world!';" :execute? true}))))
+
+    (testing "Testing a more extensive use case"
+      (is (= {"Alice" {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234}
+               "Bob"  {"aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}}
+             (ev/processRM
+              :ptag/exp
+              "( $qFn :=  query(){[$DBa ?e1 :id    ?id]
+                                  [$DBb ?e2 :id    ?id]
+                                  [$DBa ?e1 :name  ?name]
+                                  [$DBa ?e1 :aAttr ?aData]
+                                  [$DBb ?e2 :bAttr ?bData]};
+
+                 $bSets := $qFn($DBa, $DBb);
+                 $eFn := express{{?name : {'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}}};
+                 $reduce($bSets, $eFn) )"
+              {:execute? true
+               :user-data "$DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+                                    {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+
+                           $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
+                                    {'id' : 234, 'bAttr' : 'Alice-B-data'}]"}))))))

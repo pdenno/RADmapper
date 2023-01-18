@@ -1951,7 +1951,7 @@
 
 (defn create-lookup-refs
   "Return a vector of datahike:    {:db/add -1 attr val}
-                      data-script: {:db/id   n attr val}, where n={1,2,3...}
+                      datascript:  {:db/id   n attr val}, where n={1,2,3...}
    corresponding to entities to establish before sending data.
    From datahike api.cljc:
                       ;; create a new entity ('-1', as any other negative value, is a tempid

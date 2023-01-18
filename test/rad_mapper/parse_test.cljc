@@ -2,7 +2,6 @@
   "Test parsing"
   (:require
    #?(:clj [clojure.java.io :as io])
-   [clojure.spec.alpha  :as s]
    [clojure.test        :refer [deftest is testing]]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.parse :as par]))
@@ -217,16 +216,17 @@
 
 
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
-(s/def ::simplified-parse-structure (s/or :typical (s/keys :req-un [::typ])
-                                          :string string?
-                                          :number number?
-                                          :keyword keyword?))
+(s/def ::parse-structure
+  (s/or :typical (s/keys :req-un [::typ])
+        :string string?
+        :number number?
+        :keyword keyword?))
 
 (defn parse-ok? [exp]
   (try (let [res (ev/processRM :ptag/exp exp)]
-         (s/valid? ::simplified-parse-structure res))
+          (s/valid? ::parse-structure res)
        #?(:clj  (catch Exception _ false)
-          :cljs (catch :default  _ false))))
+          :cljs (catch :default  _ false)))))
 
 (deftest simple
   (testing "Simple (parse):"

@@ -4,6 +4,7 @@
     #?(:clj [clojure.java.io])
     [clojure.pprint               :refer [cl-format pprint]]
     [clojure.spec.alpha           :as s :refer [check-asserts]]
+    [clojure.string               :as str]
     [rad-mapper.builtin           :as bi]
     [rad-mapper.builtin-macros    :as bm]
     [rad-mapper.parse-macros      :as pm]
@@ -136,15 +137,36 @@
         (sci/eval-form ctx form))
       (finally (util/config-log min-level)))))
 
+(declare processRM)
+
+(defn combine-code-and-data
+  "Return a new problem for use with processRM consisting of the argument data and code.
+   This is typically used with the exerciser, where the user has the opportunity to
+   specify data in a separate editor window."
+  [code data]
+  (let [pdata (as-> data ?d ; Remove last \; to test parsing of data. "(<assign>; <assign>; <assign>)"
+                (str/trim ?d)
+                (let [last-ix (-> ?d count dec)]
+                  (if (= \; (get ?d last-ix))
+                    (subs ?d 0 last-ix)
+                    ?d)))
+        [_ code-body] (re-matches #"(?s)\s*\((.+)\)\s*" code) ; Remove surrounding \( ... \) if any (could just be one expression).
+        pcode (or code-body code)]
+    (processRM :ptag/jvar-decls (cl-format nil "(~A)" pdata)) ; Will throw if not okay.
+    (cl-format nil "(~A; ~A)" pdata pcode)))
+
 (defn processRM
   "A top-level function for all phases of translation.
    parse-string, rewrite, and execute, but with controls for partial evaluation, debugging etc.
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
-   (assert (every? #(#{:rewrite? :executable? :execute? :sci? :debug-eval? :debug-parse? :debug-rewrite?} %)
+   (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval? :debug-parse? :debug-rewrite?} %)
                      (keys opts)))
-   (let [rewrite?    (or (:execute? opts) (:executable? opts) (:rewrite? opts))
+   (let [str         (if-let [udata (-> opts :user-data not-empty)]
+                       (combine-code-and-data str udata)
+                       str)
+         rewrite?    (or (:execute? opts) (:executable? opts) (:rewrite? opts))
          executable? (or (:execute? opts) (:executable? opts))
          sci?        (or (:sci? opts) (util/cljs?))
          ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.

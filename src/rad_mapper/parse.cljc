@@ -1,6 +1,7 @@
 (ns rad-mapper.parse
   "Parse the JSONata-like message mapping language."
   (:require
+   #?(:clj [clojure.java.io :as io])
    [clojure.pprint :as pp :refer [cl-format]]
    [clojure.string :as str :refer [index-of]]
    [clojure.set    :as set]
@@ -584,7 +585,11 @@
       (#{:tk/true :tk/false} tkn)
       (regex? tkn)))
 
-(s/def ::ps  (s/keys :req-un [::tokens ::head]))
+(s/def ::ps (s/keys :req-un [::tokens ::head]))
+(s/def ::ps-done (s/and ::ps
+                        #(= :ok (:parse-status %))
+                        #(empty? (:tokens %))
+                        #(= ::eof (:head %))))
 (s/def ::tokens (s/and vector? (s/coll-of ::token)))
 (s/def ::token  (s/and map? #(contains? % :tkn) #(-> % :tkn nil? not)))
 (s/def ::head #(not (nil? %)))
@@ -830,6 +835,11 @@
     (assoc ?ps :result {:typ :JvarDecl
                         :var (recall ?ps :jvar)
                         :init-val (recall ?ps :init-val)})))
+
+;;; So far, just used for exerciser user-data.
+(defparse :ptag/jvar-decls
+  [pstate]
+  (parse-list pstate \( \) \; :ptag/jvar-decl))
 
 ;;; <unary-exp> ::= <unary-operator> <exp>
 (s/def ::UniOpExp (s/keys :req-un [::uni-op ::exp]))
