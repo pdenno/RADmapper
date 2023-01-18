@@ -1,7 +1,6 @@
 (ns rad-mapper.parse
   "Parse the JSONata-like message mapping language."
   (:require
-   #?(:clj [clojure.java.io :as io])
    [clojure.pprint :as pp :refer [cl-format]]
    [clojure.string :as str :refer [index-of]]
    [clojure.set    :as set]

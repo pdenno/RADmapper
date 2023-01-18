@@ -2,9 +2,10 @@
   "Test parsing"
   (:require
    #?(:clj [clojure.java.io :as io])
+   [clojure.spec.alpha  :as s]
    [clojure.test        :refer [deftest is testing]]
    [rad-mapper.evaluate :as ev]
-   [rad-mapper.parse :as par]))
+   [rad-mapper.parse    :as par]))
 
 (defn tokenize-head
   "test-tokenize (below) doesn't produce tokens (except for head) it creates maps
@@ -224,9 +225,9 @@
 
 (defn parse-ok? [exp]
   (try (let [res (ev/processRM :ptag/exp exp)]
-          (s/valid? ::parse-structure res)
+          (s/valid? ::parse-structure res))
        #?(:clj  (catch Exception _ false)
-          :cljs (catch :default  _ false)))))
+          :cljs (catch :default  _ false))))
 
 (deftest simple
   (testing "Simple (parse):"
