@@ -3,13 +3,18 @@
    processRM is a top-level function for this."
   (:require
    [clojure.pprint      :refer [cl-format]]
-   [rad-mapper.util     :as util :refer [rewrite-dispatch rewrite-meth]]
-   #_[rad-mapper.parse    :as par :refer [builtin-fns]])) ; Needed because the it might be used in the body of defrewrite??? DID NOT HELP.
+   [rad-mapper.util     :as util :refer [rewrite-dispatch rewrite-meth]])) ; ToDo: Why aren't these here?
 
 (def ^:dynamic *debugging?* false)
 
-(def tags (atom []))
+(def tags   (atom []))
 (def locals (atom [{}]))
+
+(defn clear-rewrite!
+  "Trouble just passing tags and locals to rewrite.cljc!"
+  []
+  (reset! tags [:toplevel])
+  (reset! locals [{}]))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.

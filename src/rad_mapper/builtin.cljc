@@ -1936,23 +1936,38 @@
       redex-keys-values
       (sort-by-body key-order)))
 
+(defn known-lookup?
+  "Return true if the k and value is already present in the lookups.
+   There are separate implementations for each database type."
+  [lookup-refs k v db]
+  (case db
+    :datascript  (some #(let [ref (dissoc % :db/id)]
+                          (and (= k (-> ref keys first))
+                               (= v (-> ref vals first))))
+                       lookup-refs)
+    :datahike    (some #(let [[_ _ kk vv] %]
+                          (and (= k kk) (= v vv)))
+                       lookup-refs)))
 
 (defn create-lookup-refs
-  "Return a vector of {:db/id [attr val]} corresponding to entities to establish before sending data.
+  "Return a vector of datahike:    {:db/add -1 attr val}
+                      data-script: {:db/id   n attr val}, where n={1,2,3...}
+   corresponding to entities to establish before sending data.
    From datahike api.cljc:
                       ;; create a new entity ('-1', as any other negative value, is a tempid
                       ;; that will be replaced by Datahike with the next unused eid)
                       (transact conn [[:db/add -1 :name \"Ivan\"]])"
   [schema data cljs?]
-  (let [lookup-refs (atom #{})
+  (let [db (if cljs? :datascript :datahike)
+        lookup-refs (atom #{})
         cnt (atom 0)
         ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
     (letfn [(dlr [obj]
               (cond (map? obj)    (doseq [[k v] (seq obj)] ; v should already be a string. ToDo: It isnt!
-                                    (when (ref-ident? k) (swap! lookup-refs conj
-                                                                (if cljs?
-                                                                  {:db/id (swap! cnt inc) k v}
-                                                                  [:db/add -1 k v])))
+                                    (when (and (ref-ident? k) (not (known-lookup? @lookup-refs k v db)))
+                                        (swap! lookup-refs conj (case db
+                                                                  :datascript {:db/id (swap! cnt inc) k v}
+                                                                  :datahike   [:db/add -1 k v])))
                                     (dlr v))
                     (vector? obj) (doall (map dlr obj))))]
       (dlr data)
@@ -2013,9 +2028,9 @@
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
    (let [full-schema (-> efn meta :bi/schema (update-schema-for-bsets b-sets))
-         data        (->> (mapv efn b-sets) walk/keywordize-keys)
-         lookup-refs (create-lookup-refs full-schema data (util/cljs?))
-         data        (data-with-lookups full-schema data)
+         base-data   (->> (mapv efn b-sets) walk/keywordize-keys)
+         lookup-refs (create-lookup-refs full-schema base-data (util/cljs?))
+         data        (data-with-lookups full-schema base-data)
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
          zippy       (reset! diag {:schema      full-schema
                                    :efn         efn
@@ -2024,6 +2039,7 @@
                                    :base-body   (-> efn meta :bi/base-body)
                                    :db-schema   db-schema
                                    :b-sets      b-sets
+                                   :base-data   base-data
                                    :data        data})
          db-atm      (qu/db-for! [] :known-schema db-schema :learn? false)]
      ;;(swap! diag #(assoc % :db-atm db-atm))

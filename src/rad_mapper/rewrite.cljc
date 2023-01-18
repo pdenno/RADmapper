@@ -10,8 +10,8 @@
    [rad-mapper.query           :as qu]
    [rad-mapper.util            :as util :refer [dgensym! reset-dgensym! rewrite-meth]]
    [rad-mapper.parse           :as par  :refer [builtin-fns]]
-   #?(:clj  [rad-mapper.rewrite-macros :refer [defrewrite tags locals *debugging?*]]))
-   #?(:cljs (:require-macros [rad-mapper.rewrite-macros :refer [defrewrite]])))
+   #?(:clj  [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]]))
+   #?(:cljs (:require-macros [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]])))
 
 ;;; from utils.cljc
 (defn nspaces
@@ -72,7 +72,9 @@
         (nil? obj)                            obj ; for optional things like (-> m :where rewrite)
         :else                                 (throw (ex-info "Don't know how to rewrite obj:" {:obj obj}))))
 
-(defrewrite :toplevel [m] (->> m :top rewrite))
+(defrewrite :toplevel [m]
+  (rad-mapper.rewrite-macros/clear-rewrite!) ; ToDo: Nothing less will suffice! (Though restarting shadow helped!)
+  (->> m :top rewrite))
 
 (def ^:dynamic *assume-json-data?* false)
 (def ^:dynamic *inside-let?*  "let is implemented in Primary" false)

@@ -126,7 +126,7 @@
   [user-key all-keys]
   (keyword "_rm"
            (apply str
-                  (string/replace user-key "/" "*")
+                  (string/replace (str user-key) "/" "*")
                   (if (empty? all-keys) "" "--")
                   (interpose "|" (map #(-> % str (string/replace "/" "*")) all-keys)))))
 
@@ -185,6 +185,7 @@
                                                       (some  (fn [[k v]] (when (key-exp? v)
                                                                            {:key-key k :key-val (second v)}))
                                                              (seq obj)))]
+                ;; a key-exp
                 (let [ident (user-key key-key)]   ; user-defined key slots don't need fancy names, but they concatenate.
                   (swap! key-stack conj key-val)
                   (swap! schema #(assoc % ident (key-schema ident key-val @key-stack :exp-key? true)))
@@ -193,6 +194,7 @@
                        (assoc :_rm/ek-val        key-val)
                        (assoc :_rm/attrs         (rb (dissoc obj key-key))))) ; Other attrs (_:rm/attrs) is a vector of maps because...
                                                                               ; ...each has its own data such as :_rm/user-key.
+                ;; not a key-exp
                 (cond (map? obj)      (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
                                                    (swap! key-stack conj k)
                                                    (let [ident (schema-ident k @key-stack)
