@@ -215,7 +215,6 @@
                                                         :val "Bob"}]}]} "Bob"]}
            (ev/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")))))
 
-
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
 (s/def ::parse-structure
   (s/or :typical (s/keys :req-un [::typ])
@@ -319,7 +318,10 @@
 
     (testing "Like try.jsonata page."
       (is (parse-ok? "( $:= $read('data/testing/jsonata/try.json');
-                        $sum(Account.Order.Product.(Price*Quantity)) )")))))
+                        $sum(Account.Order.Product.(Price*Quantity)) )")))
+
+    (testing "$mapObject, an idea from DataWeave"
+      (is (parse-ok? "$mapObject({'a' : 1, 'b' : 2}, function($k, $v){ {$uppercase($k) : $v} })")))))
 
 (deftest comments
   (testing "Comments are ignored."
@@ -344,3 +346,12 @@
                   // EOL-comment: You do not see me!
                   $z := 3 )")
               (mapv #(dissoc % :line :col)))))))
+
+(deftest objects
+  (testing "Testing various constructions of objects"
+    (testing "basic"
+      (parse-ok? "{'a' : 1, 'b' : 2}"))
+    (testing "JSONata requires that keys be strings; we add a few types." ; ToDo: Note this in documentation to RM.
+      (parse-ok? "{?x : 'a', ?y : 'b'}"))
+    (testing "Testing :ptag/base-exp are allowed as keys or vals." ;  JSONata allows expressions that evaluate to strings.
+      (parse-ok? "{'ab' & 'cd' : 123}"))))

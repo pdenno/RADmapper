@@ -2,6 +2,7 @@
   "Parse the JSONata-like message mapping language."
   (:require
    [clojure.pprint :as pp :refer [cl-format]]
+   [clojure.repl :refer [doc]]
    [clojure.string :as str :refer [index-of]]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
@@ -73,7 +74,9 @@
 (def agg-fns      (fn-maps ["$average" "$max" "$min" "$sum"]))
 (def boolean-fns  (fn-maps ["$boolean" "$exists" "$not"]))
 (def array-fns    (fn-maps ["$append" "$count" "$distinct" "$reverse" "$shuffle" "$sort" "$zip"]))
-(def object-fns   (fn-maps ["$assert" "$each" "$error" "$keys" "$lookup" "$merge" "$sift" "$spread" "$type"]))
+(def object-fns   (fn-maps ["$assert" "$each" "$error" "$keys" "$lookup"  "$merge" "$sift" "$spread" "$type"
+                            "$mapObject" "$assoc" "$reduceKV" ; These three are provisional.
+                            ]))
 (def datetime-fns (fn-maps ["$fromMillis" "$millis" "$now" "$toMillis"]))
 (def higher-fns   (fn-maps ["$filter" "$map" "$reduce" "$sift" "$single"]))
 ;;; Non-JSONata functions
@@ -92,6 +95,19 @@
 (def non-binary-op?       '{".." :op/range \? :op/conditional ":=" :op/assign})
 
 (def binary-op? (merge numeric-operators comparison-operators boolean-operators string-operators other-operators))
+
+#_(defn spec?
+  "Return true if the argument is a spec."
+  [obj]
+  (and (keyword? obj)
+       (-> obj namespace not-empty)
+       (try
+         (= "Spec" ; ToDo: This works but seems hacky.
+            (-> (with-out-str (clojure.repl/doc obj))
+                clojure.string/split-lines
+                (nth 2)))
+         #?(:clj  (catch Exception _ nil)
+            :cljs (catch :default _ nil)))))
 
 (s/def ::Jvar          (s/and (s/keys :req-un [::typ ::jvar-name])       #(= (:typ %) :Jvar)      #(-> % :jvar-name  string?)))
 (s/def ::Qvar          (s/and (s/keys :req-un [::typ ::qvar-name])       #(= (:typ %) :Qvar)      #(-> % :qvar-name  string?)))
@@ -394,11 +410,26 @@
                     :head (:head ps)
                     :tokens (:tokens ps)}))))
 
+(defn explain-spec
+  "Return a string explaining why the argument token failed the argument test."
+  [spec token]
+  (let [typs  (->> (s/explain-data spec token)
+                   ::s/problems
+                   (map #(-> % :path first name)))]
+    (cl-format nil "Expected ~{~A~^, ~} or ~A. Got ~A." (butlast typs) (last typs) token)))
+
+(defn spec-check
+  "Return true if the argument token is s/valid? according to argument spec."
+  [pstate spec token]
+  (or (s/valid? spec token)
+      (ps-throw pstate (explain-spec spec token) {})))
+
 (defn match-head
   "Return true if token matches test, which is a string, character, fn or regex."
   [pstate test]
   (let [head (:head pstate)]
     (cond (= test ::pass) true,
+          ;(spec? test)       (spec-check pstate test head)
           (= test head) true,
           (map? test)        (test head),
           (set? test)        (test head),
@@ -743,19 +774,27 @@
     (assoc ?ps :result {:typ :ReduceExp :kv-pairs (:result ?ps)})))
 
 ;;; ToDo: Perhaps for express body, key could be any expression?
+(s/def ::obj-key (s/or :string         string?
+                       :variable       #(= (:typ %) :Jvar)
+                       :query-variable #(= (:typ %) :Qvar)))
+;;; <obj-key> ::== qvar | base-exp
+(defparse :ptag/obj-key
+  [pstate]
+    (if (-> pstate :head qvar?)
+      (as-> pstate ?ps
+        (store ?ps :qvar (:head ?ps))
+        (eat-token ?ps)
+        (assoc ?ps :result (recall ?ps :qvar)))
+      (parse :ptag/exp pstate))) ; ToDo: I wanted :ptag/base-exp here. This seems too permissive!
+
 ;;; <map-pair> ::=  ( <string> | <qvar> ) ":" <exp>
 (s/def ::KVPair (s/keys :req-un [::key ::val]))
 (s/def ::ExpressKVPair (s/keys :req-un [::key ::val]))
 (defparse :ptag/obj-kv-pair
   [pstate]
   (as-> pstate ?ps
-    (if (-> ?ps :head qvar?)
-      (as-> ?ps ?ps1
-        (store ?ps1 :key (:head ?ps))
-        (eat-token ?ps1))
-      (as-> ?ps ?ps1
-        (parse :ptag/string ?ps1)
-        (store ?ps1 :key)))
+    (parse :ptag/obj-key ?ps)
+    (store ?ps :key)
     (eat-token ?ps \:)
     (parse :ptag/exp ?ps)
     (assoc ?ps :result {:typ (if in-express? :ExpressKVPair :KVPair)

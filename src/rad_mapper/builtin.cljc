@@ -40,6 +40,8 @@
                java.time.ZoneId
                java.time.ZoneOffset)))
 
+#?(:clj (alias 'bi 'rad-mapper.builtin))
+
 ;;; ToDo:
 ;;;  - Make sure meta isn't used where a closure would work.
 ;;;  - Clojure uses earmuffs as a clue to whether a var is dynamic. Should I use *$*?
@@ -267,6 +269,18 @@
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/map-step :body '~body}))))
+
+;;; Implements the JSONata-like <test> ? <then-exp> <else-exp>."
+(def conditional ^:sci/macro
+  (fn [_&form _&env condition e1 e2]
+    `(let [cond# ~condition
+           answer# (if (fn? cond#) (cond#) cond#)]
+
+       (cond (or (and (fn? cond#) (cond#))
+                 (and (not (fn? cond#)) cond#))   (let [res# ~e1]
+                                                    (if (fn? res#) (res#) res#))
+             :else                                (let [res# ~e2]
+                                                    (if (fn? res#) (res#) res#))))))
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
@@ -2078,3 +2092,49 @@
                    (-> mc :targets (contains? db-name)) :targets
                    :else (throw (ex-info "No such database:" {:db-name db-name})))]
     (update-in mc [type db-name] #(update-db % schema-data))))
+
+;;; ToDo: The Dataweave examples suggest to me that they assume that the order of keys in a map
+;;;       are as they appear when you print. These are supposed to be maintained?
+(defn $mapObject
+  "Apply the argument function to each key/value pair (and optionally the index of the pair) of the argument object.
+   Each call to the function (one each for each key/value pair) should return an object containing one key-value pair.
+   These are integrated into the result object such that the key of the object returned by the function becomes
+   a key of the accummulated object, and the value returned by the function becomes the associated value.
+
+   The function specified shall provide 2 or 3 argument: f[key, value, (index)].
+   When index is provided, it will be called in turn with the value 0,1,2... for each call.
+
+   If the function returns multiple key/value pairs containing the same key, the resulting object shall contain
+   the key/value pair from the last such pair processed."
+  [obj fun] ; ToDo: Check arg types.
+  (reset! diag {:fun fun})
+  (let [arg-cnt (-> fun meta :bi/params count)]
+    (cond (== arg-cnt 2)  (reduce-kv (fn [m k v]
+                                       (let [ret (fun k v)
+                                             kk (-> ret keys first)
+                                             vv (-> ret vals first)]
+                                         (assoc m kk vv)))
+                                     {}
+                                     obj)
+          (== arg-cnt 3)  (let [cnt (count obj)]
+                            (reduce (fn [m [k v i]]
+                                      (let [ret (fun k v i)
+                                            kk (-> ret keys first)
+                                            vv (-> ret vals first)]
+                                        (assoc m kk vv)))
+                                    {}
+                                    (for [i (range cnt)
+                                          k (keys obj)
+                                          v (vals obj)]
+                                      [k v i])))
+          :else (throw (ex-info "Second argument to $mapObject shoud be a function of 2 or 3 arguments."
+                                {:arg-cnt arg-cnt})))))
+
+(defn $reduceKV
+  "Reduce INIT by calling FUN with each key/value pair of OBJ."
+  [fn init coll]
+  (reduce-kv fn init coll))
+
+(defn $assoc
+  [obj k v]
+  (assoc obj k v))

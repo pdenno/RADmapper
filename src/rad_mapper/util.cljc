@@ -291,9 +291,13 @@
         :else                                        role))
 
 ;;;=============================================================================
-;;; Utils for macros (It seems the CLJS macros file cannot have functions in it.
+;;; Utils for macros (It seems the CLJS macros file cannot have functions in it.   ToDo: Unlikely!
 ;;;=============================================================================
 
 ;;; --- rewrite
 (defn rewrite-dispatch [tag _ & _] tag)
 (defmulti rewrite-meth #'rewrite-dispatch)
+
+;;; --- rwast
+(defn rwast-dispatch [tag _ & _] tag)
+(defmulti rwast-meth #'rwast-dispatch)

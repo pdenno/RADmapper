@@ -45,7 +45,8 @@
    "map-step"    'rad-mapper.builtin-macros/map-step-m,
    "value-step"  'rad-mapper.builtin-macros/value-step-m,
    "primary"     'rad-mapper.builtin-macros/primary-m,
-   "thread"      'rad-mapper.builtin-macros/thread-m})
+   "thread"      'rad-mapper.builtin-macros/thread-m,
+   "conditional" 'rad-mapper.builtin-macros/conditional-m})
 
 (defn macro?
   "Return a ns-qualified -macro symbol substituting for the argument symbol created from rewriting.
@@ -120,8 +121,8 @@
           (if run-sci?
             (sci/eval-form ctx full-form)
             #?(:clj (binding [*ns* (find-ns 'rad-mapper.builtin)]
-                      (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
-                           (catch Throwable e
+                      (try (eval full-form)     ;(-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
+                           (catch Throwable e   ; Was this perhaps because I didn't have the alias for bi in builtin.cljc?
                              (ex-info "Failure in clojure.eval:" {:error e}))))
                :cljs :never-happens))))
       (finally (util/config-log min-level)))))

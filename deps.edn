@@ -11,7 +11,7 @@
            dk.ative/docjure               {:mvn/version "1.19.0"}  ; spreadsheets
            io.replikativ/datahike         {:mvn/version "0.6.1530"} ; Remember to rebuild databases on update.
            datascript/datascript          {:mvn/version "1.4.0"}
-          ;com.wsscode/pathom             {:mvn/version "2.4.0"}  ; ToDo: Temporary, for schema-db
+           com.wsscode/pathom             {:mvn/version "2.4.0"}
            mount/mount                    {:mvn/version "0.1.17"} ; ToDo: Maybe temporary for schema-db/pathom
            org.babashka/sci               {:mvn/version "0.6.37"}
            org.clojure/clojure            {:mvn/version "1.11.1"}

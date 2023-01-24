@@ -12,6 +12,7 @@
            rad-mapper.parse/defparse        clojure.core/defmethod
            rad-mapper.schema-db/defparse    clojure.core/defn
            rad-mapper.rewrite/defrewrite    clojure.core/defn
+           rad-mapper.rwast-macros/defrwast clojure.core/defn
 
            com.wsscode.pathom.connect/defresolver       clj-kondo.lint-as/def-catch-all
            com.wsscode.pathom.connect/defmutation       clj-kondo.lint-as/def-catch-all

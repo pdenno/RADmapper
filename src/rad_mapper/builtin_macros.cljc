@@ -137,7 +137,8 @@
        (with-meta {:bi/step-type :bi/value-step :body '~body})))
 
 (defmacro primary-m [body]
-  `(-> (fn [& ignore#] ~body)
+  `(-> (fn [& ignore#]
+         ~body)
        (with-meta {:bi/step-type :bi/primary})))
 
 (defmacro init-step-m [body]
@@ -147,3 +148,17 @@
 (defmacro map-step-m [body]
   `(-> (fn [_x#] ~body)
        (with-meta {:bi/step-type :bi/map-step :body '~body})))
+
+;;; ToDo: Rethink use of primary-m, again? and run-steps.
+;;;       Possibly more example of added complexity exist beyond this conditional.
+;;;       Primary, owing to it produces a function, entails this extra complexity.
+(defmacro conditional-m
+  "Implement the JSONata-like <test> ? <then-exp> <else-exp>."
+  [condition e1 e2]
+  `(let [cond# ~condition
+         true?# (if (fn? cond#) (cond#) cond#)]
+     (cond (or (and (fn? true?#) (true?#))
+               (and (not (fn? true?#)) true?#))   (let [res# ~e1]
+                                                    (if (fn? res#) (res#) res#))
+           :else                                (let [res# ~e2]
+                                                  (if (fn? res#) (res#) res#)))))

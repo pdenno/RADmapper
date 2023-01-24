@@ -4,6 +4,7 @@
    [clojure.test :refer [deftest is testing]]
    [rad-mapper.parse]
    [rad-mapper.rewrite]
+   [rad-mapper.builtin :as bi]
    [rad-mapper.builtin-macros :as bm]
    [rad-mapper.evaluate :as ev] ; Useful in debugging
    [dev.dutil :refer [examine]] ; Useful in debugging
@@ -14,24 +15,24 @@
 (deftest jflatten-test
   (testing "Testing that JSONata flattening rules are obeyed."
 
-    (testing "Rule 1"
+    (testing "Testing Rule 1."
       (is (nil? (bm/jflatten (bm/containerize [])))))
 
-    (testing "Rule 1; drop map keys when the value is empty"
+    (testing "Testing Rule 1; drop map keys when the value is empty."
       (is (= [{"match" "foo", "index" 2}]
              (bm/jflatten
               (bm/containerize
                {"match" "foo", "index" 2, "groups" []})))))
 
-    (testing "Rule 2"
+    (testing "Testing Rule 2."
       (is (= 1 (bm/jflatten (bm/containerize [1])))))
 
-    (testing "Rule 3 (The adapted core/flatten function doesn't flatten JSON.)"
+    (testing "Testing Rule 3 (The adapted core/flatten function doesn't flatten JSON.)."
       (is (= [1 2 3 [4 5] 6]
              (bm/jflatten
               (with-meta [1 2 3 [4 5] 6] {:bi/type :bi/json-array})))))
 
-    (testing "Rule 4"
+    (testing "Testing Rule 4."
       (is (= [1 2 3 4 5 6]
              (bm/jflatten
               (bm/containerize
@@ -40,12 +41,12 @@
 ;;; ==============  Builtin-functions =============================
 ;;; --------- string functions -----------------------------------
 (deftest string-fns
-  (testing "string functions"
-    (testing "$base64(en|de)code"
+  (testing "Testing string functions."
+    (testing "Testing $base64(en|de)code."
       (run-test "$base64encode('myuser:mypass')" "bXl1c2VyOm15cGFzcw==")
       (run-test "$base64decode('bXl1c2VyOm15cGFzcw==')" "myuser:mypass"))
 
-    (testing "$contains"
+    (testing "Testing $contains."
       (run-test "$contains('', '')"                 true)
       (run-test "$contains('abracadabra', 'bra')"   true)
       (run-test "$contains('abracadabra', /a.*a/)"  true)
@@ -55,7 +56,7 @@
       (run-test "( $v := {'Phone' : { 'type' : 'mobile', 'number' : '077 7700 1234'}}; $v.Phone[$contains(number, /^077/)] )"
                 {"type" "mobile", "number" "077 7700 1234"}))
 
-    (testing "URL stuff"
+    (testing "Testing URL stuff."
       (run-test "$decodeUrl('https://mozilla.org/?x=%D1%88%D0%B5%D0%BB%D0%BB%D1%8B')"
                 "https://mozilla.org/?x=шеллы")
 
@@ -70,18 +71,18 @@
         (run-test "$eval('[1,2,3]')" [1 2 3])
         (run-test "$eval('[1,$string(2),3]')" [1 "2" 3]))
 
-    (testing "$join"
+    (testing "Testing $join."
       (run-test "$join(['a','b','c'])" "abc")
       (run-test "$join(['a','b','c'], ',')" "a,b,c")
       #_(run-test "$split('too much, punctuation. hard; to read', /[ ,.;]+/, 3)
                 ~> $join(', ')"
                   "too, much, punctuation"))
 
-    (testing "$(lower|upper)case"
+    (testing "Testing $(lower|upper)case."
       (run-test "$lowercase('Hello World')" "hello world")
       (run-test "$uppercase('Hello World')" "HELLO WORLD"))
 
-    (testing "$match"
+    (testing "Testing $match."
       (run-test "$match('ababbabbcc',/a(b+)/)"
                 [{"match" "ab" , "index" 0, "groups" ["b"]}
                  {"match" "abb", "index" 2, "groups" ["bb"]}
@@ -91,20 +92,20 @@
                  {"match" "abb", "index" 2, "groups" ["bb"]}
                  {"match" "abb", "index" 9, "groups" ["bb" ]}]))
 
-    (testing "$pad"
+    (testing "Testing $pad."
       (run-test "$pad('foo',  5)" "foo  ")
       (run-test "$pad('foo', -5)" "  foo")
       (run-test "$pad('foo', -5, '#')" "##foo")
       #_(run-test "$formatBase(35, 2) ~> $pad(-8, '0')" "00100011"))
 
-    (testing "$replace"
+    (testing "Testing $replace."
       (run-test "$replace('John Smith and John Jones', 'John', 'Mr')"
                 "Mr Smith and Mr Jones")
-      (testing "example with limit"
+      (testing "Testing example with limit."
         (run-test "$replace('John Smith and John Jones', 'John', 'Mr', 1)"
                   "Mr Smith and John Jones"))
 
-      (testing "examples with pattern"
+      (testing "Testing examples with pattern."
         (run-test "$replace('abracadabra', /a.*?a/, '*')"
                   "*c*bra")
         (run-test "$replace('John Smith', /(\\w+)\\s(\\w+)/, '$2, $1')"
@@ -113,29 +114,29 @@
         #?(:cljs (run-test "$replace('265USD', /([0-9]+)USD/, '$$$1')"
                   "$265")))
 
-      (testing "example with pattern and replacement function"
+      (testing "Testing example with pattern and replacement function."
         (run-test "(  $convert := function($m) { ($number($m.groups[0]) - 32) * 5/9 & 'C' };
                       $replace('temperature = 68F today', /(\\d+)F/, $convert))"
                 #?(:clj  "temperature = 20.0C today" ; ToDo: fix discrepancy
                    :cljs "temperature = 20C today"))))
 
-    (testing "$split"
+    (testing "Testing $split."
       (run-test "$split('so many words', ' ')"    [ "so", "many", "words" ])
       (run-test "$split('so many words', ' ', 2)" [ "so", "many" ])
       (run-test "$split('too much, punctuation. hard; to read', /[ ,.;]+/)"
                 ["too", "much", "punctuation", "hard", "to", "read"]))
 
-    (testing "$substring"
+    (testing "Testing $substring."
       (run-test "$substring('Hello World', 3)" "lo World")
       (run-test "$substring('Hello World', 3, 5)" "lo Wo")
       (run-test "$substring('Hello World', -4)" "orld")
       (run-test "$substring('Hello World', -4, 2)" "or"))
 
-    (testing "$substring(After|Before)"
+    (testing "Testing $substring(After|Before)."
       (run-test "$substringAfter('Hello World', ' ')" "World")
       (run-test "$substringBefore('Hello World', ' ')" "Hello"))
 
-    (testing "$trim"
+    (testing "Testing $trim."
       (run-test "$trim(' Hello \n World ')" "Hello World"))))
 
 #_(deftest rm-fns
@@ -146,7 +147,7 @@
               '[{:id "find-me" :attr1' 1 :attr2 "two" :anotherAttr "another-value"}])))
 
 (deftest numerical-fns
-  (testing "Numerical functions"
+  (testing "Testing Numerical functions."
     (run-test "$abs(-5)" 5)
     (run-test "$average([3,5])" 4.0)
     (run-test "$ceil(5)" 5)
@@ -158,11 +159,11 @@
     (run-test "$floor(5.8)" 5)
     (run-test "$floor(-5.3)" -6))
 
-  (testing "$formatBase"
+  (testing "Testing $formatBase."
     (run-test "$formatBase(100, 2)" "1100100")
     (run-test "$formatBase(2555, 16)" "9fb"))
 
-  (testing "$formatNumber"
+  (testing "Testing $formatNumber."
     (run-test "$formatNumber(12345.6, '#,###.00')"  "12,345.60")
     #?(:clj (run-test "$formatNumber(1234.5678, '00.000E0')" "12.346e2")) ; ToDo: JSONata can't do this. Investigate.
     (run-test "$formatNumber(-12345.6, '#,###.00', {'minus-sign' : '*'})" "*12,345.60")
@@ -173,7 +174,7 @@
     #_(run-test "$formatNumber(1234.5678, '①①.①①①E①', {'zero-digit': '\u245f'})" "①②.③④⑥E②")) ; Needs investigation. Error in exerciser too.
 
 
-  (testing "$formatInteger"
+  (testing "Testing $formatInteger."
     ;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
     (run-test "$formatInteger(123, '0000')" "0123")
     (run-test "$formatInteger(123, 'w')" #?(:clj "one hundred twenty-three" :cljs "one hundred and twenty-three"))
@@ -183,7 +184,7 @@
     ;; https://www.altova.com/xpath-xquery-reference/fn-format-integer
     #_(run-test "$formatInteger(1234, '#;##0;')" "1;234")) ; Needs investigation.
 
-  (testing "$parseInteger"
+  (testing "Testing $parseInteger."
     (run-test "$parseInteger('twelve thousand, four hundred and seventy-six', 'w')" 12476)
     #_(run-test "$parseInteger('12,345,678', '#,##0')" 12345678) ; ToDo: Needs investigation
     (run-test "$parseInteger('three', 'w')" 3)
@@ -195,7 +196,7 @@
     (run-test "$parseInteger('nine hundred ninety nine quadrillion', 'w')" 999000000000000000)
     (run-test "$parseInteger('two million, six hundred fifty-three thousand, two hundred fifty four', 'w')" 2653254))
 
-  (testing "$round"
+  (testing "Testing $round."
     (run-test "$round(123.456)" 123)
     (run-test "$round(123.456, 2)" 123.46)
     (run-test "$round(123.456, -1)" 120)
@@ -205,8 +206,8 @@
     (run-test "$round(125, -1)" 120)))
 
 (deftest boolean-fns
-  (testing "boolean functions"
-    (testing "$boolean"
+  (testing "Testing boolean functions."
+    (testing "Testing $boolean."
       (run-test "$boolean(true)" true)
       (run-test "$boolean(false)" false)
       (run-test "$boolean(1)" true)
@@ -218,12 +219,12 @@
       (run-test "$boolean([0])" false)
       (run-test "$boolean([1])" true))
 
-    (testing "$exists, which I'm not sure I understand."
+    (testing "Testing $exists, which I'm not sure I understand."
       (run-test "$exists({\"a\" : 1}.a)" true)
       (run-test "$exists({\"a\" : 1}.b)" false))))
 
 (deftest array-fns
-  (testing "array functions"
+  (testing "Testing array functions."
     (run-test "$append([1,2,3], [4,5,6])" [1,2,3,4,5,6])
     (run-test "$append([1,2,3], 4)" [1,2,3,4])
     (run-test "$append('Hello', 'World')" ["Hello", "World"])
@@ -237,7 +238,7 @@
     (run-test "$zip([1,2,3],[4,5],[7,8,9])" [[1,4,7], [2,5,8]])))
 
 (deftest object-fns
-  (testing "object functions"
+  (testing "Testing object functions."
     #_(run-test "$each(Address, function($v, $k) {$k & ' ' & $v})"
               ["Street: Hursley Park", "City: Winchester", "Postcode: SO21 2JN"])
 
@@ -257,10 +258,53 @@
 
 #?(:clj ; ToDo: Implement cljs
 (deftest date-fns
-  (testing "datetime functions"
-    (testing "$fromMillis"
+  (testing "Testing datetime functions."
+    (testing " Testing $fromMillis."
       (run-test "$fromMillis(1510067557121)" "2017-11-07T15:12:37.121Z")
       (run-test "$fromMillis(1510067557121, '[M01]/[D01]/[Y0001] [h#1]:[m01][P]')"
                 "11/07/2017 03:12PM") ; ToDo: Should be 'pm' not 'PM' and 3:12, not 03:12
       (run-test "$fromMillis(1510067557121, '[H01]:[m01]:[s01] [z]', '-0500')"
                 "10:12:37 -0500"))))) ; ToDo: Example shows "10:12:37 GMT-05:00"
+
+(deftest mapping-objects
+  (testing "Testing RM builtin-function $mapObject, OR reduceKV OR JSONata-like equivalent."
+    (testing "Testing $mapObject"
+      (testing " Testing basic."
+        (run-test "$mapObject({'a' : 1, 'b' : 2}, function($k, $v){ {$uppercase($k) : $v} })"
+                  {"A" 1, "B" 2}))
+      (testing " Testing User's Guide interop $mapObject."
+        (run-test "( $order := {'name'            : 'Example Customer',
+                              'shippingAddress' : '123 Mockingbird Lane...',
+                              'item part no.'   : 'p12345',
+                              'qty'             : {'amt' : 4, 'uom' : 'unit'}};
+
+                   $name2CustomerFn := function($k, $v)
+                                          { ($k = 'name') ? {'customer' : $v} : {$k : $v} };
+
+                   $mapObject($order, $name2CustomerFn)
+                 )"
+                {"customer" "Example Customer",
+                 "shippingAddress" "123 Mockingbird Lane...",
+                 "item part no." "p12345",
+                 "qty" {"amt" 4,
+                        "uom" "unit"}})))
+      (testing " Testing User's Guide interop $reduceKV."
+        (testing " Testing $reduceKV"
+          (run-test "$reduceKV(function($res, $k, $v){ $assoc($res, $uppercase($k), $v) }, {}, {'a' : 1, 'b' : 2})"
+                    {"A" 1, "B" 2}))
+        (testing " Testing User's Guide interop $reduceKV."
+          (run "( $order := {'name'            : 'Example Customer',
+                              'shippingAddress' : '123 Mockingbird Lane...',
+                              'item part no.'   : 'p12345',
+                              'qty'             : {'amt' : 4, 'uom' : 'unit'}};
+
+                   $name2CustomerFn := function($res, $k, $v)
+                                          { ($k = 'name') ? $assoc($res, 'customer', $v) : $assoc($res, $k, $v) };
+
+                   $reduceKV($name2CustomerFn, {}, $order)
+                 )"
+                {"customer" "Example Customer",
+                 "shippingAddress" "123 Mockingbird Lane...",
+                 "item part no." "p12345",
+                 "qty" {"amt" 4,
+                        "uom" "unit"}})))))

@@ -179,9 +179,12 @@
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below the code is interleaved.
-(defrewrite :ObjExp [m]
+#_(defrewrite :ObjExp [m]
   `(-> {}
        ~@(map rewrite (:kv-pairs m))))
+
+(defrewrite :ObjExp [m]
+  (reduce (fn [res [k v]] (assoc res k v)) {} (map rewrite (:kv-pairs m))))
 
 (defrewrite :ExpressMap [m]
   (reduce (fn [res kv-pair]
@@ -190,17 +193,25 @@
           {}
           (:kv-pairs m)))
 
-(defrewrite :KeyExp [m]
-  `(:rm/express-key ~(rewrite (:qvar m))))
-
-(defrewrite :KVPair [m]
+#_(defrewrite :KVPair [m]
   `(assoc ~(if (= :Qvar (-> m :key :typ))
              `'~(binding [*inside-key?* true] (-> m :key rewrite))
              (-> m :key rewrite))
           ~(-> m :val rewrite)))
 
+(defrewrite :KVPair [m]
+  (-> []
+      (conj (if (= :Qvar (-> m :key :typ))
+              (binding [*inside-key?* true] (-> m :key rewrite))
+              (-> m :key rewrite)))
+      (conj (-> m :val rewrite))))
+
 (defrewrite :ExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))
+
+(defrewrite :KeyExp [m]
+  `(:rm/express-key ~(rewrite (:qvar m))))
+
 
 (def ^:dynamic *in-regex-fn?*
   "While rewriting built-in functions that take regular expressions rewrite
@@ -317,9 +328,7 @@
     `(fn [~xtra-arg] (~fname ~xtra-arg ~@args))))
 
 (defrewrite :ConditionalExp [m]
-  `(if ~(-> m :predicate rewrite)
-    ~(-> m :exp1 rewrite)
-    ~(-> m :exp2 rewrite)))
+  `(bi/conditional ~(-> m :predicate rewrite)  ~(-> m :exp1 rewrite)  ~(-> m :exp2 rewrite)))
 
 (defrewrite :OptionsMap [m]
   (-> (reduce (fn [res pair]
