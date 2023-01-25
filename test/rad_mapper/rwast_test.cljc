@@ -35,7 +35,3 @@
                                           :Else {:FnCall {:Args ["$res" "$k" "$v"], :FnName "$assoc"}}}}}}}
                {:FnCall {:Args ["$name2CustomerFn" {:Obj {}} "$order"], :FnName "$reduceKV"}}]}
              (rwast example-reduceKV))))))
-
-
-(deftest anytest
-  (is (= true true)))
