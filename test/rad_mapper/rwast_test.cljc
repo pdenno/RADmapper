@@ -17,6 +17,22 @@
       $reduceKV($name2CustomerFn, {}, $order)
     )"))
 
+(def example-map-reduceKV
+  (processRM :ptag/exp
+   "( $order := {'name'            : 'Example Customer',
+                 'shippingAddress' : '123 Mockingbird Lane...',
+                 'item part no.'   : 'p12345',
+                 'qty'             : {'amt' : 4, 'uom' : 'unit'}};
+
+      $name2CustomerFn := function($res, $k, $v)
+                            { ($k = 'name') ? $assoc($res, 'customer', $v) : $assoc($res, $k, $v) };
+
+      $reduceKV($name2CustomerFn, {}, $order)
+    )"))
+
+
+
+
 (deftest rwast-rewriting
   (testing "Testing rewriting."
     (testing " Testing example $reduceKV"

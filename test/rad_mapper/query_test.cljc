@@ -677,7 +677,7 @@
 
     ;; Illustrate swapping to $map with this one.
     (testing "Now we express the result by processing the b-sets."
-      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+      (run-test      "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
 
                    $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
@@ -694,6 +694,7 @@
                    $eFn := express{{?name : {'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}}};
 
                    $reduce($bSets, $eFn) )"
+
 
                 {"Alice" {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234},
                  "Bob"   {"aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}}))
