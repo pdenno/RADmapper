@@ -3,6 +3,7 @@
    rwast = Rewrite AST"
   (:require
    [clojure.data.json      :as json]
+   [rad-mapper.parse       :refer [builtin-fns]]
    [rad-mapper.evaluate    :as ev]
    [rad-mapper.util        :as util :refer [rwast-meth]]
    #?(:clj  [rad-mapper.rwast-macros :refer [defrwast *debugging?*]]))
@@ -10,6 +11,8 @@
 
 (def diag (atom nil))
 (declare rwast)
+
+(def builtin? (-> builtin-fns keys set))
 
 (def type2name
   {:ConditionalExp "Conditional"
@@ -74,36 +77,39 @@
 
 (defrwast :Primary
   [m]
-  {:Block (->> m :exps rwast)})
+  {:rm/Block (->> m :exps rwast)})
 
 (defrwast :JvarDecl
   [m]
-  {:VarDecl {:VarName (->> m :var rwast)
-             :VarValue (->> m :init-val rwast)}})
+  {:rm/VarDecl {:rm/VarName  (->> m :var rwast)
+                :rm/VarValue (->> m :init-val rwast)}})
 
 (defrwast :Jvar [m] (:jvar-name m))
 
 (defrwast :FnDef [m]
-  {:FnDef {:Params (->> m :vars (mapv rwast))}
-   :Body  (-> m :body rwast)})
+  {:rm/FnDef {:rm/Params (->> m :vars (mapv rwast))}
+   :rm/Body  (-> m :body rwast)})
 
 (defrwast :ConditionalExp [m]
-  {:IfExp {:Predicate (-> m :predicate rwast)
-           :Then (-> m :exp1 rwast)
-           :Else (-> m :exp2 rwast)}})
+  {:rm/IfExp {:rm/Predicate (-> m :predicate rwast)
+              :rm/Then (-> m :exp1 rwast)
+              :rm/Else (-> m :exp2 rwast)}})
 
 (defrwast :BinOpSeq [m]
-  {:BinaryExpression (->> m :seq (mapv rwast))})
+  {:rm/BinaryExpression (->> m :seq (mapv rwast))})
 
 (defrwast :FnCall [m]
-  {:FnCall {:Args (->> m :args (mapv rwast))
-            :FnName (:fn-name m)}})
+  (let [args (->> m :args (mapv rwast))]
+    (if (-> m :fn-name builtin?)
+      {(str "rm." (:fn-name m)) {:rm/args args}}
+      {:rm/FnCall {:rm/Args args}
+       :rm/FnName (:fn-name m)})))
 
 (defrwast :ObjExp [m]
-  {:Obj (reduce (fn [m {:keys [key val]}]
-                  (assoc m (rwast key) (rwast val)))
-                {}
-                (:kv-pairs m))})
+  {:rm/Object (reduce (fn [m {:keys [key val]}]
+                        (assoc m (rwast key) (rwast val)))
+                      {}
+                      (:kv-pairs m))})
 
 (defn set-indexes
   "A few object types, such as function calls and arrays, hold an ordered collection of elements.
@@ -160,5 +166,17 @@
                                                 {:typ :ObjExp, :kv-pairs []}
                                                 {:typ :Jvar, :jvar-name "$order"}]}]})
 
+
+(def diag (atom nil))
+(defn string-keys
+  [obj]
+  (reset! diag obj)
+  (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (string-keys k) (string-keys v))) {} obj)
+        (vector? obj)    (mapv string-keys obj)
+        (keyword? obj)   (if-let [ns (namespace obj)] (str ns "." (name obj)) (name obj))
+        :else            obj))
+
 (defn tryme []
-  (rwast example-ast))
+  (-> (rwast example-ast)
+      string-keys
+      json/pprint))

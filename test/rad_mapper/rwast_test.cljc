@@ -51,3 +51,27 @@
                                           :Else {:FnCall {:Args ["$res" "$k" "$v"], :FnName "$assoc"}}}}}}}
                {:FnCall {:Args ["$name2CustomerFn" {:Obj {}} "$order"], :FnName "$reduceKV"}}]}
              (rwast example-reduceKV))))))
+
+
+(def answer
+  {"rm.Block":
+   [{"rm.VarDecl":
+     {"rm.VarName":"$order",
+      "rm.VarValue":
+      {"rm.Object":
+       {"name":"Example Customer",
+        "shippingAddress":"123 Mockingbird Lane...",
+        "item part no.":"p12345",
+        "qty":{"rm.Object":{"amt":"4", "uom":"unit"}}}}}},
+    {"rm.VarDecl":
+     {"rm.VarName":"$name2CustomerFn",
+      "rm.VarValue":
+      {"rm.FnDef":{"rm.Params":["$res", "$k", "$v"]},
+       "rm.Body":
+       {"rm.IfExp":
+        {"rm.Predicate":
+         {"rm.Block":[{"rm.BinaryExpression":["$k", "op.eq", "name"]}]},
+         "rm.Then":{"rm.$assoc":{"rm.args":["$res", "customer", "$v"]}},
+         "rm.Else":{"rm.$assoc":{"rm.args":["$res", "$k", "$v"]}}}}}}},
+    {"rm.$reduceKV":
+     {"rm.args":["$name2CustomerFn", {"rm.Object":{}}, "$order"]}}]})
