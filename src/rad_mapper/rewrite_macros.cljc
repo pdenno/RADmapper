@@ -3,10 +3,9 @@
    processRM is a top-level function for this."
   (:require
    [clojure.pprint      :refer [cl-format]]
-   [rad-mapper.util     :as util :refer [rewrite-dispatch rewrite-meth]])) ; ToDo: Why aren't these here?
+   [rad-mapper.util     :as util :refer [rewrite-meth]])) ; ToDo: Why is this here? SCI?
 
 (def ^:dynamic *debugging?* false)
-
 (def tags   (atom []))
 (def locals (atom [{}]))
 

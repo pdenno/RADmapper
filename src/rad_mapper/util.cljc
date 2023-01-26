@@ -1,7 +1,8 @@
 (ns rad-mapper.util
   (:require
-   [cemerick.url                 :as url]  ; clj-kondo is wrong; it is used.
-   #?(:clj  [clojure.data.xml    :as xml]) ; ToDo: Investigate. Not cljs version?
+   [cemerick.url                 :as url]
+   #?(:clj  [clojure.data.xml    :as xml])
+   #?(:clj  [clojure.data.json   :as json])
    #?(:cljs [cljs.reader])                 ; ToDo: Investigate. Not cljs version?
    #?(:clj [clojure.java.io])
    [clojure.pprint               :refer [cl-format]]
@@ -10,7 +11,6 @@
    #?(:clj  [datahike.db.utils  :refer [db?]]
       :cljs [datascript.core    :refer [db?]])
    [taoensso.timbre              :as log]))
-
 
 ;;; ================== CLJ/CLJS/SCI Interop =========================
 (defn regex? [o]
@@ -44,7 +44,24 @@
                           :last-index regexp.lastIndex})
             regexp)))))))
 
+
+(defn json-pprint
+  "Return the object as a pretty-printed string.
+   These ignore namespaces (e.g. of keyword keys) so if those are to
+   be preserved, the keys should be handled beforehand. See string-keys below"
+  [obj]
+  #?(:clj  (with-out-str (json/pprint obj))
+     :cljs (js/JSON.stringify (clj->js obj) nil 2)))
+
 ;;; ================== Ordinary Utils =========================
+(defn string-keys
+  "Walk the object replacing its keys with strings. Where the original key
+   is namespaced, the string used is <namespace>.<name>."
+  [obj]
+  (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (string-keys k) (string-keys v))) {} obj)
+        (vector? obj)    (mapv string-keys obj)
+        (keyword? obj)   (if-let [ns (namespace obj)] (str ns "." (name obj)) (name obj))
+        :else            obj))
 
 ;;; ToDo: The problem with output to log/debug might have to do with *err* not defined in cljs.
 (defn custom-output-fn
@@ -290,10 +307,9 @@
         (keyword? role)                              (name role),
         :else                                        role))
 
-;;;=============================================================================
-;;; Utils for macros (It seems the CLJS macros file cannot have functions in it.   ToDo: Unlikely!
-;;;=============================================================================
-
+;;;=============================================================================================================
+;;; Utils for macros: It seems the CLJS macros file cannot have these in them! See javascript.org [2023-01-25].
+;;;=============================================================================================================
 ;;; --- rewrite
 (defn rewrite-dispatch [tag _ & _] tag)
 (defmulti rewrite-meth #'rewrite-dispatch)
@@ -301,3 +317,6 @@
 ;;; --- rwast
 (defn rwast-dispatch [tag _ & _] tag)
 (defmulti rwast-meth #'rwast-dispatch)
+(def ^:dynamic *debugging-rwast?* false)
+(def tags   (atom []))
+(def locals (atom [{}]))

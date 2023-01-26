@@ -126,12 +126,17 @@
 (def ^:dynamic *inside-express?* false)
 (def ^:dynamic *inside-key?*     false)
 
+;;; ToDo: The three *inside-whatevers* can be removed if you can invert this (wrapping the bi/get-step)
+;;;       Every use of qvar is as a symbol, not its value. The notion of its value only has meaning inside
+;;;       of a datalog query, and in that case, the symbol is the key in a map.
+;;;       So try to move the get-step intside its caller and dump all three of these. NICE!
+;;;       Maybe the latter uses *inside-step?*
 (defrewrite :Qvar [m]
   (let [qvar (-> m :qvar-name symbol (with-meta {:qvar? true}))]
-    (cond *inside-pattern?* qvar
-          *inside-express?* qvar
-          *inside-key?*     qvar
-          :else `(~'bi/get-step (with-meta '~qvar {:qvar? true})))))
+    (cond *inside-pattern?* `'~qvar
+          *inside-express?* `'~qvar
+          *inside-key?*     `'~qvar
+          :else `(~'bi/get-step (with-meta '~qvar {:qvar? true}))))) ; ToDo: I wonder where this is used?
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
@@ -172,13 +177,14 @@
         {:keys [reduce-body schema]}  (qu/schematic-express-body base-body)]
     `(~'bi/express {:params      '~(remove map? params)
                     :options     '~(some #(when (map? %) %) params)
-                    :base-body   '~base-body
-                    :reduce-body '~reduce-body
+                    :base-body   ~base-body
+                    :reduce-body ~reduce-body
                     :key-order   ~order
                     :schema      '~schema})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below the code is interleaved.
+
 #_(defrewrite :ObjExp [m]
   `(-> {}
        ~@(map rewrite (:kv-pairs m))))

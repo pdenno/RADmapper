@@ -2,12 +2,11 @@
   "Define 'interoperable' syntax trees from RM parse.cljc trees.
    rwast = Rewrite AST"
   (:require
-   [clojure.data.json      :as json]
-   [rad-mapper.parse       :refer [builtin-fns]]
-   [rad-mapper.evaluate    :as ev]
-   [rad-mapper.util        :as util :refer [rwast-meth]]
-   #?(:clj  [rad-mapper.rwast-macros :refer [defrwast *debugging?*]]))
-   #?(:cljs (:require-macros [rad-mapper.rwast-macros :refer [defrwast *debugging?*]])))
+   [clojure.pprint         :refer [cl-format]]    ; CLJS needs this because it is used in rwast_macros.
+   [rad-mapper.parse       :refer [builtin-fns]]  ; Yeah, this is crazy! ; Read about it in javascript.org, 2023-01-25.
+   [rad-mapper.util        :as util :refer [rwast-meth *debugging-rwast?* tags locals]] ; This is especially crazy!
+   #?(:clj  [rad-mapper.rwast-macros :refer [defrwast]]))
+  #?(:cljs (:require-macros [rad-mapper.rwast-macros :refer [defrwast]])))
 
 (def diag (atom nil))
 (declare rwast)
@@ -166,17 +165,7 @@
                                                 {:typ :ObjExp, :kv-pairs []}
                                                 {:typ :Jvar, :jvar-name "$order"}]}]})
 
-
-(def diag (atom nil))
-(defn string-keys
-  [obj]
-  (reset! diag obj)
-  (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (string-keys k) (string-keys v))) {} obj)
-        (vector? obj)    (mapv string-keys obj)
-        (keyword? obj)   (if-let [ns (namespace obj)] (str ns "." (name obj)) (name obj))
-        :else            obj))
-
 (defn tryme []
   (-> (rwast example-ast)
-      string-keys
-      json/pprint))
+      util/string-keys
+      util/json-pprint))
