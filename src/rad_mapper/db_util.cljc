@@ -269,3 +269,28 @@
   (if (> n 0)
     (recur (.getParentFile file) (dec n))
     file)))
+
+(defn box
+  "Wrap the argument (an atomic value) in a box.
+   Note that unlike unbox, this only accepts atomic values."
+  [obj]
+  (cond (string?  obj) {:box/string-val  obj},
+        (number?  obj) {:box/number-val  obj},
+        (keyword? obj) {:box/keyword-val obj},
+        (boolean? obj) {:box/boolean-val obj}))
+
+(defn unbox
+  "Walk through the form replacing boxed data with the data.
+   In the reduce DB, for simplicity, all values are :db.type/ref."
+  [data]
+  (letfn [(box? [obj]
+            (and (map? obj)
+                 (#{:box/string-val :box/number-val :box/keyword-val :box/boolean-val}
+                  (-> obj seq first first))))  ; There is just one key in a boxed object.
+          (ub [obj]
+            (if-let [box-typ (box? obj)]
+              (box-typ obj)
+              (cond (map? obj)      (reduce-kv (fn [m k v] (assoc m k (ub v))) {} obj)
+                    (vector? obj)   (mapv ub obj)
+                    :else           obj)))]
+    (ub data)))

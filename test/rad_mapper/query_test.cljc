@@ -673,7 +673,6 @@
                     $qFn($DBa, $DBb) )"
                 '[{?id 123, ?name "Bob", ?aData "Bob-A-data", ?bData "Bob-B-data"}]))
 
-
     ;; Illustrate swapping to $map with this one.
     (testing "Now we express the result by processing the b-sets."
       (run-test      "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},

@@ -39,7 +39,7 @@
       (run-test "$foo" '$foo))
 
     (testing "tokenizer"
-      (run-test "true?'a':'b'" '(if true "a" "b")))
+      (run-test "true?'a':'b'" '(bi/conditional true "a" "b")))
 
     ;; ToDo: This one doesn't work yet, but it tokenizes. See parse_test.clj.
     ;; I think the problem is that triple-roles are literals yet. I'm not sure that they should be.
@@ -180,7 +180,7 @@
                   $f($x, $y) )"
                '(bi/primary
                  (let [$x "foo"
-                       _x1 (bim/set-context! (-> {} (assoc "a" 1)))
+                       _x1 (bim/set-context! {"a" 1})
                        $y "bat"
                        $yy "ybat"]
                    (bi/fncall {:args [$x $y], :func $f}))))))

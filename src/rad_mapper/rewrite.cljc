@@ -116,35 +116,10 @@
   "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than *inside-delim?*
   false)
 
-#_(def ^:dynamic *inside-pattern?*
-  "When true, modify rewriting of qvars."
-  false)
-
 (defrewrite :Field [m]
   (cond *inside-delim?* (:field-name m),
         *inside-step?*  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than *inside-delim?*
         :else `(~'bi/get-step  ~(:field-name m))))
-
-#_(def ^:dynamic *inside-express?* false)
-#_(def ^:dynamic *inside-key?*     false)
-
-;;; ToDo: The three *inside-whatevers* can be removed if you can invert this (wrapping the bi/get-step)
-;;;       Every use of qvar is as a symbol, not its value. The notion of its value only has meaning inside
-;;;       of a datalog query, and in that case, the symbol is the key in a map.
-;;;       So try to move the get-step intside its caller and dump all three of these. NICE!
-;;;       Maybe the latter uses *inside-step?*
-#_(defrewrite :Qvar [m]
-  (let [qvar (-> m :qvar-name symbol (with-meta {:qvar? true}))]
-    (cond *inside-pattern?* qvar
-          *inside-express?* qvar
-          *inside-key?*     qvar
-          :else `(~'bi/get-step (with-meta '~qvar {:qvar? true})))))
-
-#_(defrewrite :Qvar [m]
-  (let [qvar (-> m :qvar-name symbol)]
-    (if *inside-step?*
-      (~'bi/get-stooooop '~qvar) ;<=====================================================================
-      `'~qvar)))
 
 (defrewrite :Qvar [m] `'~(-> m :qvar-name symbol))
 
@@ -192,26 +167,6 @@
                     :key-order   ~order
                     :schema      '~schema})))
 
-#_(defrewrite :ExpressDef [m]
-  (reset! key-order [])
-  (let [params    (-> m :params rewrite)
-        base-body (binding [*inside-express?* true] (-> m :body rewrite))
-        order @key-order
-        {:keys [reduce-body schema]}  (qu/schematic-express-body base-body)]
-    `(~'bi/express {:params      '~(remove map? params)
-                    :options     '~(some #(when (map? %) %) params)
-                    :base-body   '~base-body
-                    :reduce-body '~reduce-body
-                    :key-order   ~order
-                    :schema      '~schema})))
-
-
-;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
-;;; Below the code is interleaved.
-#_(defrewrite :ObjExp [m]
-  `(-> {}
-       ~@(map rewrite (:kv-pairs m))))
-
 (defrewrite :ObjExp [m]
   (reduce (fn [res [k v]] (assoc res k v)) {} (map rewrite (:kv-pairs m))))
 
@@ -229,12 +184,6 @@
 
 (defrewrite :KVPair [m]
   [(-> m :key rewrite) (-> m :val rewrite)])
-
-#_(defrewrite :KVPair [m]
-  `(assoc ~(if (= :Qvar (-> m :key :typ))
-             `'~(-> m :key rewrite)
-             (-> m :key rewrite))
-          ~(-> m :val rewrite)))
 
 (defrewrite :ExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))

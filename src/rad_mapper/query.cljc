@@ -3,7 +3,7 @@
   (:require
    [clojure.string     :refer [starts-with?] :as string]
    [clojure.walk       :refer [keywordize-keys]]
-   [rad-mapper.db-util :refer [db-type-of]]
+   [rad-mapper.db-util :refer [db-type-of box]]
    #?(:clj  [datahike.api         :as d]
       :cljs [datascript.core      :as d])
    [taoensso.timbre :as log]))
@@ -95,7 +95,7 @@
    :_rm/attrs         {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
    :_rm/vals          {:db/cardinality :db.cardinality/many :db/valueType :db.type/ref}
    :_rm/val           {:db/cardinality :db.cardinality/one  :db/valueType :db.type/ref}
-   :_rm/user-key      {:db/cardinality :db.cardinality/one  :db/valueType :db.type/string} ;
+   :_rm/user-key      {:db/cardinality :db.cardinality/one  :db/valueType :db.type/ref}    ; It is boxed.
    :_rm/ek-val        {:db/cardinality :db.cardinality/one  :db/valueType :db.type/ref}    ; key component used w/ express keys and in output.
    :box/boolean-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/boolean}
    :box/keyword-val   {:db/cardinality :db.cardinality/one  :db/valueType :db.type/keyword}
@@ -112,7 +112,7 @@
 
 (defn qvar? [obj] (and (symbol? obj) (starts-with? (name obj) "?")))
 
-(defn key-exp?
+(defn exp-key?
   "Return true when the argument looks like [:rm/express-key ?some-qvar]."
   [obj]
   (and (vector? obj)
@@ -138,10 +138,10 @@
            :db/cardinality :db.cardinality/one
            :_rm/cat-key all-keys          ; ToDo: This is just for debugging, I think.
            :_rm/self ident
-           :_rm/user-key k}               ; Will be a qvar if exp-key? = true
+           :_rm/user-key (box k)}               ; Will be a qvar if exp-key? = true
     exp-key? (assoc :_rm/exp-key? true))) ; ToDo: This is just for debugging, I think. Data has :_rm/ek-val.
 
-(defn user-key
+(defn db-key-ident
   "Return a keyword for a user-defined key. If the argument is a string, it could have a / in it.
    In which case, it is treated as namespaced. If it has more than one, th ones to the right are
    changed to '*'"
@@ -182,11 +182,11 @@
         schema (atom support-schema)]
     (letfn [(rb [obj] ; Here there is an express-key in a map value.
               (if-let [{:keys [key-key key-val]} (and (map? obj)
-                                                      (some  (fn [[k v]] (when (key-exp? v)
+                                                      (some  (fn [[k v]] (when (exp-key? v)
                                                                            {:key-key k :key-val (second v)}))
                                                              (seq obj)))]
                 ;; a key-exp
-                (let [ident (user-key key-key)]   ; user-defined key slots don't need fancy names, but they concatenate.
+                (let [ident (db-key-ident key-key)]   ; user-defined key slots don't need fancy names, but they concatenate.
                   (swap! key-stack conj key-val)
                   (swap! schema #(assoc % ident (key-schema ident key-val @key-stack :exp-key? true)))
                    (-> {ident `[:rm/express-key  ~@(deref key-stack)]}
@@ -223,13 +223,13 @@
   (let [ekeys (atom [])]
     (letfn [(rew-keys [obj]
               (cond (map? obj) ; I think the 'or' below is justified; the map can only have one key.
-                    (do (when-let [this-key (or (some #(when (key-exp? %) (second %)) (vals obj))
-                                                (some #(when (key-exp? %) (second %)) (keys obj)))]
+                    (do (when-let [this-key (or (some #(when (exp-key? %) (second %)) (vals obj))
+                                                (some #(when (exp-key? %) (second %)) (keys obj)))]
                           (swap! ekeys conj this-key))
                         (let [res (doall (reduce-kv (fn [m k v]
-                                                      (if (key-exp? v)
+                                                      (if (exp-key? v)
                                                         (assoc m k `[:rm/express-key ~@(deref ekeys)])
-                                                        (if (key-exp? k)
+                                                        (if (exp-key? k)
                                                           (assoc m `[:rm/express-key ~@(deref ekeys)] (rew-keys v))
                                                           (assoc m k (rew-keys v)))))
                                                     {} obj))]

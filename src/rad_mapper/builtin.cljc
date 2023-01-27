@@ -19,7 +19,7 @@
       :cljs [datascript.pull-api  :as dp])
    #?(:cljs ["nata-borrowed"  :as nb])
    #?(:cljs [goog.crypt.base64 :as jsb64])
-   [rad-mapper.db-util            :as du]
+   [rad-mapper.db-util            :as du :refer [box unbox]]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util :refer [qvar?]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
@@ -1780,39 +1780,18 @@
                               :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))))
           (with-meta {:bi/express-template? true}))))
 
-(defn boxit [obj]
-  (cond (string?  obj) {:box/string-val  obj},
-        (number?  obj) {:box/number-val  obj},
-        (keyword? obj) {:box/keyword-val obj},
-        (boolean? obj) {:box/boolean-val obj}))
 
 (defn box-vals
-  "Walk through the form replacing non-map :rm/val with boxed data."
+  "Walk through the form replacing non-map :_rm/val and :_rm/ek-val with boxed data."
   [obj]
   (cond (map? obj)       (reduce-kv (fn [m k v]
                                       (if (and (#{:_rm/val :_rm/ek-val} k)
                                                (some #(% v) [string? number? keyword? boolean?]))
-                                        (assoc m k (boxit v))
+                                        (assoc m k (box v))
                                         (assoc m k (box-vals v))))
                                     {} obj)
         (vector? obj)    (mapv box-vals obj)
         :else            obj))
-
-(defn unbox-vals
-  "Walk through the form replacing boxed data with the data.
-   In the reduce DB, for simplicity, all values are :db.type/ref."
-  [data]
-  (letfn [(box? [obj]
-            (and (map? obj)
-                 (#{:box/string-val :box/number-val :box/keyword-val :box/boolean-val}
-                  (-> obj seq first first))))  ; There is just one key in a boxed object.
-          (uv [obj]
-            (if-let [box-typ (box? obj)]
-              (box-typ obj)
-              (cond (map? obj)      (reduce-kv (fn [m k v] (assoc m k (uv v))) {} obj)
-                    (vector? obj)   (mapv uv obj)
-                    :else           obj)))]
-    (uv data)))
 
 (s/def ::b-set (s/and map? #(every? qvar? (keys %))))
 
@@ -1821,16 +1800,19 @@
    computing concatenated keys (and NYI) evaluating expressions."
   [bset base-body reduce-body]
   (if (s/valid? ::b-set bset)
-    (letfn [(sub-bset [key-exp bset] ; Generate a value for a :rm/express-key expression.
+    (letfn [(sub-bset [key-parts bset] ; Generate a value for a :rm/express-key expression.
               (if *in-reduce?*
-                (->> (map #(if (qvar? %) (get bset %) %) (rest key-exp)) ; There can be constants in catkey.
+                (->> (map #(if (qvar? %) (get bset %) %) key-parts) ; There can be constants in catkey.
                      (map str)
                      (interpose "|")
                      (apply str))
-                (get bset (second key-exp))))
+                (get bset (first key-parts))))
             (eeb-aux [obj]
-              (cond (map? obj)         (reduce-kv (fn [m k v] (assoc m (eeb-aux k) (eeb-aux v))) {} obj)
-                    (qu/key-exp? obj)  (sub-bset obj bset)
+              (cond (map? obj)         (reduce-kv (fn [m k v]
+                                                    (if (= :_rm/user-key k)
+                                                      (assoc m k (-> (if (qvar? v) (get bset v) v) box))
+                                                      (assoc m (eeb-aux k) (eeb-aux v)))) {} obj)
+                    (qu/exp-key? obj)  (sub-bset (rest obj) bset) ; rest: strip off :rm/express-key.
                     (vector? obj)      (mapv eeb-aux obj)
                     (qvar? obj)        (get bset obj)
                     :else              obj))]
@@ -1941,7 +1923,7 @@
    key-order argument is the order of keys found in the base body."
   [data key-order schema]
   (-> data
-      unbox-vals
+      unbox
       (redex-restore-values schema)
       redex-keys-values
       (sort-by-body key-order)))
@@ -1990,10 +1972,9 @@
   (let [ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
     (letfn [(dal [obj] (cond
                          (map? obj)         (reduce-kv (fn [m k v]
-                                                         (cond (ref-ident? k) (assoc m :db/id [k v]),
-                                                               ;; ToDo: I don't think boxing the value is an option here.
-                                                               (= k :_rm/user-key) (assoc m k (str v)),
-                                                               :else (assoc m k (dal v))))
+                                                         (if (ref-ident? k)
+                                                           (assoc m :db/id [k v])
+                                                           (assoc m k (dal v))))
                                                        {} obj)
                          (vector? obj)      (mapv dal obj)
                          :else obj))]
@@ -2103,7 +2084,6 @@
    If the function returns multiple key/value pairs containing the same key, the resulting object shall contain
    the key/value pair from the last such pair processed."
   [obj fun] ; ToDo: Check arg types.
-  (reset! diag {:fun fun})
   (let [arg-cnt (-> fun meta :bi/params count)]
     (cond (== arg-cnt 2)  (reduce-kv (fn [m k v]
                                        (let [ret (fun k v)
