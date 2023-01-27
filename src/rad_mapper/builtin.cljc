@@ -21,7 +21,7 @@
    #?(:cljs [goog.crypt.base64 :as jsb64])
    [rad-mapper.db-util            :as du]
    [rad-mapper.query              :as qu]
-   [rad-mapper.util               :as util]
+   [rad-mapper.util               :as util :refer [qvar?]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
@@ -1643,10 +1643,6 @@
       :in    ~@in
       :where ~@(tp-aux body)])))
 
-;;; ToDo: This isn't working.
-#_(defn qvar? [obj]  (-> obj meta :qvar?))
-(defn qvar? [obj] (and (symbol? obj) (str/starts-with? (name obj) "?")))
-
 (defn entity-qvars
   "Return the set of qvars in entity position of the argument body"
   [body]
@@ -1747,7 +1743,7 @@
                        [?class :resource/namespace  ?class-ns]
                        [?class :resource/name       ?class-name]};
     $q($data,'owl/Class') )"
-  [{:keys [body in dbs pred-args params options]}]
+  [{:keys [body in pred-args params options]}]
   (if (empty? params)
     (immediate-query-fn body in pred-args options)
     (higher-order-query-fn body in pred-args options params)))

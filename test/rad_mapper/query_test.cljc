@@ -102,9 +102,8 @@
                        [?class :resource/iri  ?class-iri]}")
              '(bi/query
                {:params '[],
-                :dbs '[$],
                 :options nil,
-                :pred-args [],
+                :pred-args '[],
                 :body '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]],
                 :in '[$]})))))
 
@@ -120,24 +119,23 @@
   (testing "rewriting of an in-line query"
     (is (= (run-rew "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")
            '((bi/query {:params '[],
-                        :dbs '[$],
                         :options nil,
-                        :pred-args [],
+                        :pred-args '[],
                         :body '[[?ent ?attr ?val]],
                         :in '[$]})
-             [(-> {} (assoc "person/fname" "Peter") (assoc "person/lname" "Dee"))]))))
+             [{"person/fname" "Peter"
+               "person/lname" "Dee"}]))))
 
 
   (testing "rewriting of an in-line query with a parameter."
     (is (= (run-rew "($qBob := query($name){[?e :name $name]}('Bob');
                       $qBob([{'name' : 'Bob'}]))")
            '(bi/primary (let [$qBob ((bi/query {:params '[$name],
-                                                :dbs '[$],
                                                 :options nil,
-                                                :pred-args [],
+                                                :pred-args '[],
                                                 :body '[[?e :name $name]],
                                                 :in '[$]}) "Bob")]
-                          (bi/fncall {:args [[(-> {} (assoc "name" "Bob"))]], :func $qBob}))))))
+                          (bi/fncall {:args [[{"name" "Bob"}]], :func $qBob}))))))
 
   (testing "execution of an in-line query"
     (is (= (-> (run "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])") set)
@@ -165,13 +163,12 @@
                        $q($data)
                      )")
            '(bi/primary
-             (let [$data (with-meta [(-> {} (assoc "person/fname" "Bob")
-                                         (assoc "person/lname" "Clark"))]
+             (let [$data (with-meta [{"person/fname" "Bob"
+                                      "person/lname" "Clark"}]
                            #:bi{:json-array? true})
                    $q (bi/query {:params '[],
-                                 :dbs '[$],
                                  :options nil,
-                                 :pred-args [],
+                                 :pred-args '[],
                                  :body '[[?person :person/fname ?fname] [?person :person/lname ?lname]],
                                  :in '[$]})]
                (bi/fncall {:args [$data], :func $q}))))))

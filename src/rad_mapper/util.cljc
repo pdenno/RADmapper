@@ -54,6 +54,37 @@
      :cljs (js/JSON.stringify (clj->js obj) nil 2)))
 
 ;;; ================== Ordinary Utils =========================
+;;; ToDo: This isn't working.
+(defn qvar? [obj] (and (symbol? obj) (str/starts-with? (name obj) "?")))
+
+(defn unquote-qvars
+  "Walk through the body replacing (quote <qvar>) with <qvar>.
+   Rationale: In most situations we want qvars to be rewritten as quoted symbols.
+   An exception is their use in the :where of a datalog query. There may be more usages."
+  [form]
+  (letfn [(unq [obj]
+            (cond (map? obj)                   (reduce-kv (fn [m k v] (assoc m (unq k) (unq v))) {} obj)
+                  (vector? obj)                (mapv unq obj)
+                  (and (seq? obj)
+                       (== 2 (count obj))
+                       (= 'quote (first obj))
+                       (-> obj second qvar?))   (second obj)
+                  :else obj))]
+    (unq form)))
+
+(defn quote-qvars
+  "Walk through the body replacing <qvar> with (quote <qvar>).
+   Rationale: In most situations we want qvars to be rewritten as quoted symbols.
+   An exception is their use in the :where of a datalog query. There may be more usages."
+  [form]
+  (letfn [(qq [obj]
+            (cond (map? obj)                   (reduce-kv (fn [m k v] (assoc m (qq k) (qq v))) {} obj)
+                  (vector? obj)                (mapv qq obj)
+                  (qvar? obj)                  `(quote ~obj)
+                  :else obj))]
+    (qq form)))
+
+
 (defn string-keys
   "Walk the object replacing its keys with strings. Where the original key
    is namespaced, the string used is <namespace>.<name>."

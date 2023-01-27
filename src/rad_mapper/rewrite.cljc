@@ -8,10 +8,12 @@
    [rad-mapper.builtin         :as bi]
    [rad-mapper.builtin-macros  :as bim]
    [rad-mapper.query           :as qu]
-   [rad-mapper.util            :as util :refer [dgensym! reset-dgensym! rewrite-meth]]
+   [rad-mapper.util            :as util :refer [dgensym! reset-dgensym! rewrite-meth qvar? unquote-qvars quote-qvars]]
    [rad-mapper.parse           :as par  :refer [builtin-fns]]
    #?(:clj  [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]]))
-   #?(:cljs (:require-macros [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]])))
+  #?(:cljs (:require-macros [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]])))
+
+;;; ToDo: A real problem with *inside-step?* is that it is true inside any primary!
 
 ;;; from utils.cljc
 (defn nspaces
@@ -114,7 +116,7 @@
   "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than *inside-delim?*
   false)
 
-(def ^:dynamic *inside-pattern?*
+#_(def ^:dynamic *inside-pattern?*
   "When true, modify rewriting of qvars."
   false)
 
@@ -123,20 +125,28 @@
         *inside-step?*  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than *inside-delim?*
         :else `(~'bi/get-step  ~(:field-name m))))
 
-(def ^:dynamic *inside-express?* false)
-(def ^:dynamic *inside-key?*     false)
+#_(def ^:dynamic *inside-express?* false)
+#_(def ^:dynamic *inside-key?*     false)
 
 ;;; ToDo: The three *inside-whatevers* can be removed if you can invert this (wrapping the bi/get-step)
 ;;;       Every use of qvar is as a symbol, not its value. The notion of its value only has meaning inside
 ;;;       of a datalog query, and in that case, the symbol is the key in a map.
 ;;;       So try to move the get-step intside its caller and dump all three of these. NICE!
 ;;;       Maybe the latter uses *inside-step?*
-(defrewrite :Qvar [m]
+#_(defrewrite :Qvar [m]
   (let [qvar (-> m :qvar-name symbol (with-meta {:qvar? true}))]
     (cond *inside-pattern?* qvar
           *inside-express?* qvar
           *inside-key?*     qvar
           :else `(~'bi/get-step (with-meta '~qvar {:qvar? true})))))
+
+#_(defrewrite :Qvar [m]
+  (let [qvar (-> m :qvar-name symbol)]
+    (if *inside-step?*
+      (~'bi/get-stooooop '~qvar) ;<=====================================================================
+      `'~qvar)))
+
+(defrewrite :Qvar [m] `'~(-> m :qvar-name symbol))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
@@ -172,6 +182,19 @@
 (defrewrite :ExpressDef [m]
   (reset! key-order [])
   (let [params    (-> m :params rewrite)
+        base-body (-> m :body rewrite)
+        order @key-order
+        {:keys [reduce-body schema]}  (-> base-body unquote-qvars qu/schematic-express-body quote-qvars)]
+    `(~'bi/express {:params      '~(remove map? params)
+                    :options     '~(some #(when (map? %) %) params)
+                    :base-body   ~base-body
+                    :reduce-body ~reduce-body
+                    :key-order   ~order
+                    :schema      '~schema})))
+
+#_(defrewrite :ExpressDef [m]
+  (reset! key-order [])
+  (let [params    (-> m :params rewrite)
         base-body (binding [*inside-express?* true] (-> m :body rewrite))
         order @key-order
         {:keys [reduce-body schema]}  (qu/schematic-express-body base-body)]
@@ -182,13 +205,14 @@
                     :key-order   ~order
                     :schema      '~schema})))
 
+
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below the code is interleaved.
-(defrewrite :ObjExp [m]
+#_(defrewrite :ObjExp [m]
   `(-> {}
        ~@(map rewrite (:kv-pairs m))))
 
-#_(defrewrite :ObjExp [m]
+(defrewrite :ObjExp [m]
   (reduce (fn [res [k v]] (assoc res k v)) {} (map rewrite (:kv-pairs m))))
 
 ;;; We use this rather than rewriting to a 'literal object' so as to control quoting.
@@ -204,17 +228,13 @@
   [:rm/express-key (rewrite (:qvar m))])
 
 (defrewrite :KVPair [m]
-  `(assoc ~(if (= :Qvar (-> m :key :typ))
-             `'~(binding [*inside-key?* true] (-> m :key rewrite))
-             (-> m :key rewrite))
-          ~(-> m :val rewrite)))
+  [(-> m :key rewrite) (-> m :val rewrite)])
 
 #_(defrewrite :KVPair [m]
-  (-> []
-      (conj (if (= :Qvar (-> m :key :typ)) ; This should go away tomorrow <====================================
-              (binding [*inside-key?* true] (-> m :key rewrite))
-              (-> m :key rewrite)))
-      (conj (-> m :val rewrite))))
+  `(assoc ~(if (= :Qvar (-> m :key :typ))
+             `'~(-> m :key rewrite)
+             (-> m :key rewrite))
+          ~(-> m :val rewrite)))
 
 (defrewrite :ExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))
@@ -268,7 +288,7 @@
      In that case a symbol is generated/substituted for the predicate and added to :in.
    - The :in is computed as the DB arguments plus the symbols generated for predicates as above."
   [where-raw]
-  (let [where (binding [*inside-pattern?* true] (mapv rewrite where-raw))
+  (let [where (binding [*inside-step?* false] (->> where-raw (mapv rewrite) unquote-qvars))
         dbs (dbs-from-qform where)
         pred-subs (atom {})
         where-atm (atom [])]
@@ -281,20 +301,20 @@
             (swap! pred-subs #(assoc % pred-name fn-name)))
           (swap! where-atm #(conj % [`(~pred-name ~@(-> pat first rest))])))
         (swap! where-atm #(conj % pat))))
-    {:where `'~(deref where-atm)
-     :in `'~(into dbs (-> @pred-subs keys))
-     :dbs `'~dbs ; ToDo: :dbs not used; calculated in builtin, I think.
+    {:where (deref where-atm)
+     :in (into dbs (-> @pred-subs keys))
      :pred-args (-> @pred-subs vals vec)}))
 
+;;; ToDo: I think use of quote is problematic in all these keyword parameters.
+;;;       I have pushed quoting down WRT qvar, but still using it here in :body and :pred-args.
 (defrewrite :QueryDef [m]
   (let [pats (->> m :patterns (filter #(= (:typ %) :QueryPattern)))]
     (if (or (not-any? #(:db %) pats) (every?  #(:db %) pats))
-      (let [{:keys [where in dbs pred-args]} (rewrite-qform (:patterns m))]
+      (let [{:keys [where in pred-args]} (rewrite-qform (:patterns m))]
       `(~'bi/query
-        {:body ~where
-         :in ~in
-         :dbs ~dbs ; ToDo: :dbs not used; calculated in builtin, I think.
-         :pred-args ~pred-args
+        {:body '~where
+         :in '~in
+         :pred-args '~pred-args
          :params '~(mapv rewrite (:params m))
          :options ~(-> m :options rewrite)}))
       (throw (ex-info "Either (none of / all of) the non-predicate query patterns must specify a DB." {})))))
