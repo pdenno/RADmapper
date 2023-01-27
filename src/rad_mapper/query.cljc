@@ -113,9 +113,9 @@
 (defn qvar? [obj] (and (symbol? obj) (starts-with? (name obj) "?")))
 
 (defn key-exp?
-  "Return true when the argument looks like (:rm/express-key ?some-qvar)."
+  "Return true when the argument looks like [:rm/express-key ?some-qvar]."
   [obj]
-  (and (seq? obj)
+  (and (vector? obj)
        (let [[exp-key & args] obj]
          (and (= :rm/express-key exp-key)
               (every? #(or (qvar? %) (string? %)) args)))))
@@ -159,9 +159,9 @@
 ;;;                                          'status' : ?status}}}}
 
 ;;; Here you have to essentially make it look like the above plus keep extras like 'owner/id' and 'device/id'.
-;;;             {"owners" [{"owner/id" (:rm/express-key ?ownerName),
-;;;                         "systems" [{"system/id" (:rm/express-key ?systemName),
-;;;                                     "devices" [{"device/name" (:rm/express-key ?deviceName),
+;;;             {"owners" [{"owner/id" [:rm/express-key ?ownerName],
+;;;                         "systems" [{"system/id" [:rm/express-key ?systemName],
+;;;                                     "devices" [{"device/name" [:rm/express-key ?deviceName],
 ;;;                                                 "device/id" ?id, "status" ?status}]}]}]}
 (defn schematic-express-body
   "Return a map containing
@@ -189,7 +189,7 @@
                 (let [ident (user-key key-key)]   ; user-defined key slots don't need fancy names, but they concatenate.
                   (swap! key-stack conj key-val)
                   (swap! schema #(assoc % ident (key-schema ident key-val @key-stack :exp-key? true)))
-                   (-> {ident `(:rm/express-key  ~@(deref key-stack))}
+                   (-> {ident `[:rm/express-key  ~@(deref key-stack)]}
                        (assoc :_rm/user-key      (-> ident str (subs 1)))
                        (assoc :_rm/ek-val        key-val)
                        (assoc :_rm/attrs         (rb (dissoc obj key-key))))) ; Other attrs (_:rm/attrs) is a vector of maps because...
@@ -198,7 +198,7 @@
                 (cond (map? obj)      (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
                                                    (swap! key-stack conj k)
                                                    (let [ident (schema-ident k @key-stack)
-                                                         ident-val `(:rm/express-key ~@(deref key-stack))
+                                                         ident-val `[:rm/express-key ~@(deref key-stack)]
                                                          attr (child-node-type v)
                                                          child (rb v)
                                                          res (conj r (-> {}
@@ -222,15 +222,15 @@
   [body]
   (let [ekeys (atom [])]
     (letfn [(rew-keys [obj]
-              (cond (map? obj) ; I think the or below is justified; the map can only have one key.
+              (cond (map? obj) ; I think the 'or' below is justified; the map can only have one key.
                     (do (when-let [this-key (or (some #(when (key-exp? %) (second %)) (vals obj))
                                                 (some #(when (key-exp? %) (second %)) (keys obj)))]
                           (swap! ekeys conj this-key))
                         (let [res (doall (reduce-kv (fn [m k v]
                                                       (if (key-exp? v)
-                                                        (assoc m k `(:rm/express-key ~@(deref ekeys)))
+                                                        (assoc m k `[:rm/express-key ~@(deref ekeys)])
                                                         (if (key-exp? k)
-                                                          (assoc m `(:rm/express-key ~@(deref ekeys)) (rew-keys v))
+                                                          (assoc m `[:rm/express-key ~@(deref ekeys)] (rew-keys v))
                                                           (assoc m k (rew-keys v)))))
                                                     {} obj))]
                           (swap! ekeys #(-> % rest vec)) ; Pop the key when you've finished the map.

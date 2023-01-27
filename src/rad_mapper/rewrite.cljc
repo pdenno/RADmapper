@@ -133,10 +133,10 @@
 ;;;       Maybe the latter uses *inside-step?*
 (defrewrite :Qvar [m]
   (let [qvar (-> m :qvar-name symbol (with-meta {:qvar? true}))]
-    (cond *inside-pattern?* `'~qvar
-          *inside-express?* `'~qvar
-          *inside-key?*     `'~qvar
-          :else `(~'bi/get-step (with-meta '~qvar {:qvar? true}))))) ; ToDo: I wonder where this is used?
+    (cond *inside-pattern?* qvar
+          *inside-express?* qvar
+          *inside-key?*     qvar
+          :else `(~'bi/get-step (with-meta '~qvar {:qvar? true})))))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
@@ -177,21 +177,22 @@
         {:keys [reduce-body schema]}  (qu/schematic-express-body base-body)]
     `(~'bi/express {:params      '~(remove map? params)
                     :options     '~(some #(when (map? %) %) params)
-                    :base-body   ~base-body
-                    :reduce-body ~reduce-body
+                    :base-body   '~base-body
+                    :reduce-body '~reduce-body
                     :key-order   ~order
                     :schema      '~schema})))
 
 ;;; ExpressBody is like an ObjExp (map) but not rewritten as one.
 ;;; Below the code is interleaved.
-
-#_(defrewrite :ObjExp [m]
+(defrewrite :ObjExp [m]
   `(-> {}
        ~@(map rewrite (:kv-pairs m))))
 
-(defrewrite :ObjExp [m]
+#_(defrewrite :ObjExp [m]
   (reduce (fn [res [k v]] (assoc res k v)) {} (map rewrite (:kv-pairs m))))
 
+;;; We use this rather than rewriting to a 'literal object' so as to control quoting.
+;;; Qvars are perhaps the only thing that needs to be quoted, but that's enough!
 (defrewrite :ExpressMap [m]
   (reduce (fn [res kv-pair]
             (when (-> kv-pair :key string?) (swap! key-order #(conj % (:key kv-pair))))
@@ -199,25 +200,24 @@
           {}
           (:kv-pairs m)))
 
-#_(defrewrite :KVPair [m]
+(defrewrite :KeyExp [m]
+  [:rm/express-key (rewrite (:qvar m))])
+
+(defrewrite :KVPair [m]
   `(assoc ~(if (= :Qvar (-> m :key :typ))
              `'~(binding [*inside-key?* true] (-> m :key rewrite))
              (-> m :key rewrite))
           ~(-> m :val rewrite)))
 
-(defrewrite :KVPair [m]
+#_(defrewrite :KVPair [m]
   (-> []
-      (conj (if (= :Qvar (-> m :key :typ))
+      (conj (if (= :Qvar (-> m :key :typ)) ; This should go away tomorrow <====================================
               (binding [*inside-key?* true] (-> m :key rewrite))
               (-> m :key rewrite)))
       (conj (-> m :val rewrite))))
 
 (defrewrite :ExpressKVPair [m]
   (list (rewrite (:key m)) (rewrite (:val m))))
-
-(defrewrite :KeyExp [m]
-  `(:rm/express-key ~(rewrite (:qvar m))))
-
 
 (def ^:dynamic *in-regex-fn?*
   "While rewriting built-in functions that take regular expressions rewrite
@@ -262,8 +262,8 @@
 (defn rewrite-qform
   "Define the :where of the query the query, identify db and other-args.
    Because Datascript requires predicate vars to be substituted using :in, this rewrites the :where
-   and adds to the :in using generated names. DS doesn't like dollar-named predicates either
-   in the query either, thus I use, for example pred-match for $match.
+   and adds to the :in using generated names. DS doesn't like dollar-named predicates in the query either,
+   thus I use, for example, pred-match for $match.
    - The :where is untouched except where predicates are used.
      In that case a symbol is generated/substituted for the predicate and added to :in.
    - The :in is computed as the DB arguments plus the symbols generated for predicates as above."
@@ -659,4 +659,4 @@
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)
     (-> op op-precedence-tbl :val)
-    (throw (ex-info "****** No precedence:" {:op op})))) ; ToDo: This can go away someday.
+    (throw (ex-info "****** No precedence:" {:op op})))) ; ToDo: This can go away someday

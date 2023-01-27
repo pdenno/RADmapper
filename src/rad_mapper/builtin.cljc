@@ -1834,8 +1834,8 @@
                 (get bset (second key-exp))))
             (eeb-aux [obj]
               (cond (map? obj)         (reduce-kv (fn [m k v] (assoc m (eeb-aux k) (eeb-aux v))) {} obj)
-                    (vector? obj)      (mapv eeb-aux obj)
                     (qu/key-exp? obj)  (sub-bset obj bset)
+                    (vector? obj)      (mapv eeb-aux obj)
                     (qvar? obj)        (get bset obj)
                     :else              obj))]
       (if *in-reduce?*        ; Or am I missing something? Something about cat keys???

@@ -125,8 +125,8 @@
                         :pred-args [],
                         :body '[[?ent ?attr ?val]],
                         :in '[$]})
-             [{"person/fname" "Peter"
-               "person/lname" "Dee"}]))))
+             [(-> {} (assoc "person/fname" "Peter") (assoc "person/lname" "Dee"))]))))
+
 
   (testing "rewriting of an in-line query with a parameter."
     (is (= (run-rew "($qBob := query($name){[?e :name $name]}('Bob');
@@ -137,7 +137,7 @@
                                                 :pred-args [],
                                                 :body '[[?e :name $name]],
                                                 :in '[$]}) "Bob")]
-                          (bi/fncall {:args [[{"name" "Bob"}]], :func $qBob}))))))
+                          (bi/fncall {:args [[(-> {} (assoc "name" "Bob"))]], :func $qBob}))))))
 
   (testing "execution of an in-line query"
     (is (= (-> (run "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])") set)
@@ -165,8 +165,9 @@
                        $q($data)
                      )")
            '(bi/primary
-             (let [$data (with-meta [{"person/fname" "Bob"
-                                      "person/lname" "Clark"}] #:bi{:json-array? true})
+             (let [$data (with-meta [(-> {} (assoc "person/fname" "Bob")
+                                         (assoc "person/lname" "Clark"))]
+                           #:bi{:json-array? true})
                    $q (bi/query {:params '[],
                                  :dbs '[$],
                                  :options nil,
@@ -228,9 +229,9 @@
 ;;;================================ testing express ==================================
 (deftest simple-immediate
   (testing "Complete simple express"
-    (run-test "$reduce([{?what : 'example', ?val : 'some-val'}],
+    (run-test "$reduce([{?what : 'some-instance', ?val : 'some-value'}],
                        express() {{'inst' : ?what, 'val' : ?val}})"
-              {"inst" "example", "val" "some-val"})))
+              {"inst" "some-instance", "val" "some-value"})))
 
 (deftest simple-parameteric-express ; A misnomer! It is the query that is parametric.
   (testing "That error from the below (efn, pefn, etc.) aren't about my screwing up the args!" ; ...which they are currently!
@@ -1051,67 +1052,3 @@
    [$DBa ?e1 :name  $name]     /* Parametric on name */
    [$DBa ?e1 :name  ?name]     /* So that we capture name */"
   {:rewrite? true}))
-
-"$reduce([{?what : 'example', ?val : 'some-val'}], express() {{'inst' : ?what, 'val' : ?val}})"
-(defn tryme []
-  (do
- (bi/reset-env)
- (bi/again?
-  (bi/$reduce
-   [{'?what "example", '?val "some-val"}]
-   (bi/express
-    {:schema
-     '{:_rm/ROOT
-       #:db{:cardinality :db.cardinality/many,
-            :valueType :db.type/ref},
-       :box/keyword-val
-       #:db{:cardinality :db.cardinality/one,
-            :valueType :db.type/keyword},
-       :_rm/user-key
-       #:db{:cardinality :db.cardinality/one,
-            :valueType :db.type/string},
-       :box/string-val
-       #:db{:cardinality :db.cardinality/one,
-            :valueType :db.type/string},
-       :_rm/vals
-       #:db{:cardinality :db.cardinality/many,
-            :valueType :db.type/ref},
-       :box/boolean-val
-       #:db{:cardinality :db.cardinality/one,
-            :valueType :db.type/boolean},
-       :_rm/inst--inst
-       {:db/unique :db.unique/identity,
-        :db/valueType :db.type/string,
-        :db/cardinality :db.cardinality/one,
-        :_rm/cat-key ["inst"],
-        :_rm/self :_rm/inst--inst,
-        :_rm/user-key "inst"},
-       :_rm/val--val
-       {:db/unique :db.unique/identity,
-        :db/valueType :db.type/string,
-        :db/cardinality :db.cardinality/one,
-        :_rm/cat-key ["val"],
-        :_rm/self :_rm/val--val,
-        :_rm/user-key "val"},
-       :box/number-val
-       #:db{:cardinality :db.cardinality/one,
-            :valueType :db.type/number},
-       :_rm/val
-       #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
-       :_rm/attrs
-       #:db{:cardinality :db.cardinality/many,
-            :valueType :db.type/ref},
-       :_rm/ek-val
-       #:db{:cardinality :db.cardinality/one,
-            :valueType :db.type/ref}},
-     :reduce-body
-     [#:_rm{:inst--inst (:rm/express-key "inst"),
-            :user-key "inst",
-            :val '?what}
-      #:_rm{:val--val (:rm/express-key "val"),
-            :user-key "val",
-            :val '?val}],
-     :params '(),
-     :key-order ["inst" "val"],
-     :options 'nil,
-     :base-body {"inst" '?what, "val" '?val}})))))

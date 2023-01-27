@@ -121,8 +121,8 @@
           (if run-sci?
             (sci/eval-form ctx full-form)
             #?(:clj (binding [*ns* (find-ns 'rad-mapper.builtin)]
-                      (try (eval full-form)     ;(-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
-                           (catch Throwable e   ; Was this perhaps because I didn't have the alias for bi in builtin.cljc?
+                      (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
+                           (catch Throwable e   ; Is this perhaps because I didn't have the alias for bi in builtin.cljc? No.
                              (ex-info "Failure in clojure.eval:" {:error e}))))
                :cljs :never-happens))))
       (finally (util/config-log min-level)))))
