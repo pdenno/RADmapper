@@ -1048,3 +1048,14 @@
    [$DBa ?e1 :name  $name]     /* Parametric on name */
    [$DBa ?e1 :name  ?name]     /* So that we capture name */"
   {:rewrite? true}))
+
+
+;;; datalog allows you to package up sets of :where clauses into named rules.
+;;; These rules make query logic reusable, and also composable, meaning that you can bind portions of a query's logic at query time.
+
+;;; A rule is a named group of clauses that can be plugged into the :where section of your query.
+;;; For example, here is a rule from the Seattle example dataset that tests whether a community is a twitter feed
+(defn tryme []
+  (ev/processRM :ptag/exp
+                "rule{(twitter? ?c)
+                      [?c :community/type :community.type/twitter]}"))

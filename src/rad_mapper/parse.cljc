@@ -49,6 +49,7 @@
                "function" :tk/function
                "key" :tk/key
                "query" :tk/query
+               "rule"  :tk/rule
                "true" :tk/true})
 (def syntactic?
   "Chars that are valid tokens in themselves."
@@ -677,7 +678,7 @@
     (cond (#{\{ \[ \(} tkn)                           (parse :ptag/delimited-exp ps :operand-2? operand-2?) ; <delimited-exp>
           (builtin-un-op tkn)                         (parse :ptag/unary-op-exp ps)  ; <unary-op-exp>
           (#{:tk/function :tk/query :tk/express
-             :tk/key} tkn)                            (parse :ptag/construct-def ps) ; <construct-def>
+             :tk/rule :tk/key} tkn)                   (parse :ptag/construct-def ps) ; <construct-def>
           (and (= \( tkn2)
                (or (builtin-fns tkn)
                    (jvar? tkn)))                      (parse :ptag/fn-call ps)       ; <fn-call>
@@ -742,7 +743,7 @@
         (-> ps :head field?)   (as-> ps ?ps
                                  (assoc ?ps :result (:head ?ps))
                                  (eat-token ?ps))
-        :else                  (ps-throw ps "expected a path field" {:got (:head ps)})))
+        :else                  (ps-throw ps "expected a field" {:got (:head ps)})))
 
 (defparse :ptag/param
   [ps]
@@ -1090,9 +1091,49 @@
       (parse :ptag/obj-exp ?ps)
       (store ?ps :body)
       (eat-token ?ps \})
-      (assoc ?ps :result {:typ :ExpressDef
+      (assoc ?ps :result {:typ    :ExpressDef
                           :params (recall ?ps :params)
                           :body   (recall ?ps :body)}))))
+
+(defparse :ptag/rule-def
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps :tk/rule)
+    (eat-token ?ps \{)
+    (parse :ptag/rule-head ?ps)
+    (store ?ps :rule-head)
+    (loop [ps ?ps
+           clauses []]
+      (if (not= \[ (:head ps))
+        (-> ps (store :clauses clauses) (eat-token \}))
+        (as-> ps ?ps
+          (parse :ptag/rule-clause ?ps)
+          (recur ?ps
+                 (conj clauses (:result ?ps))))))
+    (assoc ?ps :result {:typ :RuleDef
+                        :rule-head (recall ?ps :rule-head)
+                        :clauses (recall ?ps :clauses)})))
+
+(defparse :ptag/rule-head
+  [ps]
+  (as-> ps ?ps
+    (eat-token ?ps \()
+    (store ?ps :predicate (:head ?ps))
+    (eat-token ?ps symbol?)
+    (loop [ps ?ps
+           forms []]
+      (if (= \) (:head ps))
+        (-> ps (store :args forms) eat-token)
+        (let [qvar (:head ps)]
+          (recur (eat-token ps qvar?)
+                 (conj forms qvar)))))
+    (assoc ?ps :result {:typ :RuleHead
+                        :predicate (recall ?ps :predicate)
+                        :args (recall ?ps :args)})))
+
+(defparse :ptag/rule-clause
+  [ps]
+  (parse :ptag/q-pattern-tuple ps)) ; ToDo: Does datalog allow anything other than a triple here?
 
 (s/def ::ImmediateUse (s/keys :req-un [::def ::args]))
 ;;; <construct-def> ::= ( <fn-def> | <query-def> | <express-def> )( '(' <exp>* ')' )?
@@ -1102,6 +1143,7 @@
              :tk/function  (parse :ptag/fn-def ps),         ; <fn-def>
              :tk/query     (parse :ptag/query-def ps),      ; <query-def>
              :tk/express   (parse :ptag/express-def ps)     ; <express-def>
+             :tk/rule      (parse :ptag/rule-def ps)        ; <rule-def>
              :tk/key       (parse :ptag/key-def ps))]       ; <key-def>
     (if (and (= \( (:head ps)) (#{:FnDef :QueryDef} (-> ps :result :typ)))
       ;; This part to wrap it in a ImmediateUse
