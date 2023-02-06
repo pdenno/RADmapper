@@ -65,9 +65,9 @@
    Usually top-level call is a form representing a whole schema file. Walks schema."
   [form]
   (let [key-pred? ; Map keys corresponding to values that should be keywordized
-        #{:xsd/extension :cct/PrimitiveType :cct/sc-use :cct/sc-type :cct/CategoryCode}
+        #{:xsd/extension :cct/PrimitiveType :cct/scUse :cct/scType :cct/CategoryCode}
         needs-zip? ; Map keys to encode as a map for later decoding (See db-utils/resolve-db-id)
-        #{:code-list/terms}]
+        #{:codeList/terms}]
     (letfn [(cf-aux [form]
               (cond (map? form) (reduce-kv (fn [m k v]
                                              (if (needs-zip? k)

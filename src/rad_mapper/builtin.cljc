@@ -1549,7 +1549,7 @@
      (-> (case (or (get opts "type") type "xml")
            #?(:clj "json") #?(:clj (-> fname slurp json/read-str))
            "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-           "edn"  (-> fname slurp util/read-str util/json-like))
+           "edn"  (-> fname slurp util/read-str util/string-keys))
          set-context!)))))
 
 (defn rewrite-sheet-for-mapper

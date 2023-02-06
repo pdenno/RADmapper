@@ -84,10 +84,9 @@
                   :else obj))]
     (qq form)))
 
-
 (defn string-keys
   "Walk the object replacing its keys with strings. Where the original key
-   is namespaced, the string used is <namespace>.<name>."
+   is namespaced, the string used is <namespace>.<name>; roughly what JSON would be."
   [obj]
   (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (string-keys k) (string-keys v))) {} obj)
         (vector? obj)    (mapv string-keys obj)
@@ -314,20 +313,6 @@
   [s]
   #?(:cljs (seq (clojure.string/split-lines s))
      :clj  (line-seq s)))
-
-(defn json-like
-  "Return the object with its map keys replaced with strings.
-  :ab ==> 'ab'; :ns/ab ==> 'ns/ab'."
-  [obj]
-  (cond (map? obj) (reduce-kv (fn [m k v]
-                                (cond (keyword? v) (assoc m k (subs (str v) 1))
-                                      (vector? v) (assoc m k (mapv json-like v))
-                                      (map? v)   (assoc m k (reduce-kv (fn [m k v] (assoc m k (json-like v))) {} v))
-                                      :else     (assoc m k v)))
-                              {}
-                              obj),
-        (vector? obj) (mapv json-like obj),
-        :else obj))
 
 ;;; ToDo: If
 (defn stringify-role
