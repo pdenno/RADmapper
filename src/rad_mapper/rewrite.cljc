@@ -14,6 +14,8 @@
   #?(:cljs (:require-macros [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]])))
 
 ;;; ToDo: A real problem with *inside-step?* is that it is true inside any primary!
+;;;       The solution here might be to distinguish 'block' from primary.
+;;;       Whatever the solution, it should fix the abomination which is bi/conditional currently.
 
 ;;; from utils.cljc
 (defn nspaces

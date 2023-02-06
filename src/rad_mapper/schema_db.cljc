@@ -35,7 +35,7 @@
 ;;;      But then I wonder what would remain in src/main/app/model.
 
 (def db-cfg {:store {:backend :file :path "resources/databases/schema"}
-             :rebuild-db? true
+             :rebuild-db? false
              :schema-flexibility :write})
 
 (def diag (atom nil))
@@ -46,8 +46,8 @@
 ;;;(def oagis-root "/Users/pdenno/Documents/specs/OAGI/OAGIS_10_6_EnterpriseEdition/OAGi-BPI-Platform/org_openapplications_oagis/10_6/Model/")
 (def oagis-10-6-root "data/OAGIS/10.6/")
 (def oagis-10-8-root "data/OAGIS/10.8/Model/")
-(def michael-root "data/testing/michaelQIF/")
-(def qif-root "data/testing/QIF/xsd/")
+(def michael-root    "data/testing/michaelQIF/")
+(def qif-root        "data/testing/QIF/xsd/")
 
 (defonce bad-file-on-rebuild? (atom #{})) ; For debugging
 
@@ -177,8 +177,9 @@
           (re-matches #"^urn:iso:std:iso:20022:tech:xsd:pain.+$" ns) :iso ; ISO via oagis
           (re-matches #"^http://uri.etsi.*" ns) :etsi
           (re-matches #"^http://www.w3.org/.*" ns) :w3c
-          (re-matches #"^http://qifstandards.org/xsd/qif3" ns) :qif)
-    (log/warn "Cannot determine file SDO:" (:schema/pathname xmap))))
+          (re-matches #"^http://qifstandards.org/xsd/qif3" ns) :qif
+          :else :unknown)
+    (log/warn "Cannot determine schema SDO:" (:schema/pathname xmap))))
 
 (def non-standard-oagis-schema-topics
   (let [pat {"urn:oagis-~A:CodeList_ConstraintTypeCode_1.xsd"            "Codelist, ConstraintTypes",
@@ -270,9 +271,10 @@
                :iso        :iso-20022
                :etsi       :etsi-1903 ; ToDo: guessing
                :w3c        :w3c       ; In QIF somewhere!
-               :qif        :qif)]
-    (or spec (do (log/warn "Cannot determine file spec:" (:schema/pathname xmap))
-                 ""))))
+               :qif        :qif
+               "default")]
+    (or spec (do (log/warn "Cannot determine file spec:" (:schema/pathname xmap) " Using :default.")
+                 :unknown))))
 
 (defn schema-version
   [xmap]
@@ -1034,10 +1036,16 @@
 
 (def diag-path "Pathname for debugging. Keep." (atom nil))
 
+;;; (read-schema-file "data/testing/elena/Company A - Invoice.xsd")
+(defn read-schema-file
+  "Create map structure for the DB for the given file."
+  [path]
+  (-> path read-clean rewrite-xsd du/condition-form vector))
+
 (defn add-schema-file!
   [path]
   (reset! diag-path path)
-  (let [db-content (-> path read-clean rewrite-xsd du/condition-form vector)]
+  (let [db-content (read-schema-file path)]
     (try
       (if (du/storable? db-content)
         (try (d/transact conn db-content) ; Use d/transact here, not transact! which uses a future.
@@ -1516,15 +1524,15 @@
     (d/create-database db-cfg)
     (alter-var-root (var conn) (fn [_] (d/connect db-cfg)))
     (d/transact conn db-schema)
-;;    (add-schema-files! (str ubl-root "maindoc"))
-;;    (add-schema-files! (str ubl-root "common"))
-;;    (add-schema-files! (str oagis-10-6-root "Nouns"))
-;;    (add-schema-files! (str oagis-10-6-root "Platform/2_6/Common"))
+    (add-schema-files! (str ubl-root "maindoc"))
+    (add-schema-files! (str ubl-root "common"))
+;;;;;    (add-schema-files! (str oagis-10-6-root "Nouns"))
+;;;;;    (add-schema-files! (str oagis-10-6-root "Platform/2_6/Common"))
     (add-schema-files! (str oagis-10-8-root "Nouns"))
     (add-schema-files! (str oagis-10-8-root "Platform/2_7/Common"))
     (add-schema-files! (str qif-root "QIFApplications"))
     (add-schema-files! (str qif-root "QIFLibrary"))
-;;    (add-schema-files! michael-root)
+    (add-schema-files! michael-root)
     (postprocess-schemas!)
     (log/info "Created schema DB")))
 

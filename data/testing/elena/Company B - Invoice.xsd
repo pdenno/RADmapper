@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:vc="http://www.w3.org/2007/XMLSchema-versioning" elementFormDefault="qualified" attributeFormDefault="unqualified" vc:minVersion="1.1">
+	<xs:element name="Data">
+		<xs:complexType>
+			<xs:sequence>
+				<xs:element name="Invoice">
+					<xs:complexType>
+						<xs:sequence>
+							<xs:element name="Invoice_ID" type="xs:int" minOccurs="1" maxOccurs="1">
+								<xs:annotation>
+									<xs:documentation>
+							This elemet is used to define the ID of an invoice document
+						</xs:documentation>
+								</xs:annotation>
+							</xs:element>
+							<xs:element name="Creation_date" type="EUDateFormat" minOccurs="1" maxOccurs="1"/>
+							<xs:element name="Bill_to_address" type="xs:int" minOccurs="1" maxOccurs="1"/>
+						</xs:sequence>
+					</xs:complexType>
+				</xs:element>
+				<xs:element name="Address">
+					<xs:complexType>
+						<xs:sequence>
+							<xs:element name="Address_ID" type="xs:int" minOccurs="1" maxOccurs="1"/>
+							<xs:element name="Street_number" type="xs:int" minOccurs="1" maxOccurs="1"/>
+							<xs:element name="Street_name" type="xs:string" minOccurs="1" maxOccurs="1"/>
+							<xs:element name="City" type="xs:string" minOccurs="1" maxOccurs="1"/>
+							<xs:element name="State" type="State_list" minOccurs="1" maxOccurs="1"/>
+							<xs:element name="Zip_code" type="xs:string" minOccurs="1" maxOccurs="1"/>
+						</xs:sequence>
+					</xs:complexType>
+				</xs:element>
+			</xs:sequence>
+		</xs:complexType>
+		<xs:key name="AddressKey">
+			<xs:selector xpath=".//Address"/>
+			<xs:field xpath="Address_ID"/>
+		</xs:key>
+		<xs:keyref name="BillToAddressRef" refer="AddressKey">
+			<xs:selector xpath=".//Invoice"/>
+			<xs:field xpath="Bill_to_address"/>
+		</xs:keyref>
+	</xs:element>
+	<xs:simpleType name="State_list">
+		<xs:restriction base="xs:string">
+			<xs:enumeration value="MD"/>
+			<xs:enumeration value="NY"/>
+			<xs:enumeration value="NC"/>
+		</xs:restriction>
+	</xs:simpleType>
+	<xs:simpleType name="EUDateFormat">
+		<xs:restriction base="xs:string">
+			<xs:pattern value="(0[1-9]|[12][0-9]|3[01])-(0[1-9]|1[0-2])-\d{4}"/>
+		</xs:restriction>
+	</xs:simpleType>
+</xs:schema>

@@ -2023,7 +2023,7 @@
          lookup-refs (create-lookup-refs full-schema base-data (util/cljs?))
          data        (data-with-lookups full-schema base-data)
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
-         zippy       (reset! diag {:schema      full-schema
+         #_#_zippy       (reset! diag {:schema      full-schema
                                    :efn         efn
                                    :lookup-refs lookup-refs
                                    :reduce-body (-> efn meta :bi/reduce-body)
