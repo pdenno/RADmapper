@@ -44,7 +44,6 @@
                           :last-index regexp.lastIndex})
             regexp)))))))
 
-
 (defn json-pprint
   "Return the object as a pretty-printed string.
    These ignore namespaces (e.g. of keyword keys) so if those are to

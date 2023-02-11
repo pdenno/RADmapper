@@ -1059,3 +1059,121 @@
   (ev/processRM :ptag/exp
                 "rule{(twitter? ?c)
                       [?c :community/type :community.type/twitter]}"))
+
+(defn tryme2 []
+  (ev/processRM :ptag/exp
+"( $schemaA := {'schema_subversion':'',
+                'library_content':
+                [{'sp_name':'Invoice',
+                  'schema_complexTypes':
+                  {'model_sequence':
+                   [{'sp_name':'Invoice_ID',
+                     'sp_type':'xs:int',
+                     'sp_minOccurs':1,
+                     'sp_maxOccurs':2,
+                     'sp_function':{'fn_type':'gelem'}},
+                    {'sp_name':'Document_date',
+                     'sp_type':'US_Date',
+                     'sp_minOccurs':1,
+                     'sp_maxOccurs':1,
+                     'sp_function':{'fn_type':'gelem'}},
+                    {'sp_name':'Address',
+                     'sp_minOccurs':1,
+                     'sp_maxOccurs':1,
+                     'sp_function':{'fn_type':'gelem'}}]},
+                  'sp_function':{'fn_type':'typeRef'}},
+                 {'sp_name':'Address',
+                  'schema_complexTypes':
+                  {'model_sequence':
+                   [{'sp_name':'Address_line_1',
+                     'sp_type':'xs:string',
+                     'sp_minOccurs':1,
+                     'sp_maxOccurs':1,
+                     'sp_function':{'fn_type':'gelem'}},
+                    {'sp_name':'Address_line_2',
+                     'sp_type':'xs:string',
+                     'sp_minOccurs':1,
+                     'sp_maxOccurs':1,
+                     'sp_function':{'fn_type':'gelem'}}]},
+                  'sp_function':{'fn_type':'typeRef'}}],
+                'schema_pathname':'data/testing/elena/Company A - Invoice_xsd',
+                'schema_sdo':'unknown',
+                'schema_type':'generic_xsd-file',
+                'schema_name':'Company A - Invoice_xsd',
+                'schema_spec':'default',
+                'schema_version':''};
+
+
+   $schemaB :=  {'schema_subversion':'',
+                 'library_content':
+                 [{'sp_name':'Data',
+                   'schema_complexTypes':
+                   {'model_sequence':
+                    [{'sp_name':'Invoice',
+                      'schema_complexTypes':
+                      {'model_sequence':
+                       [{'sp_name':'Invoice_ID',
+                         'sp_type':'xs:int',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'},
+                         'doc_doc-string':
+                         'This elemet is used to define the ID of an invoice document'},
+                        {'sp_name':'Creation_date',
+                         'sp_type':'EUDateFormat',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}},
+                        {'sp_name':'Bill_to_address',
+                         'sp_type':'xs:int',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}}]},
+                      'sp_function':{'fn_type':'gelem'}},
+                     {'sp_name':'Address',
+                      'schema_complexTypes':
+                      {'model_sequence':
+                       [{'sp_name':'Address_ID',
+                         'sp_type':'xs:int',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}},
+                        {'sp_name':'Street_number',
+                         'sp_type':'xs:int',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}},
+                        {'sp_name':'Street_name',
+                         'sp_type':'xs:string',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}},
+                        {'sp_name':'City',
+                         'sp_type':'xs:string',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}},
+                        {'sp_name':'State',
+                         'sp_type':'State_list',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}},
+                        {'sp_name':'Zip_code',
+                         'sp_type':'xs:string',
+                         'sp_minOccurs':1,
+                         'sp_maxOccurs':1,
+                         'sp_function':{'fn_type':'gelem'}}]},
+                      'sp_function':{'fn_type':'gelem'}}]},
+                   'sp_function':{'fn_type':'typeRef'}}],
+                 'schema_pathname':'data/testing/elena/Company B - Invoice_xsd',
+                'schema_sdo':'unknown',
+                'schema_type':'generic_xsd-file',
+                'schema_name':'Company B - Invoice_xsd',
+               'schema_spec':'default',
+               'schema_version':''};
+
+  // [$schemaA, $schemaB].library_content.schema_complexTypes.model_sequence.sp_name )
+
+     $query([?e
+
+ {:execute? true}))
