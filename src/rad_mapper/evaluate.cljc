@@ -193,3 +193,58 @@
                rewrite?            (rew/rewrite)
                executable?         (rad-form sci?)
                (:execute? opts)    (user-eval opts)))))))
+
+(def obj {"alice@alice.org"
+          {"name" "Alice",
+           "aData" "Alice-A-data",
+           "bData" "Alice-B-data"},
+          "bob@example.com" {"name" "Bob",
+                             "aData" "Bob-A-data",
+                             "bData" "Bob-B-data"}})
+
+(declare pprint-obj)
+
+;;; Pretty printing. This is unrelated to the above uses of the term pretty-print.
+(defn pprint-map
+  "Print a map: if it fits within width, print it with keys and values on the same line,
+   If it does not fit, print the value on a second line, with additional indentation relative to its key."
+  [obj used width]
+  (let [strg (atom "")
+        wspace (util/nspaces used)
+        kv-pairs (reduce-kv (fn [m k v]
+                              (conj m {:k (str wspace (pprint-obj k)) ; Assumes key is atomic (i.e. fits on one line)!
+                                       :v (pprint-obj v)}))
+                            []
+                            obj)
+        max-key (apply max (->> kv-pairs (map :k) count))   ; We will line them all up with the widest.
+        max-val (apply max (->> kv-pairs (map :v) (map (fn [val] (apply max (map count str/split-lines val))))))]
+    (if (> (+ max-key max-val) width) ; Too wide, break it to two lines each k/v pair.
+      (let [more-indented (str wspace "    ")]
+        (swap! strg #(str % "{"))
+        (doseq [{:keys [k v]} kv-pairs]
+          (swap! strg #(str % " " k ":\n"))
+          (doseq [line (str/split-lines v)]
+            (swap! strg #(str % more-indented line ",")))))
+      ;; Otherwise, it fits. The values are made to line up with the entry with the longest key.
+      (doseq [{:keys [k v]} kv-pairs]
+        (swap! strg #(str " " k ": "))
+        (doseq [line  (str/split-lines v)]
+          (let [add (+ (- max-key (count k)) 2)]
+            (swap! strg #(str % (util/nspaces add) line ","))))))
+    ;; No comma after last one. ToDo: Would be better with str/join (which does the optional separator (e.g. comma) thing?
+    (swap! strg #(subs % 0 (-> % count dec)))
+    (swap! strg #(str % "}"))))
+
+;;; This tries to print the content within the argument width, but because we assume
+;;; that there is a horizontal scrollbar, it doesn't work too hard at it!
+(defn pprint-obj
+  "Pretty print the argument object."
+  [obj & {:keys [indent width] :or {indent 2 width 80}}]
+  (let [strg (atom "")
+        depth (atom 0)]
+    (letfn [(pp [obj]
+              (cond (map? obj)     (swap! strg #(str % (pprint-map obj (* @depth indent) width)))
+                    ;(vector? obj)  (swap! strg #(str % (pprint-vec obj (* @depth indent) width)))
+                    (string? obj)  (swap! strg #(str %  "'" obj "'"))
+                    :else          (swap! strg #(str % obj))))]
+      (pp obj))))

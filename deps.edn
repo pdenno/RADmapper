@@ -22,13 +22,13 @@
            org.clojure/data.zip           {:mvn/version "1.0.0"}
 
            nrepl/nrepl        {:mvn/version "1.0.0"}   ; ToDo: Can't shake 0.28.0
-           cider/cider-nrepl  {:mvn/version "0.28.5"}} ; ToDo: Can't shake 0.28.0
+           cider/cider-nrepl  {:mvn/version "0.30.0"}} ; ToDo: Can't shake 0.28.0
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
  :aliases {:dev       {:extra-paths    ["src/dev"]
                        :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
                        :extra-deps     {#_#_com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}
-                                        cider/cider-nrepl  {:mvn/version "0.28.5"} ; ToDO: I'm guessing! Can't shake 0.28.0!
+                                        cider/cider-nrepl  {:mvn/version "0.30.0"} ; ToDO: I'm guessing! Can't shake 0.28.0!
                                         org.clojure/java.classpath {:mvn/version "1.0.0"}
                                         org.clojure/tools.namespace {:mvn/version "1.3.0"}}}
 
