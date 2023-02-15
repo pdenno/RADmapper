@@ -266,6 +266,7 @@
   [data & {:keys [known-schema learn?] :or {known-schema {} learn? true}}]
   (let [data (-> (if (vector? data) data (vector data)) keywordize-keys)
         schema (if learn? (learn-schema data :known-schema known-schema :datahike? false) known-schema)
+
         db-atm (d/create-conn schema)]
     (d/transact db-atm data)
     db-atm)))

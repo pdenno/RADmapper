@@ -320,3 +320,16 @@
 
                            $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
                                     {'id' : 234, 'bAttr' : 'Alice-B-data'}]"}))))))
+
+(defn tryme [which]
+  (case which
+    1 (println (ev/pprint-obj {"a-longer" 1 "b" 2}))
+    2 (println (ev/pprint-obj {"a" 1 "b-much-much-much-longer" 2 "ccc" 3} :width 40 :depth 2))
+    3 (println (ev/pprint-obj {"a-much-much-much-longer" 1 "b" 2} :width 40 :depth 4))
+    4 (println (ev/pprint-obj {"a-much-much-much-longer" 1 "b" 2} :width 20 :depth 4))
+    5 (println (ev/pprint-obj ["a-much-much-much-longer" "b"] :width 40 :depth 4))
+    6 (println (ev/pprint-obj ["a-much-much-much-longer" "b"] :width 30 :depth 4))
+    7 (println (ev/pprint-obj {"key-1" 1
+                               "key-2" ["a-much-much-much-longer" "b"]} :width 40 :depth 4))
+    8 (println (ev/pprint-obj {"key-1" 1
+                               "key-2" ["a-much-much-much-longer" "b"]} :width 50 :depth 4))))

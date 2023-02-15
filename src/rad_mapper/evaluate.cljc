@@ -11,7 +11,7 @@
     [rad-mapper.parse             :as par]
     [rad-mapper.rewrite           :as rew]
     [rad-mapper.rewrite-macros    :as rewm]
-    [rad-mapper.util              :as util]
+    [rad-mapper.util              :as util :refer [nspaces]]
     [sci.core                     :as sci]
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
@@ -139,6 +139,7 @@
       (finally (util/config-log min-level)))))
 
 (declare processRM)
+(def print-width (atom 80))
 
 (defn combine-code-and-data
   "Return a new problem for use with processRM consisting of the argument data and code.
@@ -156,13 +157,16 @@
     (processRM :ptag/jvar-decls (cl-format nil "(~A)" pdata)) ; Will throw if not okay.
     (cl-format nil "(~A; ~A)" pdata pcode)))
 
+(declare pprint-obj)
+
 (defn processRM
   "A top-level function for all phases of translation.
    parse-string, rewrite, and execute, but with controls for partial evaluation, debugging etc.
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
-   (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval? :debug-parse? :debug-rewrite?} %)
+   (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval?
+                       :debug-parse? :debug-rewrite? :print?} %)
                      (keys opts)))
    (let [str         (if-let [udata (-> opts :user-data not-empty)]
                        (combine-code-and-data str udata)
@@ -192,59 +196,75 @@
                (not rewrite?)      (:top)
                rewrite?            (rew/rewrite)
                executable?         (rad-form sci?)
-               (:execute? opts)    (user-eval opts)))))))
+               (:execute? opts)    (user-eval opts)
+               (:print? opts)      (pprint-obj)))))))
 
-(def obj {"alice@alice.org"
-          {"name" "Alice",
-           "aData" "Alice-A-data",
-           "bData" "Alice-B-data"},
-          "bob@example.com" {"name" "Bob",
-                             "aData" "Bob-A-data",
-                             "bData" "Bob-B-data"}})
-
-(declare pprint-obj)
-
-;;; Pretty printing. This is unrelated to the above uses of the term pretty-print.
+;;;==========  Pretty printing. This is unrelated to the above uses of the term pretty-print. ====================
 (defn pprint-map
-  "Print a map: if it fits within width, print it with keys and values on the same line,
-   If it does not fit, print the value on a second line, with additional indentation relative to its key."
-  [obj used width]
-  (let [strg (atom "")
-        wspace (util/nspaces used)
-        kv-pairs (reduce-kv (fn [m k v]
-                              (conj m {:k (str wspace (pprint-obj k)) ; Assumes key is atomic (i.e. fits on one line)!
-                                       :v (pprint-obj v)}))
-                            []
-                            obj)
-        max-key (apply max (->> kv-pairs (map :k) count))   ; We will line them all up with the widest.
-        max-val (apply max (->> kv-pairs (map :v) (map (fn [val] (apply max (map count str/split-lines val))))))]
-    (if (> (+ max-key max-val) width) ; Too wide, break it to two lines each k/v pair.
-      (let [more-indented (str wspace "    ")]
-        (swap! strg #(str % "{"))
-        (doseq [{:keys [k v]} kv-pairs]
-          (swap! strg #(str % " " k ":\n"))
-          (doseq [line (str/split-lines v)]
-            (swap! strg #(str % more-indented line ",")))))
-      ;; Otherwise, it fits. The values are made to line up with the entry with the longest key.
-      (doseq [{:keys [k v]} kv-pairs]
-        (swap! strg #(str " " k ": "))
-        (doseq [line  (str/split-lines v)]
-          (let [add (+ (- max-key (count k)) 2)]
-            (swap! strg #(str % (util/nspaces add) line ","))))))
-    ;; No comma after last one. ToDo: Would be better with str/join (which does the optional separator (e.g. comma) thing?
-    (swap! strg #(subs % 0 (-> % count dec)))
-    (swap! strg #(str % "}"))))
+  "Print a map:
+     (1) If it all fits within width minus indent, print it that way.
+     (2) If the longest key/value it fits within width minus indent, print it with keys and values on the same line,
+     (3) If it does not fit, print the value on a second line, with additional indentation relative to its key.
+  - ident is the column in which this object can start printing.
+  - width is column beyond which print should not appear."
+  [obj indent width]
+  (if (empty? obj)
+    "{}"
+    (let [kv-pairs (reduce-kv (fn [m k v]
+                                (let [kk (pprint-obj k :width width) ; I assume key is atomic (i.e. fits on one line)!
+                                      vv (pprint-obj v)]
+                                  (conj m {:k kk :v vv
+                                           :k-len (count kk)
+                                           :v-len (->> vv str/split-lines (map count) (apply max))})))
+                              []
+                              obj)
+          kv-pairs (update-in kv-pairs [0 :k] #(str "{" %)) ; This makes printing easier!
+          max-key (apply max (map :k-len kv-pairs)) ; We will line them all up with the widest.
+          max-val (apply max (map :v-len kv-pairs))]
+      (letfn [(first-str! [] ; On the first line, the { has to come before the first entry.
+                (if (-> kv-pairs rest not-empty)
+                  (str (nspaces indent) "{" (-> kv-pairs first :k) ",\n")
+                  (str (nspaces indent) "{" (-> kv-pairs first :k))))]
+        (cond ;; (1) The map fits on one line.
+          (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
+          (cl-format nil "~A~{~A: ~A~^, ~}}" (nspaces indent) (interleave (map :k kv-pairs) (map :v kv-pairs))),
 
-;;; This tries to print the content within the argument width, but because we assume
-;;; that there is a horizontal scrollbar, it doesn't work too hard at it!
+          ;; (2) It fits. The values are made to line up with the entry with the longest key.
+          (<= (+ max-key max-val) (- width indent))
+          (cl-format nil "~{~A: ~A~^,~% ~}}"
+                     (interleave
+                      (map #(str (nspaces indent) (:k %) (nspaces (- max-key (:k-len %)))) kv-pairs)
+                      (map :v kv-pairs))),
+          ;; (3) Too wide; break into two lines for each k/v pair.
+          :else
+          (cl-format nil "~{~A:~%     ~A~^,~% ~}}"
+                     (interleave
+                      (map #(str (nspaces indent) (:k %)) kv-pairs)
+                      (map #(str (nspaces (+ indent 3)) (:v %)) kv-pairs))))))))
+
+(defn pprint-vec
+  "Print a vector:
+    If it all fits on one line within width minus indent, print it that way.
+    Else print one element per line."
+  [obj indent width]
+  (let [elem-objs (reduce (fn [res elem]
+                            (let [s (pprint-obj elem :width width)]
+                              (conj res {:val s :len (->> s str/split-lines (map count) (apply max))})))
+                          [] obj)]
+    (if (>= (- width indent) (+ (apply + (map :len elem-objs)) (* (count elem-objs) 2)))
+      (cl-format nil "[~{~A~^, ~}]" (map :val elem-objs))
+      (cl-format nil "[~{~A~^,~%~}]" (map :val elem-objs)))))
+
 (defn pprint-obj
-  "Pretty print the argument object."
-  [obj & {:keys [indent width] :or {indent 2 width 80}}]
+  "Pretty print the argument object.
+   (This tries to print the content within the argument width, but because we assume
+    that there is a horizontal scrollbar, it doesn't work too hard at it!)"
+  [obj & {:keys [indent width depth] :or {indent 2 width @print-width depth 0}}]
   (let [strg (atom "")
-        depth (atom 0)]
+        depth (atom depth)]
     (letfn [(pp [obj]
               (cond (map? obj)     (swap! strg #(str % (pprint-map obj (* @depth indent) width)))
-                    ;(vector? obj)  (swap! strg #(str % (pprint-vec obj (* @depth indent) width)))
+                    (vector? obj)  (swap! strg #(str % (pprint-vec obj (* @depth indent) width)))
                     (string? obj)  (swap! strg #(str %  "'" obj "'"))
                     :else          (swap! strg #(str % obj))))]
       (pp obj))))
