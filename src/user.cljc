@@ -3,7 +3,9 @@
     [clojure.tools.namespace.repl :as tools-ns :refer [set-refresh-dirs]]
     [mount.core :as mount]
     ;; this is the top-level dependent component...mount will find the rest via ns requires
-    [rad-mapper.pathom :refer [parser]]))
+    ;; ToDo: Consider using integrant, since that what kit-clj / exerciser use.
+    [rad-mapper.evaluate :refer [processRM]]
+    #_[rad-mapper.db-util.pathom :refer [parser]]))
 
 (set-refresh-dirs "src/rad-mapper" "src/dev" "test/rad-mapper") ; Will lose this file if you start at "src" ???
 
@@ -24,4 +26,3 @@
   []
   (stop)
   (tools-ns/refresh :after 'user/start))
-

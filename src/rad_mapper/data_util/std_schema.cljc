@@ -1,4 +1,4 @@
-(ns rad-mapper.schema-db
+(ns rad-mapper.data-util.std-schema
   "Create and populate a database with schemas from various SDOs #{:CEFACT :OASIS :OAGI :ISO}
    Every element (a named BBIE, BIE, data type etc.) has an :schema/term and a :sp/type.
    (sp = schema-part, an abstraction over content and attributes.)
@@ -17,13 +17,16 @@
    [clojure.pprint               :refer [cl-format]]
    [clojure.spec.alpha           :as s]
    [clojure.string               :as str]
-   [com.wsscode.pathom.connect   :as pc]
    #?(:clj  [datahike.api        :as d]
       :cljs [datascript.api      :as d])
    #?(:clj  [datahike.pull-api   :as dp]
       :cljs [datascript.pull-api :as dp])
    [mount.core                   :refer [defstate]]
-   [rad-mapper.db-util           :as du :refer [xpath xpath- xml-type?]]
+   [rad-mapper.data-util.db-util           :as du    :refer [db-schema xpath xpath- xml-type?]]
+   [rad-mapper.data-util.macros            :as mac   :refer [defparse rewrite-xsd *skip-doc-processing?*]]
+   [rad-mapper.data-util.schema-util       :as su    :refer [schema-ns schema-sdo schema-spec schema-version schema-subversion schema-type schema-name
+                                                             q-schema-topic q-schema-sdo q-schema-type special-schema-type? generic-schema-type?]]
+   [rad-mapper.data-util.generic-schema    :as gen-s :refer [simple-xsd? imported-schemas read-xml-file]]
    [rad-mapper.util              :as util]
    [taoensso.timbre              :as log]))
 
@@ -51,104 +54,6 @@
 
 (defonce bad-file-on-rebuild? (atom #{})) ; For debugging
 
-;;; NB :db.cardinality/many means the property has a vector value {:foo/foo [1 2 3]}
-;;;    :db.type/ref means that the property means the element(s) of the property are db/id to maps.
-;;;    Perhaps everything that is the value of a ref should have its own ns name.
-(def db-schema
-  "Defines the datahike schema for this database.
-     :db/db.cardinality=many means value is a vector of values of some :db.type."
-  [#:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Cardinality}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/CategoryCode}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/DataTypeTermName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Definition}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Description}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/DictionaryEntryName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Name}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/ObjectClass}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/PrimitiveType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/PropertyTermName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/QualifierTerm}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/RepresentationTermName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/UniqueID}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/UsageRule}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/VersionID}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/scId
-        :doc "'sc' is supplementary to component"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/scType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/scUse}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :cct/supplementary}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :codeList/name}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :codeList/lists}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :codeList/terms}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :doc/docString}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :fn/componentType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :fn/type}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :fn/base}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :import/prefix}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :import/referencedSchema}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :iso/CodeName,
-        :doc "Used in OAGIS/ISO currency codes"}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :library/content}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :mm/comment
-        :doc "All the mm things are for debugging."}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :mm/debug}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/boolean, :ident :mm/fileNotRead?}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :mm/unhandledXML}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :mm/tempInclude}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :model/sequence
-        :doc "generic modeling concept"}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :model/enumeration}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/complexTypes}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/importedSchemas}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :schema/includedSchemas}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/inlinedTypedefs}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/name, :unique :db.unique/identity}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/pathname}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :schema/sdo}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/shortName}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/simpleTypes}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :schema/spec}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/subversion
-        :doc "e.g. for OAGIS 10.8 it is '8'"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/topic}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :schema/type}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/version
-        :doc "e.g. for OAGIS 10.8 it is '10'"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/boolean, :ident :sp/abstract}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :sp/component
-        :doc "CCT see also supplementary"}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :sp/docString
-        :doc "when :xsd/documentation is a string, rather than :sp/supplementary
-              ToDo: Should I just use :doc/docString ?"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :sp/function,
-        :doc ":fn objects."}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :sp/maxOccurs}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :sp/minOccurs}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :sp/name}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :sp/ref
-        :doc "e.g. xsd:element attr."}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :sp/supplementary
-        :doc "CCT"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :sp/type}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :sp/typeRef
-        :doc "xsd:elem with a name, type attrs"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :sp/xsdType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :term/name,
-        :doc "An ID unique within the schema"}
-   ;; ToDo: These are typically things that could be generalized or need further investigation
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :xsd/attributeGroup}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :xsdAttrGroup/data}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :xsd/choice}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/fractionDigits}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/maxLength}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/minInclusive}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/minLength}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :xsd/pattern}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :xsd/restriction} ; ToDo: eliminate this.
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/totalDigits}
-   ;; These are for boxing values.
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :zip/keys}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :zip/vals}])
 
 ;;; NB s/every-kv and s/every are probabilistic; they do not check every entry.
 ;;; ToDo: Write something that uses these and does d/q to check the whole DB. Of course, these need more work!
@@ -162,364 +67,11 @@
 (s/def ::model-seq (s/and ::db-ent (s/keys :req [:model/sequence]) #(s/valid? ::gelems (:model/sequence %)))) ; Test a property!
 (s/def ::ccts-based-message-schema (s/and ::db-ent (s/keys :req [:schema/type]) #(= :ccts/message-schema (:schema/type %))))
 
-(defn schema-ns
-  "Return the namespace urn string for the argument xmap."
-  [xmap]
-  (or (-> (xpath xmap :xsd/schema)  :xml/attrs :targetNamespace)
-      (-> (xpath xmap :ROOT/schema) :xml/attrs :targetNamespace))) ; for some UBL-provided w3c schema
-
-(defn schema-sdo
-  "Return a keyword identifying the XML file's standards development organization."
-  [xmap]
-  (if-let [ns (schema-ns xmap)]
-    (cond (re-matches #"^urn:oasis:[\w,\-,\:]+:ubl:[\w,\-,\:]+$" ns) :oasis,
-          (re-matches #"^urn:un:unece:uncefact:[\w,\-,\:]+$" ns) :cefact, ; cefact via UBL ; ToDo: NONE OF THESE???
-          (re-matches #"^http://www.openapplications.org/oagis/.*$" ns) :oagi,
-          (re-matches #"^urn:iso:std:iso:20022:tech:xsd:pain.+$" ns) :iso ; ISO via oagis
-          (re-matches #"^http://uri.etsi.*" ns) :etsi
-          (re-matches #"^http://www.w3.org/.*" ns) :w3c
-          (re-matches #"^http://qifstandards.org/xsd/qif3" ns) :qif)
-    (do (log/warn "Cannot determine schema SDO:" (:schema/pathname xmap) " using :unknown.")
-        :unknown)))
-
-(def non-standard-oagis-schema-topics
-  (let [pat {"urn:oagis-~A:CodeList_ConstraintTypeCode_1.xsd"            "Codelist, ConstraintTypes",
-             "urn:oagis-~A:CodeList_TimeFormatCode_1.xsd"                "Codelist, TimeFormats"
-             "urn:oagis-~A:CodeList_DateTimeFormatCode_1.xsd"            "Codelist, DateTimeFormats"
-             "urn:oagis-~A:CodeList_TimeZoneCode_1.xsd"                  "Codelist, TimeZones",
-             "urn:oagis-~A:CodeList_DateFormatCode_1.xsd"                "Codelist, DateFormat",
-             "urn:oagis-~A:CodeList_CharacterSetCode_IANA_20131220.xsd"  "Codelist, CharacterSets",
-             "urn:oagis-~A:CodeLists_1.xsd"                              "Codelist, Aggregated",
-             "urn:oagis-~A:CodeList_ConditionTypeCode_1.xsd"             "Codelist, ConditionTypes",
-             "urn:oagis-~A:CodeList_CurrencyCode_ISO_7_04.xsd"           "Codelist, Currencies"}]
-    (merge (reduce-kv (fn [m k v] (assoc m (cl-format nil k "10.6") v)) {} pat)
-           (reduce-kv (fn [m k v] (assoc m (cl-format nil k "10.8") v)) {} pat))))
-
-(def non-standard-schema-topics
-  "Easiest to just define these explicitly"
-  (merge non-standard-oagis-schema-topics
-         {"urn:iso:std:iso:20022:tech:xsd:pain.001.001.04"                              "Datatypes, Financial",
-          "urn:iso:std:iso:20022:tech:xsd:pain.001.001.05"                              "Datatypes, Financial",
-          "urn:iso:std:iso:20022:tech:xsd:pain.002.001.04"                              "Datatypes, Financial",
-          "urn:iso:std:iso:20022:tech:xsd:pain.002.001.05"                              "Datatypes, Financial",
-          "urn:iso:std:iso:20022:tech:xsd:pain.008.001.03"                              "Datatypes, Financial",
-          "urn:iso:std:iso:20022:tech:xsd:pain.008.001.04"                              "Datatypes, Financial",
-          "urn:oasis:names:specification:ubl:schema:xsd:CommonExtensionComponents-2"    "Components, CommonExtensions",
-          "urn:oasis:names:specification:ubl:schema:xsd:UnqualifiedDataTypes-2"         "Datatypes, Unqualified",
-          "urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2"        "Components, CommonBasic",
-          "urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2"    "Components, CommonAggregate",
-          "urn:un:unece:uncefact:data:specification:CoreComponentTypeSchemaModule:2"    "Components, Core",
-          "urn:oasis:names:specification:ubl:schema:xsd:QualifiedDataTypes-2"           "Datatypes, Qualified"
-          "urn:oasis:names:specification:ubl:schema:xsd:CommonSignatureComponents-2"    "Components, CommonSignature",
-          "http://uri.etsi.org/01903/v1.4.1#"                                            "ETSI, not investigaated"}))
-
-(defn q-schema-topic
-  "Lookup the topic for a schema in the DB."
-  [urn]
-  (d/q `[:find ?topic .
-         :where [?s :schema/name ~urn]
-         [?s :schema/topic ?topic]] @conn))
-
-(defn q-schema-sdo
-  "Lookup the SDO for a schema in the DB."
-  [urn]
-  (d/q `[:find ?sdo .
-         :where [?s :schema/name ~urn]
-         [?s :schema/sdo ?sdo]] @conn))
-
-(defn q-schema-type
-  "Lookup the type for a schema in the DB."
-  [urn]
-  (d/q `[:find ?type .
-         :where [?s :schema/name ~urn]
-         [?s :schema/type ?type]] @conn))
-
-(defn schema-topic
-  "Return the portion of the URN that most specifically describes the schema content.
-   This is not necessarily unique!"
-  [urn]
-  (let [desc [(q-schema-sdo urn) (q-schema-type urn)]]
-     (cond (= desc [:oasis :ccts/message-schema])
-           (->> urn (re-matches #"^urn:oasis:names:specification:ubl:schema:xsd:(.+)-\d$") second),
-
-           (= desc [:oagi :ccts/message-schema])
-           (->> urn (re-matches #"^urn:oagis-\d+\.\d+:(.+)$") second),
-
-           (= desc [:oagi :generic/code-list-schema])
-           (->> urn (re-matches #"^urn:oagis-\d+\.\d+:(.+)$") second),
-
-           (= desc [:qif :generic/message-schema])
-           (->> urn (re-matches #"^urn:QIF-\d:Application:QIF(.+)$") second),
-
-           (= desc [:qif :generic/library-schema])
-           (->> urn (re-matches #"^urn:QIF-\d:Library:(.+)$") second),
-
-           (contains? non-standard-schema-topics urn)
-           (get non-standard-schema-topics urn),
-
-           :else
-           (do (log/warn "Cannot determine schema topic" urn) ""))))
-
-(defn schema-spec
-  "Return a keyword signifying the specification of which the schema is part.
-   These are #{:ubl, :oagis, etc.}. It is used as :schema/spec"
-  [xmap]
-  (let [ns   (schema-ns xmap)
-        spec (case (:schema/sdo xmap)
-               :cefact     (when (= ns "urn:un:unece:uncefact:data:specification:CoreComponentTypeSchemaModule:2") :cefact-ccl)
-               :oasis      (when (re-matches #"^urn:oasis:[\w,\-,\:]+:ubl:[\w,\-,\:]+(\-2)$" ns)                   :ubl)
-               :oagi       (when (re-matches #"^http://www.openapplications.org/oagis/10$" ns)                     :oagis)
-               :iso        :iso-20022
-               :etsi       :etsi-1903 ; ToDo: guessing
-               :w3c        :w3c       ; In QIF somewhere!
-               :qif        :qif
-               "default")]
-    (or spec (do (log/warn "Cannot determine file spec:" (:schema/pathname xmap) " Using :default.")
-                 :unknown))))
-
-(defn schema-version
-  [xmap]
-  (case (:schema/spec xmap)
-    :ubl    "2"
-    :oagis  "10"
-    :qif    (let [[_ n] (re-matches #"^http://qifstandards.org/xsd/qif(\d)" (schema-ns xmap))]
-              (or n ""))
-    ""))
-
-(defn schema-subversion
-  "Return the subversion. NB: Currently this is hard coded. Should be an environment variable." ; ToDo: need env.
-  [xmap]
-  (let [spec   (:schema/spec xmap)
-        pname  (:schema/pathname xmap)]
-    (cond (= spec :ubl) "3"
-          (= spec :oagis)
-          (let [[_ subver] (re-matches #".*OAGIS/[0-9]+\.([0-9,\.]+).*" pname)]
-            (or subver
-                (log/warn "Could not determine OAGIS subversion.")))
-          (= spec :cefact-ccl) "" ; ToDo: See also UBL CCL.
-          :else "")))
-
-;;; ToDo: A schema is getting past this with schema-name "".
-(clojure.string/split "data/testing/elena/Company A - Invoice.xsd" #"/")
-(defn schema-name
-  "Return the name of the schema object. This uses the XML content to determine one."
-  [xmap]
-  (let [sdo  (:schema/sdo xmap)
-        ver  (:schema/version xmap)
-        sver (:schema/subversion xmap)
-        ver-str (if (empty? sver) ver (str ver "." sver ))
-        pname (:schema/pathname xmap)]
-    (cond
-      (= :oagi sdo)
-      (if-let [[_ fname] (re-matches #".*Components/(\w+).xsd" pname)]
-        (str "urn:oagis-" ver-str ":Components:" fname)
-        (if-let [[_ fname] (re-matches #".*Common/ISO20022/(pain[0-9,\.]+).xsd" pname)]
-          (str "urn:oagis-" ver-str ":Common:" fname)
-          (if-let [name  (-> (xpath xmap :xsd/schema :xsd/element) :xml/attrs :name)]
-            (str  "urn:oagis-" ver-str ":" name)
-            (if-let [res-pname (-> pname (str/split #"/") last (str/split #"\.") first)]
-              (do (log/warn "Using pathname to define OAGIS" ver-str "schema name:" res-pname)
-                  (str "urn:oagis-" ver-str ":" res-pname))
-              (do (log/warn "Could not determine OAGIS" ver-str "schema name.")
-                  :mm/nil))))),
-      (= :qif sdo)
-      (if-let [[_ fname] (re-matches #".*/QIFLibrary/(\w+).xsd" pname)]
-        (str "urn:QIF-" ver-str ":Library:" fname)
-        (if-let [[_ fname] (re-matches #".*/QIFApplications/(\w+).xsd" pname)]
-          (str "urn:QIF-" ver-str ":Application:" fname)
-            (do (log/warn "Could not determine QIF" ver-str "schema name.") :mm/nil)))
-      (#{:oasis :cefact :iso :etsi} sdo)
-      (if-let [name (schema-ns xmap)]
-        name
-        (do (log/warn "Could not determine UBL or ISO schema name:" pname) ""))
-      :else
-      (let [fname (-> pname (str/split #"/") last)]
-        (log/warn "Could not determine schema name:" pname " Using " fname)
-        fname))))
-
-;;; ToDo: Make this a multi-method (on the case values)
-(defn schema-type
-  "Return a keyword signifying the specification of which the schema is part.
-   These are #{:ubl-2, :oagis-10, etc.}. It is used as :schema/spec"
-  [xmap]
-  (let [sdo (:schema/sdo xmap)
-        pname (:schema/pathname xmap)
-        ns  (schema-ns xmap)]
-    (case sdo
-      :cefact
-      (cond (= ns "urn:un:unece:uncefact:data:specification:CoreComponentTypeSchemaModule:2")
-            :generic/unqualified-dtype-schema
-            :else (log/warn "Cannot determine file spec:" pname))
-
-      :oasis
-      (cond (= ns "urn:oasis:names:specification:ubl:schema:xsd:UnqualifiedDataTypes-2")
-            :generic/unqualified-dtype-schema,
-            (= ns "urn:oasis:names:specification:ubl:schema:xsd:QualifiedDataTypes-2")
-            :generic/qualified-dtype-schema,
-            (re-matches #"^urn:oasis:names:specification:ubl:schema:xsd:Common[\w,\-,\:]+Components\-2$" ns)
-            :ccts/component-schema
-            (re-matches #"^urn:oasis:names:specification:ubl:schema:xsd:\w+-2$" ns)
-            :ccts/message-schema
-            :else (log/warn "Cannot determine file spec:" pname))
-
-      :oagi ; no URNs; guess based on pathname.
-      (cond (re-matches #".*Fields\.xsd$" pname) ; though it is in the "Components" directory
-            :generic/unqualified-dtype-schema
-            (re-matches #".+CodeLists.+" pname)
-            :generic/code-list-schema
-            (re-matches #".+Components.+" pname)
-            :ccts/component-schema
-            (re-matches #"^http://www.openapplications.org/oagis/10$" ns)
-            :ccts/message-schema ; ToDo: Not quite correct.
-            :else (do (log/warn "Cannot determine schema-type:" pname)
-                      :generic/xsd-file))
-
-      :etsi :generic/xsd-file
-
-      :iso :iso/iso-20022-schema
-
-      :qif
-      (cond (re-matches #".*QIFApplications/.*.xsd$" pname) :generic/message-schema
-            (re-matches #".*QIFLibrary/.*.xsd$"   pname)    :generic/library-schema
-            :else (do (log/warn "Cannot determine schema-type:" pname)
-                      :generic/xsd-file))
-      ;; Default
-      :generic/xsd-file)))
-
-(defn imported-schemas
-  "Using the :xsd/import, return a map of the prefixes used in the schema."
-  [xmap]
-  (let [ischemas
-        (->>
-         (xpath xmap :xsd/schema)
-         :xml/content
-         (filter #(xml-type? % :xsd/import))
-         (map #(-> % :xml/attrs :namespace)))
-        ns-info (:xml/ns-info xmap)]
-    (reduce (fn [res schema]
-               (if-let [prefix (-> ns-info :u->ps (get schema) first)]
-                 (conj res {:import/prefix prefix :import/referencedSchema schema})
-                 (do (log/warn "No prefix for schema" schema) res)))
-            []
-            ischemas)))
-
-(defn read-clean
-  "Return a map structure containing the :xml/content (cleaned-up) and :ns-info."
-  [pathname]
-  (let [xml (du/read-xml pathname)]
-    (as-> xml ?xmap
-        (assoc ?xmap :schema/sdo (schema-sdo ?xmap))
-        (assoc ?xmap :schema/spec (schema-spec ?xmap))
-        (assoc ?xmap :schema/version (schema-version ?xmap))
-        (assoc ?xmap :schema/subversion (schema-subversion ?xmap))
-        (assoc ?xmap :schema/type (schema-type ?xmap))
-        (assoc ?xmap :schema/name (schema-name ?xmap)))))
 
 ;;;=======================  Rewrite xsd to schema content for DB  ===========================
-(def ^:dynamic *skip-doc-processing?* false)
-
-(defn obj-doc-string
-  "If the object has annotations in its :xml/content, remove them and return
-   modified object and the string content. Otherwise, just return object and nil.
-   The xsd:appinfo optional content is ignored."
-  [obj]
-  (if (or *skip-doc-processing?*
-          (not (map? obj)) ; ToDo: This and next are uninvestigated problems in the etsi files.
-          (not (contains? obj :xml/content)))
-    [obj nil]
-    (let [parts (group-by #(xml-type? % :xsd/annotation) (:xml/content obj))
-          annotes (get parts true)
-          obj-annote-free (assoc obj :xml/content (vec (get parts false)))
-          s (when (not-empty annotes)
-              (str/trim
-               (reduce (fn [st a]
-                         (str st "\n" (let [docs (filter #(xml-type? % :xsd/documentation) (:xml/content a))]
-                                        (reduce (fn [more-s d]
-                                                  (if (-> d :xml/content string?)
-                                                    (str more-s "\n" (str/trim (:xml/content d)))
-                                                    more-s))
-                                                ""
-                                                docs))))
-                       ""
-                       annotes)))]
-      [obj-annote-free (if (and (string? s) (re-matches #"^\s*$" s)) nil s)]))) ; ToDo: expensive?
-
-(def debugging? (atom false))
-
-;;; Establishes rewrite-xsd methods.
-(defmacro defparse [tag [arg props] & body]
-  `(defmethod rewrite-xsd ~tag [~arg & ~'_]
-     ;; Once *skip-doc-processing?* is true, it stays so through the dynamic scope of the where it was set.
-     (when @debugging? (log/info "defparse tag = " ~tag))
-     (binding [*skip-doc-processing?* (or *skip-doc-processing?* (:skip-doc-processing? ~props))]
-       (let [[~arg doc-string#] (obj-doc-string ~arg)
-             result# (do ~@body)]
-         (if (and doc-string# (map? result#))
-           (assoc result# :doc/docString doc-string#)
-           result#)))))
-
-(def simple-xsd?
-  {:xsd/minLength      :number
-   :xsd/maxLength      :number
-   :xsd/pattern        :string
-   :xsd/fractionDigits :number
-   :xsd/totalDigits    :number
-   :xsd/minInclusive   :number})
-
-(def special-schema-type? "These are associated with whole files."
-  #{:ccts/message-schema
-    :ubl/message-schema
-    :oagis/message-schema
-    :ccts/component-schema
-    :oasis/component-schema
-    :iso/iso-20022-schema})
-
-(def generic-schema-type? "These might be associated with whole files, but specializations might exist"
-  #{:generic/message-schema
-    :generic/library-schema
-    :generic/qualified-dtype-schema,
-    :generic/unqualified-dtype-schema
-    :generic/code-list-schema
-    :generic/xsd-file})
 
 (s/def ::schema-type-kw #(or (special-schema-type? %)
                              (generic-schema-type? %)))
-
-;;; This does file-level dispatching as well as the details
-(defn rewrite-xsd-dispatch
-  [obj & [specified]]
-   (let [stype (:schema/type obj)
-         schema-sdo  (:schema/sdo obj)
-         meth
-         (cond ;; Optional 2nd argument specifies method to call
-               (keyword? specified) specified,
-
-               ;; Files (schema-type)
-               (and (= stype :ccts/message-schema) (= schema-sdo :oasis))    :ubl/message-schema,
-               (and (= stype :ccts/message-schema) (= schema-sdo :oagi))     :oagis/message-schema,
-               (and (= stype :ccts/component-schema) (= schema-sdo :oagi))   :generic/qualified-dtype-schema,
-               (and (= stype :ccts/component-schema) (= schema-sdo :oasis))  :oasis/component-schema,
-               (and (= stype :generic/message-schema) (= schema-sdo :qif))   :generic/xsd-file, ; ToDo: Probably temporary.
-
-               (special-schema-type? stype) stype,
-               (generic-schema-type? stype) stype,
-
-               ;; Odd cases
-               (and (map? obj) (contains? simple-xsd? (:xml/tag obj)))        :simple-xsd,
-               (and (map? obj) (contains? obj :xml/tag))                      (:xml/tag obj),
-               (and (map? obj) (contains? obj :ref))                          :ref
-               ; ToDo: this one for polymorphism #{:xsd/element :xsd/choice} etc.
-               (contains? obj :xml/tag)                                       (:xml/tag obj))]
-     meth))
-
-(defmulti rewrite-xsd #'rewrite-xsd-dispatch)
-
-(defmethod rewrite-xsd nil [obj & schema]
-  (if schema
-    (log/warn "No method for obj/schema.")
-    (log/warn "No method for obj."))
-  (reset! diag {:obj obj :schema schema})
-  :mm/rewrite-xsd-nil-method)
 
 ;;; Seen once in a QIF file.
 (defmethod rewrite-xsd :xsd/attributeGroup
@@ -530,36 +82,6 @@
        (not-empty doc)   (assoc :sp/docString doc)
        true              (assoc :xsdAttrGroup/data (-> xmap :xml/attrs :ref)))}))
 
-;;;===============  File Level ==================================================
-;;; ToDo: Adapted from :oasis/component-schema, which suggests that that could use this.
-(defparse :generic/xsd-file
-  [xmap]
-  (let [elems (->> (xpath xmap :xsd/schema)
-                   :xml/content
-                   (filter #(xml-type? % :xsd/element))
-                   not-empty)
-        comps (->> (xpath xmap :xsd/schema)
-                   :xml/content
-                   (filter #(xml-type? % :xsd/complexType))
-                   not-empty)
-        schemas (-> xmap imported-schemas not-empty)]
-    (as->
-        (cond-> xmap
-          true  (assoc  :library/content [])
-          elems (update :library/content into (mapv #(-> (rewrite-xsd % :xsd/element)
-                                                         (assoc :sp/function {:fn/type :type-ref}))
-                                                    elems))
-          comps (update :library/content into
-                        (mapv (fn [cplx]
-                                (as-> (rewrite-xsd cplx :xsd/complexType) ?t
-                                 (if (:sp/type ?t) (assoc ?t :term/type (:sp/type ?t)) ?t)
-                                 #_(update ?t :sp/function #(assoc % :fn/componentType cc-type))
-                                 (dissoc ?t :sp/type)))
-                              comps))
-          schemas (assoc :schema/importedSchemas schemas))
-        ?r
-      (if (-> ?r :library/content empty?) (dissoc ?r :library/content) ?r)
-      (dissoc ?r :xml/ns-info :xml/content))))
 
 ;;; ToDo: Need file type for QIF Library files
 (defparse :generic/library-schema
@@ -1047,16 +569,10 @@
 
 (def diag-path "Pathname for debugging. Keep." (atom nil))
 
-;;; (read-schema-file "data/testing/elena/Company A - Invoice.xsd")
-(defn read-schema-file
-  "Create map structure for the DB for the given file."
-  [path]
-  (-> path read-clean rewrite-xsd du/condition-form vector))
-
 (defn add-schema-file!
   [path]
   (reset! diag-path path)
-  (let [db-content (read-schema-file path)]
+  (let [db-content (read-xml-file path)]
     (try
       (if (du/storable? db-content)
         (try (d/transact conn db-content) ; Use d/transact here, not transact! which uses a future.
@@ -1391,14 +907,6 @@
                          @conn))
           ents)))
 
-;;;============================ Resolvers (communication with clients)  ==================================
-;;; I think the key idea here for pathom-mediated composabiltiy is for each resolver to rename all db/id
-;;; to context specific names. These are currently #{:sdb/schema-id :sdb/elem-id :sdb/imported-schema-id}.
-;;; (The last one isn't just a schema but a prefix too.)
-;;; The simplest composition then is implemented as a flat table with values and foreign key references.
-;;; I think, however, you can 'go deep' in the ::pc/output and still maintain. See all-schema-ids-r.
-;;; See also person-resolver at Part 6, 43:26.
-
 ;;; For debugging
 (defn query-for [pathom-eql] ((var-get (resolve 'rad-mapper.pathom/parser)) {} pathom-eql))
 
@@ -1418,75 +926,6 @@
   []
   (query-for [{[:schema/name "urn:oagis-10.6:TestMethod-MF"] [:sdb/schema-id]}]))
 
-;;; Note that when you send an Ident, you get back a map with that ident and the response <=========
-;;;(tryme [{[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] [:sdb/schema-id]}])
-;;; ==> {[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] #:sdb{:schema-id 1230}}
-(pc/defresolver schema-by-name-r [env {:schema/keys [name]}]
-  {::pc/input #{:schema/name}
-   ::pc/output [:sdb/schema-id]}
-  {:sdb/schema-id (d/q `[:find ?e . :where [?e :schema/name ~name]] @conn)})
-
-;;; This is based on the book. https://book.fulcrologic.com/#GoingRemote (See friends-resolver
-;;; (tryme [{:ccts/message-schema [:list/id  {:list/schemas [:sdb/schema-id :schema/name]}]}]) ; RIGHT!
-;;; (tryme [{[:list/id :ccts/message-schema] {:list/schemas [:sdb/schema-id :schema/name]}}])  ; WRONG! WHY?
-(pc/defresolver list-r [env {:list/keys [id]}] ; e.g :list/id = :ccts/message-schema
-  {::pc/input  #{:list/id}
-   ::pc/output [{:list/schemas [:sdb/schema-id :schema/name]}]}
-  (when (= id :ccts/message-schema)
-    (when-let [schema-maps (->>
-                            (d/q `[:find ?ent ?name ?topic
-                                   :keys sdb/schema-id schema/name schema/topic
-                                   :where
-                                   [?ent :schema/name  ?name]
-                                   [?ent :schema/topic ?topic]
-                                   [?ent :schema/type ~id]]
-                                 @conn)
-                            (sort-by :schema/topic)
-                            (mapv #(dissoc % :schema/topic))
-                            not-empty)]
-      {:list/id id
-       :list/schemas schema-maps})))
-
-(pc/defresolver message-schema-r [env input] ; THIS ONE WORKS (But...)
-  {::pc/output [{:ccts/message-schema [:list/id {:list/schemas [:schema/name :sdb/schema-id]}]}]}
-  {:ccts/message-schema {:list/id :ccts/message-schema}})
-
-;;; (tryme [{[:sdb/schema-id 5173] [{:model/sequence [{:sdb/elem-id [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]}])
-;;; (tryme [{[:sdb/schema-id 5173] [{:model/sequence [:sp/name :sp/type]}]}])
-;;; (tryme [{[:sdb/schema-id 5173] [:schema/name]}])
-;;; (tryme [{[:sdb/schema-id 5173] [:model/sequence]}])
-(pc/defresolver schema-props-r [env {:sdb/keys [schema-id]}]
-  {::pc/input #{:sdb/schema-id}
-   ::pc/output [:schema/name :sdb/schema-id :schema/sdo :schema/type :schema/topic
-                :schema/subversion :schema/inlinedTypedefs :schema/spec
-                {:schema/importedSchemas [:sdb/imported-schema-id]}
-                {:model/sequence [:sdb/elem-id]}]}
-  (-> (dp/pull @conn '[*] schema-id) ; ToDo: could also do the :keys thing on the pull.
-      (update :model/sequence (fn [s] (mapv #(-> % (assoc :sdb/elem-id (:db/id %)) (dissoc :db/id)) s)))
-      (update :schema/importedSchemas
-              (fn [s]
-                (mapv #(-> %
-                           (assoc :sdb/imported-schema-id (:db/id %))
-                           (dissoc :db/id)) s)))))
-
-;;; (tryme [{[:sdb/elem-id 1280] [:schema/min-occurs]}])                          ; Simple
-;;; (tryme [{[:schema/name invoice] [{[:sdb/elem-id 1280] [:schema/min-occurs]}]}]) ; YES!
-;;; (tryme [{[:schema/name invoice] [{:model/sequence [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]) ; COMPLETE!
-;;; (tryme [{[:sdb/schema-id 1230] [{:model/sequence [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]) ; COMPLETE!
-(pc/defresolver elem-props-r [env {:sdb/keys [elem-id]}]
-  {::pc/input #{:sdb/elem-id}
-   ::pc/output [:doc/docString
-                :sp/name
-                :sp/type
-                :sp/minOccurs
-                :sp/maxOccurs]}
-  (dp/pull @conn '[*] elem-id))
-
-;;; Nice thing about pathom (relative to GraphQL) is that you don't have to start at the root.
-;;; This has nothing to do with ::pc/input; you can add this to a query anywhere.
-(pc/defresolver current-system-time-r [_ _]
-  {::pc/output [:server/time]}
-  {:server/time (java.util.Date.)})
 
 ;;; ToDo: Looks suspicious!
 ;;; Try it with (currently!):

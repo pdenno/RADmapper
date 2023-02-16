@@ -19,7 +19,7 @@
       :cljs [datascript.pull-api  :as dp])
    #?(:cljs ["nata-borrowed"  :as nb])
    #?(:cljs [goog.crypt.base64 :as jsb64])
-   [rad-mapper.db-util            :as du :refer [box unbox]]
+   [rad-mapper.data-util.db-util  :as du :refer [box unbox]]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util :refer [qvar?]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]

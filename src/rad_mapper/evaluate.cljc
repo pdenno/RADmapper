@@ -102,8 +102,6 @@
                   'primary    rad-mapper.builtin/primary
                   'thread     rad-mapper.builtin/thread}})))
 
-#?(:clj (def sw (java.io.StringWriter.)))
-
 (defn user-eval
   "Evaluate the argument form."
   [full-form opts]
@@ -166,13 +164,14 @@
   ([tag str] (processRM tag str {}))
   ([tag str opts]
    (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval?
-                       :debug-parse? :debug-rewrite? :print?} %)
+                       :debug-parse? :debug-rewrite? :pprint?} %)
                      (keys opts)))
    (let [str         (if-let [udata (-> opts :user-data not-empty)]
                        (combine-code-and-data str udata)
                        str)
-         rewrite?    (or (:execute? opts) (:executable? opts) (:rewrite? opts))
-         executable? (or (:execute? opts) (:executable? opts))
+         execute?    (or (:pprint? opts) (:execute? opts))
+         rewrite?    (or (:pprint? opts) (:execute? opts) (:executable? opts) (:rewrite? opts))
+         executable? (or (:pprint? opts) (:execute? opts) (:executable? opts))
          sci?        (or (:sci? opts) (util/cljs?))
          ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
      (binding [rewm/*debugging?* (:debug-rewrite? opts)
@@ -196,8 +195,8 @@
                (not rewrite?)      (:top)
                rewrite?            (rew/rewrite)
                executable?         (rad-form sci?)
-               (:execute? opts)    (user-eval opts)
-               (:print? opts)      (pprint-obj)))))))
+               execute?            (user-eval opts)
+               (:pprint? opts)     (pprint-obj)))))))
 
 ;;;==========  Pretty printing. This is unrelated to the above uses of the term pretty-print. ====================
 (defn pprint-map
@@ -221,31 +220,27 @@
           kv-pairs (update-in kv-pairs [0 :k] #(str "{" %)) ; This makes printing easier!
           max-key (apply max (map :k-len kv-pairs)) ; We will line them all up with the widest.
           max-val (apply max (map :v-len kv-pairs))]
-      (letfn [(first-str! [] ; On the first line, the { has to come before the first entry.
-                (if (-> kv-pairs rest not-empty)
-                  (str (nspaces indent) "{" (-> kv-pairs first :k) ",\n")
-                  (str (nspaces indent) "{" (-> kv-pairs first :k))))]
-        (cond ;; (1) The map fits on one line.
-          (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
-          (cl-format nil "~A~{~A: ~A~^, ~}}" (nspaces indent) (interleave (map :k kv-pairs) (map :v kv-pairs))),
+      (cond ;; (1) The map fits on one line.
+        (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
+        (cl-format nil "~A~{~A: ~A~^, ~}}" (nspaces indent) (interleave (map :k kv-pairs) (map :v kv-pairs))),
 
-          ;; (2) It fits. The values are made to line up with the entry with the longest key.
-          (<= (+ max-key max-val) (- width indent))
-          (cl-format nil "~{~A: ~A~^,~% ~}}"
-                     (interleave
-                      (map #(str (nspaces indent) (:k %) (nspaces (- max-key (:k-len %)))) kv-pairs)
-                      (map :v kv-pairs))),
-          ;; (3) Too wide; break into two lines for each k/v pair.
-          :else
-          (cl-format nil "~{~A:~%     ~A~^,~% ~}}"
-                     (interleave
-                      (map #(str (nspaces indent) (:k %)) kv-pairs)
-                      (map #(str (nspaces (+ indent 3)) (:v %)) kv-pairs))))))))
+        ;; (2) It fits. The values are made to line up with the entry with the longest key.
+        (<= (+ max-key max-val) (- width indent))
+        (cl-format nil "~{~A: ~A~^,~% ~}}"
+                   (interleave
+                    (map #(str (nspaces indent) (:k %) (nspaces (- max-key (:k-len %)))) kv-pairs)
+                    (map :v kv-pairs))),
+        ;; (3) Too wide; break into two lines for each k/v pair.
+        :else
+        (cl-format nil "~{~A:~%     ~A~^,~% ~}}"
+                   (interleave
+                    (map #(str (nspaces indent) (:k %)) kv-pairs)
+                    (map #(str (nspaces (+ indent 3)) (:v %)) kv-pairs)))))))
 
 (defn pprint-vec
   "Print a vector:
     If it all fits on one line within width minus indent, print it that way.
-    Else print one element per line."
+    Else print one element per line." ; ToDo: Maybe a mode where a few are printed on each line (at least 3).
   [obj indent width]
   (let [elem-objs (reduce (fn [res elem]
                             (let [s (pprint-obj elem :width width)]

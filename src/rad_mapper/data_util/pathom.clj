@@ -1,11 +1,11 @@
-(ns rad-mapper.pathom
+(ns rad-mapper.data-util.pathom
   "This is temporarily part of rad-mapper. This plus schema-db.clj ought to be their own libaray"
   (:require
    [clojure.core.async :as async :refer [<!!]]
    [com.wsscode.pathom.connect :as pc :refer [defresolver]]
    [com.wsscode.pathom.core :as p]
    [mount.core :refer [defstate]]
-   [rad-mapper.schema-db     :refer [resolvers]]
+   [rad-mapper.data-util.schema-db     :refer [resolvers]]
    [taoensso.timbre          :as log]))
 
 ;;; Some of this from Chris O'Donnell's excellent blogging.
@@ -66,7 +66,7 @@
                         (p/post-process-parser-plugin p/elide-not-found)
                         p/trace-plugin]})
         ;; NOTE: Add -Dtrace to the server JVM to enable Fulcro Inspect query performance traces to the network tab.
-        ;; Understand that this makes the network responses much larger and should not be used in production.
+        ;; Understand that this makes the network responses much slower and should not be used in production.
         trace? (some? (System/getProperty "trace"))]
     (fn wrapped-parser [env tx]
       (<!! (real-parser env (if trace?
