@@ -1894,8 +1894,7 @@
    that was originally not string-valued yet is forced into being a string because it needed to
    serve as :_rm/user-key and is qvar-in-key-pos.
    :_rm/user-key requires :db.type/string and such data, serving as :db.unique/identity can't be boxed.
-   util/read-str, (that is  ?(:clj read-string, :cljs cljs.reader/read-string) is used to
-   restore the value of :_rm/user-key."
+   util/read-str is used to restore the value of :_rm/user-key."
   [data schema]
   (let [restore-attr? (reduce-kv (fn [res k v]
                                    (if (contains? v :_rm/original-key-type) ; Schema entry has this only if qvar-in-key-pos...
@@ -2004,7 +2003,7 @@
                  (let [v-type (bset-type (:_rm/user-key v))]
                    (if (and (qvar? (:_rm/user-key v))           ; :_rm/user-key is used in two ways. If the schema indicates an express key...
                             (not   (= :db.type/string v-type))  ; ...then just use the qvar as-is. Otherwise, it is qvar-in-key-pos...
-                            (not   (:_rm/exp-key? v)))          ; ...and the original key type must be restored by read-string.
+                            (not   (:_rm/exp-key? v)))          ; ...and the original key type must be restored by util/read-str.
                      (assoc m k (assoc v :_rm/original-key-type v-type))
                      (assoc m k v))))
                {}

@@ -1,0 +1,3 @@
+;;; See https://clojure-lsp.io/settings/#initialization-options
+{:cljfmt {:indents {#re ".*" ns [[:inner 0] [:inner 1]]}}
+ :auto-add-ns-to-new-files? true} ; Does nothing.

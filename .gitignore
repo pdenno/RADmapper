@@ -18,6 +18,15 @@ resources/database
 target
 .cpcache
 .clj-kondo/.cache
+.clj-kondo/babashka
+.clj-kondo/com.fulcrologic
+.clj-kondo/com.wsscode
+.clj-kondo/funcool
+.clj-kondo/rewrite-clj
+.clj-kondo/taoensso
+.lsp/.cache
+data/OAGIS
+resources/databases
 
 node_modules/
 .shadow-cljs/

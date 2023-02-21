@@ -1,14 +1,28 @@
 (ns rad-mapper.data-util.schema-util
   "Functions to classify schema, include standard messaging schema."
   (:require
-;   [clojure.java.io              :as io]
-;   [clojure.pprint               :refer [cl-format]]
-;   [clojure.spec.alpha           :as s]
+   [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
-;   [mount.core                   :refer [defstate]]
-   [rad-mapper.data-util.db-util :as du :refer [xpath #_xpath- xml-type?]]
-;   [rad-mapper.util              :as util]
+   #?(:clj  [datahike.api        :as d]
+      :cljs [datascript.api      :as d])
+   [rad-mapper.data-util.db-util :as du :refer [conn xpath xml-type?]]
    [taoensso.timbre              :as log]))
+
+(def simple-xsd?
+  {:xsd/minLength      :number
+   :xsd/maxLength      :number
+   :xsd/pattern        :string
+   :xsd/fractionDigits :number
+   :xsd/totalDigits    :number
+   :xsd/minInclusive   :number})
+
+(def generic-schema-type? "These might be associated with whole files, but specializations might exist"
+  #{:generic/message-schema
+    :generic/library-schema
+    :generic/qualified-dtype-schema,
+    :generic/unqualified-dtype-schema
+    :generic/code-list-schema
+    :generic/xsd-file})
 
 (def special-schema-type? "These are associated with whole files."
   #{:ccts/message-schema
@@ -18,13 +32,82 @@
     :oasis/component-schema
     :iso/iso-20022-schema})
 
-(def generic-schema-type? "These might be associated with whole files, but specializations might exist"
-  #{:generic/message-schema
-    :generic/library-schema
-    :generic/qualified-dtype-schema,
-    :generic/unqualified-dtype-schema
-    :generic/code-list-schema
-    :generic/xsd-file})
+;;; This does file-level dispatching as well as the details
+(defn rewrite-xsd-dispatch
+  [obj & [specified]]
+   (let [stype (:schema/type obj)
+         schema-sdo  (:schema/sdo obj)
+         meth
+         (cond ;; Optional 2nd argument specifies method to call
+               (keyword? specified) specified,
+
+               ;; Files (schema-type)
+               (and (= stype :ccts/message-schema)    (= schema-sdo :oasis))  :ubl/message-schema,
+               (and (= stype :ccts/message-schema)    (= schema-sdo :oagi))   :oagis/message-schema,
+               (and (= stype :ccts/component-schema)  (= schema-sdo :oagi))   :generic/qualified-dtype-schema,
+               (and (= stype :ccts/component-schema)  (= schema-sdo :oasis))  :oasis/component-schema,
+               (and (= stype :generic/message-schema) (= schema-sdo :qif))    :generic/xsd-file, ; ToDo: Probably temporary.
+
+               (special-schema-type? stype) stype,
+               (generic-schema-type? stype) stype,
+
+               ;; Odd cases
+               (and (map? obj) (contains? simple-xsd? (:xml/tag obj)))        :simple-xsd,
+               (and (map? obj) (contains? obj :xml/tag))                      (:xml/tag obj),
+               (and (map? obj) (contains? obj :ref))                          :ref
+               ; ToDo: this one for polymorphism #{:xsd/element :xsd/choice} etc.
+               (contains? obj :xml/tag)                                       (:xml/tag obj))]
+     meth))
+
+(def ^:dynamic *skip-doc-processing?* false)
+
+(defn obj-doc-string
+  "If the object has annotations in its :xml/content, remove them and return
+   modified object and the string content. Otherwise, just return object and nil.
+   The xsd:appinfo optional content is ignored."
+  [obj]
+  (if (or *skip-doc-processing?*
+          (not (map? obj)) ; ToDo: This and next are uninvestigated problems in the etsi files.
+          (not (contains? obj :xml/content)))
+    [obj nil]
+    (let [parts (group-by #(xml-type? % :xsd/annotation) (:xml/content obj))
+          annotes (get parts true)
+          obj-annote-free (assoc obj :xml/content (vec (get parts false)))
+          s (when (not-empty annotes)
+              (str/trim
+               (reduce (fn [st a]
+                         (str st "\n" (let [docs (filter #(xml-type? % :xsd/documentation) (:xml/content a))]
+                                        (reduce (fn [more-s d]
+                                                  (if (-> d :xml/content string?)
+                                                    (str more-s "\n" (str/trim (:xml/content d)))
+                                                    more-s))
+                                                ""
+                                                docs))))
+                       ""
+                       annotes)))]
+      [obj-annote-free (if (and (string? s) (re-matches #"^\s*$" s)) nil s)]))) ; ToDo: expensive?
+
+
+(defn q-schema-topic
+  "Lookup the topic for a schema in the DB."
+  [urn]
+  (d/q `[:find ?topic .
+         :where [?s :schema/name ~urn]
+         [?s :schema/topic ?topic]] @conn))
+
+(defn q-schema-sdo
+  "Lookup the SDO for a schema in the DB."
+  [urn]
+  (d/q `[:find ?sdo .
+         :where [?s :schema/name ~urn]
+         [?s :schema/sdo ?sdo]] @conn))
+
+(defn q-schema-type
+  "Lookup the type for a schema in the DB."
+  [urn]
+  (d/q `[:find ?type .
+         :where [?s :schema/name ~urn]
+         [?s :schema/type ?type]] @conn))
 
 (defn schema-ns
   "Return the namespace urn string for the argument xmap."
@@ -190,28 +273,6 @@
                       :generic/xsd-file))
       ;; Default
       :generic/xsd-file)))
-
-(defn q-schema-topic
-  "Lookup the topic for a schema in the DB."
-  [urn]
-  (d/q `[:find ?topic .
-         :where [?s :schema/name ~urn]
-         [?s :schema/topic ?topic]] @conn))
-
-(defn q-schema-sdo
-  "Lookup the SDO for a schema in the DB."
-  [urn]
-  (d/q `[:find ?sdo .
-         :where [?s :schema/name ~urn]
-         [?s :schema/sdo ?sdo]] @conn))
-
-(defn q-schema-type
-  "Lookup the type for a schema in the DB."
-  [urn]
-  (d/q `[:find ?type .
-         :where [?s :schema/name ~urn]
-         [?s :schema/type ?type]] @conn))
-
 
 ;;; ToDo: A schema is getting past this with schema-name "".
 (clojure.string/split "data/testing/elena/Company A - Invoice.xsd" #"/")

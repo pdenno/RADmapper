@@ -1,113 +1,15 @@
 (ns rad-mapper.data-util.db-util
   "Utilities for schema-db (which will likely become a library separate from rad-mapper"
   (:require
-   [cemerick.url          :as url]
-   #?(:clj [clojure.data.xml      :as x])
-   #?(:clj [clojure.java.io  :as io])
-   [clojure.walk          :as walk]
+   [cemerick.url              :as url]
+   #?(:clj [clojure.data.xml  :as x])
+   #?(:clj [clojure.java.io   :as io])
+   [clojure.walk              :as walk]
    #?(:clj  [datahike.pull-api     :as dp]
       :cljs [datascript.pull-api   :as dp])
-   [taoensso.timbre       :as log]))
+   [taoensso.timbre           :as log]))
 
-;;; NB :db.cardinality/many means the property has a vector value {:foo/foo [1 2 3]}
-;;;    :db.type/ref means that the property means the element(s) of the property are db/id to maps.
-;;;    Perhaps everything that is the value of a ref should have its own ns name.
-(def db-schema
-  "Defines the datahike schema for this database.
-     :db/db.cardinality=many means value is a vector of values of some :db.type."
-  [#:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Cardinality}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/CategoryCode}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/DataTypeTermName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Definition}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Description}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/DictionaryEntryName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/Name}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/ObjectClass}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/PrimitiveType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/PropertyTermName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/QualifierTerm}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/RepresentationTermName}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/UniqueID}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/UsageRule}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/VersionID}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :cct/scId
-        :doc "'sc' is supplementary to component"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/scType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :cct/scUse}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :cct/supplementary}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :codeList/name}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :codeList/lists}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :codeList/terms}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :doc/docString}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :fn/componentType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :fn/type}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :fn/base}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :import/prefix}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :import/referencedSchema}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :iso/CodeName,
-        :doc "Used in OAGIS/ISO currency codes"}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :library/content}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :mm/comment
-        :doc "All the mm things are for debugging."}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :mm/debug}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/boolean, :ident :mm/fileNotRead?}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :mm/unhandledXML}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :mm/tempInclude}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :model/sequence
-        :doc "generic modeling concept"}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :model/enumeration}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/complexTypes}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/importedSchemas}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :schema/includedSchemas}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/inlinedTypedefs}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/name, :unique :db.unique/identity}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/pathname}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :schema/sdo}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/shortName}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :schema/simpleTypes}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :schema/spec}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/subversion
-        :doc "e.g. for OAGIS 10.8 it is '8'"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/topic}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :schema/type}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/version
-        :doc "e.g. for OAGIS 10.8 it is '10'"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/boolean, :ident :sp/abstract}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :sp/component
-        :doc "CCT see also supplementary"}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :sp/docString
-        :doc "when :xsd/documentation is a string, rather than :sp/supplementary
-              ToDo: Should I just use :doc/docString ?"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :sp/function,
-        :doc ":fn objects."}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :sp/maxOccurs}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :sp/minOccurs}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :sp/name}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :sp/ref
-        :doc "e.g. xsd:element attr."}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :sp/supplementary
-        :doc "CCT"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :sp/type}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :sp/typeRef
-        :doc "xsd:elem with a name, type attrs"}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :sp/xsdType}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :term/name,
-        :doc "An ID unique within the schema"}
-   ;; ToDo: These are typically things that could be generalized or need further investigation
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :xsd/attributeGroup}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :xsdAttrGroup/data}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :xsd/choice}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/fractionDigits}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/maxLength}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/minInclusive}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/minLength}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :xsd/pattern}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :xsd/restriction} ; ToDo: eliminate this.
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/long,    :ident :xsd/totalDigits}
-   ;; These are for boxing values.
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/string,  :ident :zip/keys}
-   #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref,     :ident :zip/vals}])
-
+(def conn "A handy connection to the database" nil) ;
 
 ;;; ToDo:
 ;;;  - cljs complains about not finding x/element-nss, which I don't see in the  0.2.0-alpha8 source at all.
@@ -205,7 +107,7 @@
       (storable-aux obj))
     @ok?))
 
-(defn find-nils
+#_(defn find-nils
   "Return the form with all its :db/id resolved."
   [form]
   (letfn [(find-nils-aux [obj]
@@ -218,7 +120,6 @@
               (coll? obj) (do (some #(when (nil? %) (log/info "nil:" obj)) obj)
                               (map find-nils-aux obj))))]
     (find-nils-aux form)))
-
 
 (defn xpath-internal
   [content props path-in]
@@ -253,6 +154,15 @@
   "Return true if the content has :xml/tag = the argument."
   [xml xtype]
   (= (:xml/tag xml) xtype))
+
+(defn child-types
+  "Return a map that has an entry collecting the instances of every child type found.
+   Argument is a vector of content."
+  [content]
+  (let [typs #{:xsd/annotation :xsd/any :xsd/anyAttribute :xsd/attribute :xsd/complexContent :xsd/complexType :xsd/documentation
+               :xsd/element :xsd/group :xsd/include :xsd/restriction :xsd/schema :xsd/sequence :xsd/simpleContent :xsd/simpleType}
+        found (->> content (map :xml/tag) (reduce (fn [res tag] (if (typs tag) (conj res tag) res)) #{}))]
+    (reduce (fn [res tag] (assoc res tag (filterv #(xml-type? % tag) content))) {} found)))
 
 (defn clean-whitespace
   "Remove whitespace in element :content."
@@ -344,23 +254,23 @@
       :xml/content (-> xml alienate-xml clean-whitespace detagify vector)
       :schema/pathname pathname})))
 
-#?(:clj
-(defn parse-xml-string
-  "This is useful for debugging. Typical usage:
-  (-> sss util/parse-xml-string (xpath :xsd/schema :xsd/complexType) rewrite-xsd)"
-  [s]
-  (let [pre "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
-             <xsd:schema xmlns=\"urn:test-string\"
-                         xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"
-                         targetNamespace=\"urn:test-string\"
-                         elementFormDefault=\"qualified\"
-                         attributeFormDefault=\"unqualified\"
-                         version=\"2.3\">"
-        post "</xsd:schema>"
-        xml  (x/parse-str (str pre s post))]
-    (-> {}
-        (assoc :xml/ns-info (explicit-root-ns (x/element-nss xml)))
-        (assoc :xml/content (-> xml alienate-xml clean-whitespace detagify vector))))))
+;;;#?(:clj
+;;;(defn parse-xml-string
+;;;  "This is useful for debugging. Typical usage:
+;;;  (-> sss util/parse-xml-string (xpath :xsd/schema :xsd/complexType) rewrite-xsd)"
+;;;  [s]
+;;;  (let [pre "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+;;;             <xsd:schema xmlns=\"urn:test-string\"
+;;;                         xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\"
+;;;                         targetNamespace=\"urn:test-string\"
+;;;                         elementFormDefault=\"qualified\"
+;;;                         attributeFormDefault=\"unqualified\"
+;;;                         version=\"2.3\">"
+;;;        post "</xsd:schema>"
+;;;        xml  (x/parse-str (str pre s post))]
+;;;    (-> {}
+;;;        (assoc :xml/ns-info (explicit-root-ns (x/element-nss xml)))
+;;;        (assoc :xml/content (-> xml alienate-xml clean-whitespace detagify vector))))))
 
 #?(:clj
 (defn dir-up

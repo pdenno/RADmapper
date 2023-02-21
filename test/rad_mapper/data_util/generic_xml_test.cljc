@@ -1,10 +1,9 @@
-(ns rad-mapper.data-util.generic-xml-test
+(ns rad-mapper.data-util.generic-schema-test
   "Functions to read XML to structures that the DB can use."
   (:require
    [clojure.test :refer [deftest is testing]]
-   [rad-mapper.data-util.generic-xml :as gen-x]
+   [rad-mapper.data-util.generic-schema :as gen-s]
    [rad-mapper.builtin :as bi]))
-
 
 (def invoice-A
 "<?xml version="1.0" encoding="UTF-8"?>
@@ -34,6 +33,6 @@ elementFormDefault="qualified" attributeFormDefault="unqualified" vc:minVersion=
         </xs:simpleType>
 </xs:schema>")
 
-
 (defn tryme []
-  (rewrite-xsd xmap :generic/xsd-file)
+  (-> invoice-A
+  (rewrite-xsd xmap :generic/xsd-file))

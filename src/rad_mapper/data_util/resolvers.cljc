@@ -6,9 +6,7 @@
       :cljs [datascript.core     :as d])
    #?(:clj  [datahike.pull-api   :as dp]
       :cljs [datacript.pull-api  :as dp])
-   [rad-mapper.data-util.pathom    :as pathom]
-   [rad-mapper.data-util.schema-db :as db]
-   [taoensso.timbre                :as log]))
+   [rad-mapper.data-util.db-util :as du]))
 
 ;;;============================ Resolvers (communication with clients)  ==================================
 ;;; I think the key idea here for pathom-mediated composabiltiy is for each resolver to rename all db/id
@@ -18,15 +16,13 @@
 ;;; I think, however, you can 'go deep' in the ::pc/output and still maintain. See all-schema-ids-r.
 ;;; See also person-resolver at Part 6, 43:26.
 
-(def conn (db/connect-db))
-
 ;;; Note that when you send an Ident, you get back a map with that ident and the response <=========
 ;;;(tryme [{[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] [:sdb/schema-id]}])
 ;;; ==> {[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] #:sdb{:schema-id 1230}}
 (pc/defresolver schema-by-name-r [env {:schema/keys [name]}]
   {::pc/input #{:schema/name}
    ::pc/output [:sdb/schema-id]}
-  {:sdb/schema-id (d/q `[:find ?e . :where [?e :schema/name ~name]] @conn)})
+  {:sdb/schema-id (d/q `[:find ?e . :where [?e :schema/name ~name]] @du/conn)})
 
 ;;; This is based on the book. https://book.fulcrologic.com/#GoingRemote (See friends-resolver
 ;;; (tryme [{:ccts/message-schema [:list/id  {:list/schemas [:sdb/schema-id :schema/name]}]}]) ; RIGHT!
@@ -42,7 +38,7 @@
                                    [?ent :schema/name  ?name]
                                    [?ent :schema/topic ?topic]
                                    [?ent :schema/type ~id]]
-                                 @conn)
+                                 @du/conn)
                             (sort-by :schema/topic)
                             (mapv #(dissoc % :schema/topic))
                             not-empty)]
@@ -63,7 +59,7 @@
                 :schema/subversion :schema/inlinedTypedefs :schema/spec
                 {:schema/importedSchemas [:sdb/imported-schema-id]}
                 {:model/sequence [:sdb/elem-id]}]}
-  (-> (dp/pull @conn '[*] schema-id) ; ToDo: could also do the :keys thing on the pull.
+  (-> (dp/pull @du/conn '[*] schema-id) ; ToDo: could also do the :keys thing on the pull.
       (update :model/sequence (fn [s] (mapv #(-> % (assoc :sdb/elem-id (:db/id %)) (dissoc :db/id)) s)))
       (update :schema/importedSchemas
               (fn [s]
@@ -82,10 +78,45 @@
                 :sp/type
                 :sp/minOccurs
                 :sp/maxOccurs]}
-  (dp/pull @conn '[*] elem-id))
+  (dp/pull @du/conn '[*] elem-id))
 
 ;;; Nice thing about pathom (relative to GraphQL) is that you don't have to start at the root.
 ;;; This has nothing to do with ::pc/input; you can add this to a query anywhere.
 (pc/defresolver current-system-time-r [_ _]
   {::pc/output [:server/time]}
   {:server/time (java.util.Date.)})
+
+;;; ToDo: Of course, this needs to take an argument or be part of a user's project, etc.
+;;; (tryme [{[:file/id :map-spec] [:user/data-file]}])
+(pc/defresolver data-file-r [env {:file/keys [id]}]
+  {::pc/input #{:file/id}
+   ::pc/output [:file/text]}
+  (case id
+    :source-data {:file/text (slurp "./data/messages/UBL-Invoice-2.1-Example.xml")}
+    :target-data {:file/text " "}
+    :map-spec    {:file/text (str   "// Map spec started " (java.util.Date.))}))
+
+;;; ToDo: Looks suspicious!
+;;; Try it with (currently!):
+;;;           [:sdb/elem-id 1305] (UBL "Invoice" element)
+;;;           [:sdb/elem-id 5230] (OAGIS "Invoice" element)
+#_(defn substructure-resolver-r
+  "Return substructure for the argument elem-id"
+  [elem-id]
+  (if-let [owning-schema (d/q `[:find ?s :where [?s :model/sequence ~elem-id]] @du/conn)]
+    (let [ref-1 (d/q `[:find [?rs ...] :where [~owning-schema :schema/importedSchemas ?rs]] @du/conn)
+          ref-2 (d/q `[:find [?rs ...] :where [~owning-schema :schema/inlinedTypedefs  ?rs]] @du/conn)
+          _refs (into ref-1 ref-2)
+          _elem-info (dp/pull @du/conn '[*] elem-id)]
+      (if-let [_ref-schema nil #_(schema-containing-ref)]
+        :found-it
+        (log/warn "Could not find referenced schema for" elem-id)))
+    (log/warn "Could not find owning schema for" elem-id)))
+
+(def resolvers [schema-by-name-r
+                schema-props-r
+                elem-props-r
+                list-r
+                message-schema-r
+                data-file-r
+                current-system-time-r])

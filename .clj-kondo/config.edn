@@ -1,26 +1,22 @@
 ;;; https://github.com/borkdude/clj-kondo/blob/master/doc/config.md
 {:project-root-uri "file:///home/msid/pdenno/Documents/git/RADmapper"
- :lint-as {#_#_rad-mapper.builtins/defn*      clojure.core/defn
-           mount.core/defstate              clj-kondo.lint-as/def-catch-all
-           rad-mapper.builtins/init-step    clojure.core/defmacro
-           rad-mapper.builtins/init-step-m  clojure.core/defmacro
-           rad-mapper.builtins/map-step     clojure.core/defmacro
-           rad-mapper.builtins/map-step-m   clojure.core/defmacro
-           rad-mapper.builtins/primary      clojure.core/defmacro
-           rad-mapper.builtins/primary-m    clojure.core/defmacro
-           rad-mapper.builtins/defn*        clojure.core/defn
-           rad-mapper.builtins/defn$        clojure.core/defn
-           rad-mapper.parse/defparse        clojure.core/defmethod
-           rad-mapper.rewrite/defrewrite    clojure.core/defn
-           rad-mapper.rwast-macros/defrwast clojure.core/defn
-
-           rad-mapper.data-util.generic-xml/defparse    clojure.core/defn
-
-           com.wsscode.pathom.connect/defresolver       clj-kondo.lint-as/def-catch-all
-           com.wsscode.pathom.connect/defmutation       clj-kondo.lint-as/def-catch-all
-
+ :lint-as {com.wsscode.pathom.connect/defmutation            clj-kondo.lint-as/def-catch-all
+           com.wsscode.pathom.connect/defresolver            clj-kondo.lint-as/def-catch-all
            com.wsscode.pathom3.connect.operation/defmutation clojure.core/defn
            com.wsscode.pathom3.connect.operation/defresolver clojure.core/defn
            com.wsscode.pathom3.plugin/defplugin              clojure.core/def
            com.wsscode.promesa.macros/clet                   clojure.core/let
-           com.wsscode.promesa.macros/ctry                   clojure.core/try}}
+           com.wsscode.promesa.macros/ctry                   clojure.core/try
+           mount.core/defstate                               clj-kondo.lint-as/def-catch-all
+           rad-mapper.builtin/defn$                          clojure.core/defn
+           rad-mapper.builtin/defn*                          clojure.core/defn #_clj-kondo.lint-as/def-catch-all
+           rad-mapper.builtin/init-step                      clojure.core/defmacro
+           rad-mapper.builtin/init-step-m                    clojure.core/defmacro
+           rad-mapper.builtin/map-step                       clojure.core/defmacro
+           rad-mapper.builtin/map-step-m                     clojure.core/defmacro
+           rad-mapper.builtin/primary                        clojure.core/defmacro
+           rad-mapper.builtin/primary-m                      clojure.core/defmacro
+           rad-mapper.data-util.macros/defparse              clojure.core/defn
+           rad-mapper.parse/defparse                         clojure.core/defmethod
+           rad-mapper.rewrite/defrewrite                     clojure.core/defn
+           rad-mapper.rwast-macros/defrwast                  clojure.core/defn}}

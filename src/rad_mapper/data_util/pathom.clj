@@ -5,7 +5,7 @@
    [com.wsscode.pathom.connect :as pc :refer [defresolver]]
    [com.wsscode.pathom.core :as p]
    [mount.core :refer [defstate]]
-   [rad-mapper.data-util.schema-db     :refer [resolvers]]
+   [rad-mapper.data-util.resolvers    :refer [resolvers]]
    [taoensso.timbre          :as log]))
 
 ;;; Some of this from Chris O'Donnell's excellent blogging.
