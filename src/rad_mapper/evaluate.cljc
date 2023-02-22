@@ -248,7 +248,7 @@
                           [] obj)]
     (if (>= (- width indent) (+ (apply + (map :len elem-objs)) (* (count elem-objs) 2)))
       (cl-format nil "[~{~A~^, ~}]" (map :val elem-objs))
-      (cl-format nil "[~{~A~^,~%~}]" (map :val elem-objs)))))
+      (cl-format nil "[~{~A~^,~% ~}]" (map :val elem-objs)))))
 
 (defn pprint-obj
   "Pretty print the argument object.
@@ -261,5 +261,6 @@
               (cond (map? obj)     (swap! strg #(str % (pprint-map obj (* @depth indent) width)))
                     (vector? obj)  (swap! strg #(str % (pprint-vec obj (* @depth indent) width)))
                     (string? obj)  (swap! strg #(str %  "'" obj "'"))
+                    (fn? obj)      (swap! strg #(str %  "<<a function>>"))
                     :else          (swap! strg #(str % obj))))]
       (pp obj))))
