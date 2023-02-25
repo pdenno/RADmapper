@@ -9,7 +9,7 @@
            com.wsscode.promesa.macros/ctry                   clojure.core/try
            mount.core/defstate                               clj-kondo.lint-as/def-catch-all
            rad-mapper.builtin/defn$                          clojure.core/defn
-           rad-mapper.builtin/defn*                          clojure.core/defn #_clj-kondo.lint-as/def-catch-all
+           rad-mapper.builtin/defn*                          clojure.core/defn #_clj-kondo.lint-as/def-catch-all #_clojure.core/defmacro #_clj-kondo.lint-as/def-catch-all ; Nothing works!
            rad-mapper.builtin/init-step                      clojure.core/defmacro
            rad-mapper.builtin/init-step-m                    clojure.core/defmacro
            rad-mapper.builtin/map-step                       clojure.core/defmacro

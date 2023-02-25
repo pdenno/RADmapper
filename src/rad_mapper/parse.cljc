@@ -81,7 +81,7 @@
 (def datetime-fns (fn-maps ["$fromMillis" "$millis" "$now" "$toMillis"]))
 (def higher-fns   (fn-maps ["$filter" "$map" "$reduce" "$sift" "$single"]))
 ;;; Non-JSONata functions
-(def rm-fns       (fn-maps ["$db" "$pull" "$read" "$readSpreadsheet"]))
+(def rm-fns       (fn-maps ["$db" "$eIdent" "$identities" "$pull" "$qIdent" "$read" "$readSpreadsheet"]))
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns rm-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" \$]) set))
@@ -1044,8 +1044,8 @@
     (parse :ptag/jvar ps)))
 
 ;;; ToDo: Is this really what I want? An options map stuck in with formal parameters???
-;;; <query-def> ::= 'query (  '(' <jvar>? [',' <jvar|options>]* ')' )? '{' <query-patterns> '}'
-(s/def ::QueryDef (s/keys :req-un [::params ::patterns]))
+;;; <query-def> ::= 'query (  '(' <jvar>? [',' <jvar|options>]* ')' )? '{' ( <query-patterns> | <$qIdent call> ) '}'
+(s/def ::QueryDef (s/keys :req-un [::params ::patterns|qcall]))
 (defparse :ptag/query-def
   [ps]
   (as-> ps ?ps
@@ -1056,12 +1056,15 @@
         (store ?ps1 :params))
       ?ps)
     (eat-token ?ps \{)
-    (parse :ptag/query-patterns ?ps)
+    (if (= "$qIdent" (-> ?ps :head :jvar-name))
+        (parse :ptag/fn-call ?ps)
+        (parse :ptag/query-patterns ?ps))
     (eat-token ?ps \})
     (assoc ?ps :result {:typ :QueryDef
                         :params   (->> (recall ?ps :params) (filterv jvar?))
                         :options  (->> (recall ?ps :params) (filter (complement jvar?)) first)
-                        :patterns (:result ?ps)})))
+                        :patterns|qcall (:result ?ps)})))
+
 
 ;;; ToDo: We don't care where you put the options.
 ;;;       We don't care whether there is more than one options map.
@@ -1088,7 +1091,9 @@
           (store ?ps1 :params))
         ?ps)
       (eat-token ?ps \{)
-      (parse :ptag/obj-exp ?ps)
+      (if (= "$eIdent" (-> ?ps :head :jvar-name))
+        (parse :ptag/fn-call ?ps)
+        (parse :ptag/obj-exp ?ps))
       (store ?ps :body)
       (eat-token ?ps \})
       (assoc ?ps :result {:typ    :ExpressDef

@@ -144,14 +144,11 @@
   (reset! key-order [])
   (let [params    (-> m :params rewrite)
         base-body (-> m :body rewrite)
-        order @key-order
-        {:keys [reduce-body schema]}  (-> base-body unquote-qvars qu/schematic-express-body quote-qvars)]
+        order @key-order]
     `(~'bi/express {:params      '~(remove map? params)
                     :options     '~(some #(when (map? %) %) params)
                     :base-body   ~base-body
-                    :reduce-body ~reduce-body
-                    :key-order   ~order
-                    :schema      '~schema})))
+                    :key-order   ~order})))
 
 (defrewrite :ObjExp [m]
   (reduce (fn [res [k v]] (assoc res k v)) {} (map rewrite (:kv-pairs m))))
@@ -223,31 +220,33 @@
      In that case a symbol is generated/substituted for the predicate and added to :in.
    - The :in is computed as the DB arguments plus the symbols generated for predicates as above."
   [where-raw]
-  (let [where (binding [*inside-step?* false] (->> where-raw (mapv rewrite) unquote-qvars))
-        dbs (dbs-from-qform where)
-        pred-subs (atom {})
-        where-atm (atom [])]
-    (doseq [pat where]
-      (if (-> pat first seq?)
-        (let [fn-name (-> pat first first)
-              [_ _ base-name] (re-matches #"(\$)?(.*)" (name fn-name))
-              pred-name (->> base-name (str "pred-") symbol)]
-          (when-not (contains? @pred-subs pred-name)
-            (swap! pred-subs #(assoc % pred-name fn-name)))
-          (swap! where-atm #(conj % [`(~pred-name ~@(-> pat first rest))])))
-        (swap! where-atm #(conj % pat))))
-    {:where (deref where-atm)
-     :in (into dbs (-> @pred-subs keys))
-     :pred-args (-> @pred-subs vals vec)}))
+  (if (= "$qIdent" (:fn-name where-raw)) ; Then it is a qcall and we rewrite the function.
+    {:qcall (rewrite where-raw) :in '[$]}
+    (let [where (binding [*inside-step?* false] (->> where-raw (mapv rewrite) unquote-qvars))
+          pred-subs (atom {})
+          where-atm (atom [])
+          dbs (dbs-from-qform where)]   ; Else we have to study the where, it might not be so simple.
+      (doseq [pat where]
+        (if (-> pat first seq?)
+          (let [fn-name (-> pat first first)
+                [_ _ base-name] (re-matches #"(\$)?(.*)" (name fn-name))
+                pred-name (->> base-name (str "pred-") symbol)]
+            (when-not (contains? @pred-subs pred-name)
+              (swap! pred-subs #(assoc % pred-name fn-name)))
+            (swap! where-atm #(conj % [`(~pred-name ~@(-> pat first rest))])))
+          (swap! where-atm #(conj % pat))))
+      {:where (deref where-atm)
+       :in (into dbs (-> @pred-subs keys))
+       :pred-args (-> @pred-subs vals vec)})))
 
 ;;; ToDo: I think use of quote is problematic in all these keyword parameters.
 ;;;       I have pushed quoting down WRT qvar, but still using it here in :body and :pred-args.
 (defrewrite :QueryDef [m]
   (let [pats (->> m :patterns (filter #(= (:typ %) :QueryPattern)))]
     (if (or (not-any? #(:db %) pats) (every?  #(:db %) pats))
-      (let [{:keys [where in pred-args]} (rewrite-qform (:patterns m))]
+      (let [{:keys [where in pred-args qcall]} (rewrite-qform (:patterns|qcall m))]
       `(~'bi/query
-        {:body '~where
+        {:body ~(or qcall `(quote ~where))
          :in '~in
          :pred-args '~pred-args
          :params '~(mapv rewrite (:params m))

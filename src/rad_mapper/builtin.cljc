@@ -3,7 +3,9 @@
    Functions with names beginning with a '$' are available to the user (e.g. $filter).
    Others (such as bi/key and bi/strcat) implement other parts of the expression language
    but are not available directly to the user except through the operators (e.g. the dot, and &
-   respectively for navigation to a property and concatenation)."
+   respectively for navigation to a property and concatenation).
+
+   N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:require
    [cemerick.url                      :as url]
    #?(:clj [clojure.data.json         :as json])
@@ -63,7 +65,6 @@
 (s/def ::objects (s/and vector? (s/coll-of map? :min-count 1)))
 (s/def ::radix (s/and number? #(<= 2 % 36)))
 (s/def ::fn fn?)
-(s/def ::sbind #(-> % meta :sbind?))
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -114,9 +115,9 @@
     (jflatten (res))
     (jflatten res)))
 
-;;; It exists so that rew/wrap-non-path won't wrap it
 (defn deref$
-  "Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
+  "Dereference the $ atom.
+   Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
   ([] (containerize? @$))
   ([val] ; ToDo: Is this one ever used?
@@ -1753,8 +1754,13 @@
 ;;;      (1) the difference  between ordinary operation and *id-reduce?* reduce-db,
 ;;;      (2) the use of :db.unique/identity for 'assoc-in-like' mapping over bodies instantiated by bsets.
 ;;;      (3) the differences in how the two key positions are handled (express keys vs. qvar in key position).
-;;;      (4) the avoidance of constant keys in the DB and :redex/constant-parent (RENAME IT LIKE THIS???)
 (declare evaluate-express-body express-sub)
+
+(defn reduce-body-and-schema
+  "This is separate so that I can call it when testing.
+   It returns a map containing :reduce-body and :schema."
+  [base-body]
+  (qu/schematic-express-body base-body))
 
 (defn express
   "Return an function that either
@@ -1764,7 +1770,8 @@
         be used with binding sets.
      The function returned has meta {express? true} so that, for example, $reduce
      knows that there should be a database involved."
-  [& {:keys [params options base-body reduce-body schema key-order]}]
+  [& {:keys [params options base-body key-order]}]
+  (let [{:keys [reduce-body schema]} (reduce-body-and-schema base-body)]
     (if (empty? params)
       ;; The immediate function:
       (-> (fn [bset] (evaluate-express-body bset base-body reduce-body))
@@ -1778,8 +1785,7 @@
               (-> (fn [bset] (evaluate-express-body bset new-base-body new-reduce-body))
                   (with-meta {:bi/params '[b-set], :bi/express? true :bi/options options :bi/schema schema
                               :bi/base-body base-body :bi/reduce-body reduce-body :bi/key-order key-order}))))
-          (with-meta {:bi/express-template? true}))))
-
+          (with-meta {:bi/express-template? true})))))
 
 (defn box-vals
   "Walk through the form replacing non-map :redex/val and :redex/ek-val with boxed data."
@@ -1833,6 +1839,11 @@
 
 ;;; ToDo: I make a big show of checking that the data structure is homogeneous, then assume
 ;;;       it has just a custom-key, a :redex/more and a :redex/user-key!
+{:name "Alice",
+  :redex/ek-val "Alice",
+  :redex/more [#:redex{:bData--?name|bData "Alice|bData", :user-key "bData", :val "Alice-B-data"}],
+  :redex/user-key "name"}
+
 (defn redex-toplevel-merge
   "There can be more than one top-level entity retrieved from the DB.
    In Case 1 they are maps with the same keys, they should be merged by that key (or more precisely, by the :redex/user-key).
@@ -1851,54 +1862,65 @@
     data))
 
 (defn redex-val+
-  "Walk the object replacing :redex/val and :redex/vals with :redex/val+."
+  "Walk the object replacing :redex/val and :redex/vals with :redex/val+.
+   This simplifies the work of redex-keys-values."
   [obj]
-  (cond (map? obj)    (reduce-kv (fn [m k v] (if (#{:redex/val :redex/vals} k)
-                                               (assoc m :redex/val+ (redex-val+ v))
-                                               (assoc m k (redex-val+ v))))
-                                 {} obj)
+  (cond (map? obj)    (as-> obj ?obj
+                        (reduce-kv (fn [m k v] (if (#{:redex/val :redex/vals :redex/ek-val} k)
+                                                 (assoc m :redex/val+ (redex-val+ v))
+                                                 (assoc m k (redex-val+ v))))
+                                     {} ?obj)
+                        (dissoc ?obj :redex/val :redex/vals #_:redex/ek-val)) ; Keep ek-val for sorting.
         (vector? obj) (mapv redex-val+ obj)
         :else         obj))
 
-;;; "redex" is reduce on express body.
+(defn redex-keys?
+  "Return true if the object has redex keys."
+  [obj]
+  (and (map? obj) (some #(= "redex" (namespace %)) (keys obj))))
+
+(defn qvar-key?
+  "Return true if the object has a qvar user key. The key will be quoted." ; ToDo: quoted was a good idea because...?
+  [obj]
+  (-> obj :redex/user-key second util/qvar?))
+
+;;; "redex" is REDuce on EXpress body.
 (defn redex-keys-values
-  "Rewrite the :redex/ROOT object retrieved from the database so that it matches the shape that
+  "Rewrite the :redex/ROOT object(s) retrieved from the database so that it/they match the shape that
    was (1) encoded in the schema, and (2) built-up through objects using the reduce body.
-   Since all the work was done in those two tasks, what remains here is just to make ordinary
-   maps, vectors, and values from the retrieved content. There are three kinds of maps to deal with:
-     - The ones with express keys (have :redex/ek-val)  get their express key processed first and then their :redex/more.
+   Since those two tasks did most of the work shaping the data, what remains here is mostly just to make ordinary
+   maps, vectors, and values from the retrieved content. Buth there are a few kinds of maps to deal with:
+     - The ones with express keys (have :redex/ek-val) get their express key processed first and then their :redex/more.
      - The ones with just :redex/more are similar but the value of the :redex/user-key is the reduced :redex/more.
-     - The ones without :redex/more are maps of just one key."
+     - The ones with :redex/obj are similar the :redex/more ones, but put content into a fresh object at the key.
+     - The ones without :redex/more or :redex/obj are maps of just one key that isn't an express-key nor qvar-in-key-position.
+   Further, there can be a redex-toplevel-merge when the express form leads off with a qvar." ; ToDo: Is this the only time this kind of work is needed?
   [data]
   (swap! diag #(assoc % :redex-data data))
   (letfn [(rkv [obj]
-            (cond  (map? obj) ; 1st cond is any map, but :redex/more may be missing because empty (just map with express key).
-                   (cond (contains? obj :redex/ek-val) ; express key
-                         (reduce (fn [m attr] (merge m (rkv attr)))
-                                 (-> {(:redex/user-key obj) (:redex/ek-val obj)}
-                                     (assoc :redex/ek-val   (:redex/ek-val obj))) ; For subsequent sorting
-                                 (:redex/more obj)), ; Could be empty; then just express key and :redex/ek-val
+            (cond  (map? obj)     (cond (contains? obj :redex/more) ; :redex/more : continue 'this object'.
+                                        {(:redex/user-key obj) (reduce (fn [m attr]
+                                                                         (let [[k v] (-> attr rkv seq first)] ; It is (and map? count==1)
+                                                                           (assoc m k (rkv v))))
+                                                                       {(:redex/user-key obj) (:redex/val+ obj)}
+                                                                       (:redex/more obj))},
 
-                         (contains? obj :redex/more) ; ordinary or qvar key. Each attr defines one key and value.
-                         {(:redex/user-key obj) (reduce (fn [m attr]  ; <=============================================== remove this?
-                                                        (let [[k v] (-> attr rkv seq first)] ; It is (and map? count==1)
-                                                          (assoc m k v))) ; Not (rkv v)?
-                                                      {} ; {(:redex/user-key obj) (:redex/val obj)} ; ToDo: val and vals need to be combined. (call it :redex/val+
-                                                      (:redex/more obj))},
+                                        (contains? obj :redex/obj) ; qvar key with object value ; <====================== MAYBE NOT! =======================
+                                        {(:redex/user-key obj) (reduce (fn [m attr] (merge m (rkv attr))) {} (mapv rkv (:redex/obj obj)))},
 
-                         (contains? obj :redex/obj) ; qvar key with object value
-                         {(:redex/user-key obj) (reduce (fn [m attr] (merge m (rkv attr))) (:redex/obj obj))},
+                                        ;; leaf attrs of a map have no attrs themselves; will be merged.
+                                        (contains? obj :redex/val+) {(:redex/user-key obj) (-> obj :redex/val+ rkv)},
 
-                         ;; leaf attrs of a map have no attrs themselves; will be merged.
-                         (contains? obj :redex/val+) {(:redex/user-key obj) (-> obj :redex/val+ rkv)},
+                                        :else ; Lands here if redex-toplevel-merge found and reduced multiple toplevel DB results. ; <=================== GONE?
+                                        (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)),
 
-                         :else ; Lands here if redex-toplevel-merge found and reduced multiple toplevel DB results.
-                         (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)),
-
-                   ;; This is not going to be sufficient! <======================================================================
-                   (vector? obj) (reduce (fn [res v] (merge res (rkv v))) {} obj),
-                   :else         obj))]
-    (->> data redex-val+ redex-toplevel-merge rkv)))
+                   (vector? obj)  (if (every? redex-keys? obj) ; a vector db redex objects. ToDo: Can I assume these are homogeneous?
+                                    (if (-> obj first qvar-key?)
+                                      (reduce (fn [res v] (merge res (rkv v))) {} obj),
+                                      (mapv rkv obj))
+                                    (mapv rkv obj))
+                   :else  obj))]
+    (->> data redex-val+ #_redex-toplevel-merge rkv)))
 
 ;;; ToDo: Do sort-by-body when *in-reduce* = false. Where to put it might not be straightforward!
 (defn sort-by-body
@@ -1968,7 +1990,7 @@
       unbox
       (redex-restore-values schema)
       redex-keys-values
-      redex-rem-keys
+      redex-rem-keys ; ToDo: I don't think this should be necessary.
       (sort-by-body key-order)))
 
 (defn known-lookup?
@@ -2149,6 +2171,56 @@
           :else (throw (ex-info "Second argument to $mapObject shoud be a function of 2 or 3 arguments."
                                 {:arg-cnt arg-cnt})))))
 
+;;; $qIdent({'id' : [123, 456], 'aAttr' : {'val' : 'A-value'}}) ==> [[?e1 :id ?v1] [?e1 :aAttr ?e2] [?e2 :val ?v2]]
+(defn $qIdent
+  "Write a query that will capture all the data."
+  [data]
+  (let [ecnt   (atom 0)
+        vcnt   (atom 0)
+        res    (atom [])]
+    (letfn [(qi [obj]
+              (if (map? obj)
+                (do (swap! ecnt inc)
+                    (let [ename (-> "?e" (str @ecnt) symbol)]
+                      (doseq [[k v] (seq obj)]
+                        (if (map? v) ; ToDo: I don't need an estack e.g. (let {estack (atom '())...] do I?
+                          (do (swap! res #(conj % (with-meta [ename (keyword k) (-> "?e" (str (inc @ecnt)) symbol)]
+                                                    {:query-form? true})))
+                              (qi v))
+                          (do (swap! vcnt inc)
+                              (let [vname (-> "?v" (str @vcnt) symbol)]
+                                (swap! res #(conj % (with-meta [ename (keyword k) vname]
+                                                      {:query-form? true})))))))))
+                obj))]
+      (qi data)
+      (with-meta @res {:qident-forms? true})))) ; ToDo: Maybe qident forms should be first class data. Is it?
+
+;;; BTW, I think the task of collecting vector content belongs to redex,
+;;;      whereas the number of forms created by $map is equal to the number of bsets.
+(defn $eIdent
+  "Write an express form that, when provided with complete bsets, will express all the data."
+  [data]
+  (let [vcnt  (atom 0)]
+    (letfn [(ei [obj]
+              (cond (map? obj)      (reduce-kv (fn [m k v]
+                                                 (if (map? v)
+                                                   (assoc m k (ei v))
+                                                   (do (swap! vcnt inc)
+                                                       (assoc m k (-> "?v" (str @vcnt) symbol)))))
+                                               {}
+                                               obj)
+                    (vector? obj)   (do (swap! vcnt inc) (-> "?v" (str @vcnt) symbol))
+                    :else obj))]
+      (ei data))))
+
+(defn $identities
+  "Return a map with 'query' and 'express' keys for which the values are strings of corresponding
+   query that will capture all the data and return it as is."
+  [data]
+  {"query"   ($qIdent data)
+   "express" ($eIdent data)})
+
+;;; ===== These were conceived for the Dataweave example; they might not survive.
 (defn $reduceKV
   "Reduce INIT by calling FUN with each key/value pair of OBJ."
   [fn init coll]

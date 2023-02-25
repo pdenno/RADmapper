@@ -1,5 +1,6 @@
 (ns rad-mapper.query-test
   (:require
+   [clojure.pprint               :refer [cl-format]]
    [clojure.test :refer  [deftest is testing]]
    #?(:clj  [datahike.api         :as d]
       :cljs [datascript.core      :as d])
@@ -1123,7 +1124,6 @@
 (deftest more-and-obj
   (testing "Testing the generation of the reduce-express where nesting occurs vs. does not occur."
     (testing "Generating :redex/more; used where the attributes belong in 'this' object."
-      ;; ToDo: I am temporarily giving up in exploring why these aren't equal.
       (is (= '{:name [:redex/express-key ?name],
                :redex/user-key "name",
                :redex/ek-val ?name,
@@ -1132,11 +1132,13 @@
                         :user-key "bData",
                         :val ?bData}]}
              (-> (ev/processRM :ptag/exp "express(){{'name': key(?name), 'bData': ?bData}}" {:rewrite? true})
-                 second
+                 second ; first is call to bi/express.
+                 :base-body
+                 bi/reduce-body-and-schema
                  :reduce-body
                  unquote))))
 
-    (testing "Generating :redex/obj rather than :redex/more."
+    (testing "Generating :redex/obj for a fresh object at the key."
       (is (= '[#:redex{:?name--?name [:redex/express-key ?name],
                        :user-key ?name,
                        :obj ; <==================
@@ -1145,6 +1147,8 @@
                                 :val ?bData}]}]
              (-> (ev/processRM :ptag/exp "express{{?name : {'bData' : ?bData}}}" {:rewrite? true})
                  second
+                 :base-body
+                 bi/reduce-body-and-schema
                  :reduce-body
                  unquote))))
 
@@ -1153,11 +1157,13 @@
                #:redex{:bData--bData [:redex/express-key "bData"], :user-key "bData", :val ?bData}]
              (-> (ev/processRM :ptag/exp "express{{'name' : ?name, 'bData' : ?bData}}" {:rewrite? true})
                  second
+                 :base-body
+                 bi/reduce-body-and-schema
                  :reduce-body
                  unquote)))))
 
   (testing "Testing complete executions in these three cases."
-    (testing "express from the first one above (a :redex/more).  This one is a bit bogus as a reduce, produces a vector"
+    (testing "express from the first one above (a :redex/more).  This one is a bit bogus as a reduce, produces a vector."
       (run-test
        "($DBa := [{'email' : 'bob@example.com', 'name' : 'Bob'},
                   {'email' : 'alice@alice.org', 'name' : 'Alice'}];
@@ -1168,24 +1174,58 @@
          $eFn := express(){{'name': key(?name), 'bData': ?bData}};
          $reduce($bSet, $eFn) )"
        #{{"name" "Alice", "bData" "Alice-B-data"},
-         {"name" "Bob", "bData" "Bob-B-data"}}
+         {"name" "Bob",   "bData" "Bob-B-data"}}
        :sets? true))
 
     (testing "express from the second one above (a :redex/obj)."
       (run-test
-       "($DBa := [{'email' : 'bob@example.com', 'name' : 'Bob'},
-                  {'email' : 'alice@alice.org', 'name' : 'Alice'}];
-         $DBb := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
+       "($DBa   := [{'email' : 'bob@example.com', 'name' : 'Bob'},
+                    {'email' : 'alice@alice.org', 'name' : 'Alice'}];
+         $DBb   := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
                   {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
-         $qFn :=  query(){[$DBa ?e1 :email ?id] [$DBb ?e2 :id ?id] [$DBa ?e1 :name ?name] [$DBb ?e2 :bAttr ?bData]};
-         $bSet := $qFn($DBa, $DBb);
-         $eFn := express{{?name : {'bData' : ?bData}}};
-         $reduce($bSet, $eFn) )"
+         $qFn   :=  query(){[$DBa ?e1 :email ?id] [$DBb ?e2 :id ?id] [$DBa ?e1 :name ?name] [$DBb ?e2 :bAttr ?bData]};
+         $bSets := $qFn($DBa, $DBb);
+         $eFn   := express{{?name : {'bData' : ?bData}}};
+         $reduce($bSets, $eFn) )"
        {"alice@alice.org" {"name" "Alice", "bData" "Alice-B-data"},
-        "bob@example.com" {"name" "Bob", "bData" "Bob-B-data"}}))
+        "bob@example.com" {"name" "Bob", "bData" "Bob-B-data"}}))))
 
+(defn ident-code
+  "Returns text for execution of a $qIdent/$eIdent problem when provided with a data (which will be pprinted)."
+  [data]
+  (cl-format nil
+             " ( $data := ~A;
+   $qFn   := query{$qIdent($data)};
+   $bSets := $qFn($data);
+   $eFn   := express{$eIdent($data)};
+   $reduce($bSets, $eFn) )"
+             (ev/pprint-obj data)))
 
+(deftest query-identity
+  (testing "Testing $qIdent"
+    (testing "Testing generation of the query forms"
+    (is (= '[[?e1 :id ?v1] [?e1 :aAttr ?e2] [?e2 :aval ?v2] [?e2 :cval ?e3] [?e3 :cc-val ?v3] [?e1 :bAttr ?e4] [?e4 :bval ?v4]]
+           (ev/processRM :ptag/exp
+                         "$qIdent({'id' : [123, 456],
+                                   'aAttr' : {'aval'  : 'A-value',
+                                              'cval' : {'cc-val': 'C-value'}},
+                                   'bAttr' : {'bval' : 'B-value'}})"
+                         {:execute? true}))))
 
+    (testing "qIdent used in a query"
+      (run-test
+       "( $data  := {'id' : 123, 'aAttr' : {'val' : 'A-value'}};
+          $qFn   := query{$qIdent($data)};
+         $qFn($data) )"
+       '[{?v1 123, ?v2 "A-value"}]))
+
+    (testing "qIdent used in a query and express"
+      (run-test
+       (ident-code {"id" 123 "aAttr" {"val" "A-value"}})
+       {"id" 123, "aAttr" {"val" "A-value"}}))))
+
+(deftest redex-idents
+  (testing "Testing ability to recover data with reduce/express on identity query and express."))
 
 ;;; datalog allows you to package up sets of :where clauses into named rules.
 ;;; These rules make query logic reusable, and also composable, meaning that you can bind portions of a query's logic at query time.

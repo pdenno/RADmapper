@@ -137,7 +137,6 @@
       (finally (util/config-log min-level)))))
 
 (declare processRM)
-(def print-width (atom 80))
 
 (defn combine-code-and-data
   "Return a new problem for use with processRM consisting of the argument data and code.
@@ -242,18 +241,24 @@
     If it all fits on one line within width minus indent, print it that way.
     Else print one element per line." ; ToDo: Maybe a mode where a few are printed on each line (at least 3).
   [obj indent width]
-  (let [elem-objs (reduce (fn [res elem]
+  (let [query-form? (-> obj meta :query-form?)
+        elem-objs (reduce (fn [res elem]
                             (let [s (pprint-obj elem :width width)]
                               (conj res {:val s :len (->> s str/split-lines (map count) (apply max))})))
                           [] obj)]
     (if (>= (- width indent) (+ (apply + (map :len elem-objs)) (* (count elem-objs) 2)))
-      (cl-format nil "[~{~A~^, ~}]" (map :val elem-objs))
-      (cl-format nil "[~{~A~^,~% ~}]" (map :val elem-objs)))))
+      (if query-form?
+        (cl-format nil "[~{~A~^ ~}]" (map :val elem-objs))
+        (cl-format nil "[~{~A~^, ~}]" (map :val elem-objs)))
+      (if query-form?
+        (cl-format nil "[~{~A~^~% ~}]" (map :val elem-objs))
+        (cl-format nil "[~{~A~^,~% ~}]" (map :val elem-objs))))))
 
+(def print-width (atom 80))
 (defn pprint-obj
   "Pretty print the argument object.
    (This tries to print the content within the argument width, but because we assume
-    that there is a horizontal scrollbar, it doesn't work too hard at it!)"
+   that there is a horizontal scrollbar, it doesn't work too hard at it!)"
   [obj & {:keys [indent width depth] :or {indent 2 width @print-width depth 0}}]
   (let [strg (atom "")
         depth (atom depth)]
