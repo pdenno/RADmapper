@@ -5,26 +5,22 @@
       :cljs [datascript.core      :as d])
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
-;  #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
+   ;;  #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
+   #?(:cljs [cljs.reader])
    [rad-mapper.builtin            :as bi]
+   [rad-mapper.data-util.db-util  :as du] ; For some testing
    [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
-   [rad-mapper.db-util            :as du] ; For some testing
+   [rad-mapper.util               :as util]
    [dev.dutil :refer [run-rew]]
    [dev.dutil-util :refer [run remove-meta]]
-   #?(:clj [dev.dutil-macros :refer [run-test]]))
-#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+   #?(:clj [dev.dutil-macros :refer [run-test unquote]]))
+#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test unquote]])))
 
 (defn read-str [s]
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
-(defn vec2set
-  "Use this so that = testing on data works."
-  [obj]
-  (cond (map? obj)     (reduce-kv (fn [m k v] (assoc m k (vec2set v))) {} obj)
-        (vector? obj)  (->> (map vec2set obj) set)
-        :else          obj))
 
 ;;; ToDo: I think I intended to test whether some data (from express?) results in this?
 (def test-schema
@@ -141,13 +137,11 @@
     (is (= (-> (run "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])") set)
            #{'{?attr :person/lname, ?val "Dee"} '{?attr :person/fname, ?val "Peter"}})))
 
-
-    (testing "In-line parametric"
+  (testing "In-line parametric"
     (run-test
      "($qBob := query($name){[?e :name $name]}('Bob');
-       $qBob([{'name' : 'Bob'}]))"
+         $qBob([{'name' : 'Bob'}]))"
      [{}]))
-
 
   ;; ToDo: I think the following should work. I get a "Parse ended prematurely."
     #_(testing "Simple parameteric in-lined (double in-line)"
@@ -271,10 +265,10 @@
     (testing "Testing e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
       ;; Some issue with quotes here. Tedious!
       #_(is (= {:reduce-body
-              [#:_rm{:instance-of--instance-of (:rm/express-key "instance-of"),
+              [#:_rm{:instance-of--instance-of (:redex/express-key "instance-of"),
                      :user-key "instance-of",
                      :val '$type}
-                #:_rm{:content--content (:rm/express-key "content"),
+                #:_rm{:content--content (:redex/express-key "content"),
                       :user-key "content",
                       :val '?class-iri}],
               :params '($type),
@@ -314,15 +308,15 @@
 ;;;====================================================================
 ;;; I'm using here the OWL DB that I also use for owl-db-tools.
 ;;; To make this DB see data/testing/make-data/make_data.clj.
+;;; ----- This stuff should be done in the exerciser once it is talking to the server. -----
 
-#?(:clj
-(def db-cfg
-  {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
-   :keep-history? false
-   :schema-flexibility :write}))
-
-#?(:clj
-(def conn (-> db-cfg d/connect deref)))
+;;;#?(:clj
+;;;(def db-cfg
+;;;  {:store {:backend :file :path (str (System/getenv "HOME") "/Databases/datahike-owl-db")}
+;;;   :keep-history? false
+;;;   :schema-flexibility :write}))
+;;;
+;;;#?(:clj (def conn (-> db-cfg d/connect deref)))
 
 #_(:clj
 (def owl-test-data "the simplified objects used in the Draft OAGi Interoperable Mapping Specification example"
@@ -348,7 +342,7 @@
           (println "]"))))
 
 
-(comment (write-pretty-file "data/testing/owl-example.edn" owl-test-data))
+#_(write-pretty-file "data/testing/owl-example.edn" owl-test-data)
 
 (def owl-full-immediate "The whole thing looks like this:"
 "
@@ -940,79 +934,79 @@
   (testing "Testing rewriting of an express body"
     (is = (bi/express
            {:schema
-            '{:_rm/ROOT #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
+            '{:redex/ROOT #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
               :box/keyword-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/keyword},
-              :_rm/systems--owners|?ownerName|systems
+              :redex/systems--owners|?ownerName|systems
               {:db/unique :db.unique/identity,
                :db/valueType :db.type/string,
                :db/cardinality :db.cardinality/many,
-               :_rm/cat-key ["owners" ?ownerName "systems"],
-               :_rm/self :_rm/systems--owners|?ownerName|systems,
-               :_rm/user-key "systems"},
-              :_rm/user-key #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
+               :redex/cat-key ["owners" ?ownerName "systems"],
+               :redex/self :redex/systems--owners|?ownerName|systems,
+               :redex/user-key "systems"},
+              :redex/user-key #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
               :box/string-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
-              :_rm/?systemName--owners|?ownerName|systems|?systemName
+              :redex/?systemName--owners|?ownerName|systems|?systemName
               {:db/unique :db.unique/identity,
                :db/valueType :db.type/string,
                :db/cardinality :db.cardinality/many,
-               :_rm/cat-key ["owners" ?ownerName "systems" ?systemName],
-               :_rm/self :_rm/?systemName--owners|?ownerName|systems|?systemName,
-               :_rm/user-key ?systemName},
-              :_rm/vals #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
+               :redex/cat-key ["owners" ?ownerName "systems" ?systemName],
+               :redex/self :redex/?systemName--owners|?ownerName|systems|?systemName,
+               :redex/user-key ?systemName},
+              :redex/vals #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
               :box/boolean-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/boolean},
-              :_rm/owners--owners {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/many,
-                                   :_rm/cat-key ["owners"], :_rm/self :_rm/owners--owners, :_rm/user-key "owners"},
-              :_rm/id--owners|?ownerName|systems|?systemName|?deviceName|id
+              :redex/owners--owners {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/many,
+                                   :redex/cat-key ["owners"], :redex/self :redex/owners--owners, :redex/user-key "owners"},
+              :redex/id--owners|?ownerName|systems|?systemName|?deviceName|id
               {:db/unique :db.unique/identity,
                :db/valueType :db.type/string,
                :db/cardinality :db.cardinality/one,
-               :_rm/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName "id"],
-               :_rm/self :_rm/id--owners|?ownerName|systems|?systemName|?deviceName|id,
-               :_rm/user-key "id"},
-              :_rm/status--owners|?ownerName|systems|?systemName|?deviceName|status
+               :redex/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName "id"],
+               :redex/self :redex/id--owners|?ownerName|systems|?systemName|?deviceName|id,
+               :redex/user-key "id"},
+              :redex/status--owners|?ownerName|systems|?systemName|?deviceName|status
               {:db/unique :db.unique/identity,
                :db/valueType :db.type/string,
                :db/cardinality :db.cardinality/one,
-               :_rm/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName "status"],
-               :_rm/self :_rm/status--owners|?ownerName|systems|?systemName|?deviceName|status,
-               :_rm/user-key "status"},
+               :redex/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName "status"],
+               :redex/self :redex/status--owners|?ownerName|systems|?systemName|?deviceName|status,
+               :redex/user-key "status"},
               :box/number-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/number},
-              :_rm/val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
-              :_rm/?deviceName--owners|?ownerName|systems|?systemName|?deviceName
+              :redex/val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
+              :redex/?deviceName--owners|?ownerName|systems|?systemName|?deviceName
               {:db/unique :db.unique/identity,
                :db/valueType :db.type/string,
                :db/cardinality :db.cardinality/many,
-               :_rm/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName],
-               :_rm/self :_rm/?deviceName--owners|?ownerName|systems|?systemName|?deviceName,
-               :_rm/user-key ?deviceName},
-              :_rm/?ownerName--owners|?ownerName
+               :redex/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName],
+               :redex/self :redex/?deviceName--owners|?ownerName|systems|?systemName|?deviceName,
+               :redex/user-key ?deviceName},
+              :redex/?ownerName--owners|?ownerName
               {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/many,
-               :_rm/cat-key ["owners" ?ownerName], :_rm/self :_rm/?ownerName--owners|?ownerName, :_rm/user-key ?ownerName},
-              :_rm/attrs #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
-              :_rm/ek-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref}},
+               :redex/cat-key ["owners" ?ownerName], :redex/self :redex/?ownerName--owners|?ownerName, :redex/user-key ?ownerName},
+              :redex/more #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
+              :redex/ek-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref}},
             :reduce-body
-            '[#:_rm{:owners--owners (:rm/express-key "owners"),
+            '[#:_rm{:owners--owners (:redex/express-key "owners"),
                     :user-key "owners",
                     :attrs
-                    [#:_rm{:?ownerName--owners|?ownerName (:rm/express-key "owners" ?ownerName),
+                    [#:_rm{:?ownerName--owners|?ownerName (:redex/express-key "owners" ?ownerName),
                            :user-key ?ownerName,
                            :attrs
-                           [#:_rm{:systems--owners|?ownerName|systems (:rm/express-key "owners" ?ownerName "systems"),
+                           [#:_rm{:systems--owners|?ownerName|systems (:redex/express-key "owners" ?ownerName "systems"),
                                   :user-key "systems",
                                   :attrs
                                   [#:_rm{:?systemName--owners|?ownerName|systems|?systemName
-                                         (:rm/express-key "owners" ?ownerName "systems" ?systemName),
+                                         (:redex/express-key "owners" ?ownerName "systems" ?systemName),
                                          :user-key ?systemName,
                                          :attrs
                                          [#:_rm{:?deviceName--owners|?ownerName|systems|?systemName|?deviceName
-                                                (:rm/express-key "owners" ?ownerName "systems" ?systemName ?deviceName),
+                                                (:redex/express-key "owners" ?ownerName "systems" ?systemName ?deviceName),
                                                 :user-key ?deviceName,
                                                 :attrs
                                                 [#:_rm{:id--owners|?ownerName|systems|?systemName|?deviceName|id
-                                                       (:rm/express-key "owners" ?ownerName "systems" ?systemName ?deviceName "id"),
+                                                       (:redex/express-key "owners" ?ownerName "systems" ?systemName ?deviceName "id"),
                                                        :user-key "id", :val ?id}
                                                  #:_rm{:status--owners|?ownerName|systems|?systemName|?deviceName|status
-                                                       (:rm/express-key "owners" ?ownerName "systems" ?systemName ?deviceName "status"),
+                                                       (:redex/express-key "owners" ?ownerName "systems" ?systemName ?deviceName "status"),
                                                        :user-key "status",
                                                        :val ?status}]}]}]}]}]}],
             :params '(),
@@ -1049,6 +1043,149 @@
    [$DBa ?e1 :name  ?name]     /* So that we capture name */"
   {:rewrite? true}))
 
+(deftest from-screen
+  (testing "Testing bi/redex-keys-values, mostly"
+    (run-test
+     "($DBa := [{'email' : 'bob@example.com', 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+                {'email' : 'alice@alice.org', 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+
+       $DBb := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
+                {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
+
+       $qFn :=  query(){[$DBa ?e1 :email ?id]
+                        [$DBb ?e2 :id    ?id]
+                        [$DBa ?e1 :name  ?name]
+                        [$DBa ?e1 :aAttr ?aData]
+                        [$DBb ?e2 :bAttr ?bData]};
+
+       $bSet := $qFn($DBa, $DBb);
+
+       $eFn := express(){{'name'  : key(?name),
+                          'aData' : ?aData,
+                          'bData' : ?bData}};
+
+      $reduce($bSet, $eFn) )"
+     #{{"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"}
+       {"name" "Bob",   "aData" "Bob-A-data",   "bData" "Bob-B-data"}}
+     :sets? true)
+
+    (testing "Testing qvar-in-key-pos, but WITH key(),  which should not matter."
+      (run-test
+       "($DBa := [{'email' : 'bob@example.com', 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+                  {'email' : 'alice@alice.org', 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+
+         $DBb := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
+                  {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
+
+         $qFn :=  query(){[$DBa ?e1 :email ?id]
+                          [$DBb ?e2 :id    ?id]
+                          [$DBa ?e1 :name  ?name]
+                          [$DBa ?e1 :aAttr ?aData]
+                          [$DBb ?e2 :bAttr ?bData]};
+
+         $bSet := $qFn($DBa, $DBb);
+
+         $eFn := express(){{?id {'name'  : key(?name),
+                                 'aData' : ?aData,
+                                 'bData' : ?bData}}};
+
+        $reduce($bSet, $eFn) )"
+     #{{"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"}
+       {"name" "Bob",   "aData" "Bob-A-data",   "bData" "Bob-B-data"}}
+     :sets? true))
+
+      (testing "Testing qvar-in-key-pos, no key()."
+      (run-test
+       "($DBa := [{'email' : 'bob@example.com', 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+                  {'email' : 'alice@alice.org', 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+
+         $DBb := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
+                  {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
+
+         $qFn :=  query(){[$DBa ?e1 :email ?id]
+                          [$DBb ?e2 :id    ?id]
+                          [$DBa ?e1 :name  ?name]
+                          [$DBa ?e1 :aAttr ?aData]
+                          [$DBb ?e2 :bAttr ?bData]};
+
+         $bSet := $qFn($DBa, $DBb);
+
+         $eFn := express(){{?id {'name'  : key(?name),
+                                 'aData' : ?aData,
+                                 'bData' : ?bData}}};
+
+        $reduce($bSet, $eFn) )"
+     #{{"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"}
+       {"name" "Bob",   "aData" "Bob-A-data",   "bData" "Bob-B-data"}}
+     :sets? true))))
+
+;;; ToDo: placement of quotes is still a PITA, right?
+(deftest more-and-obj
+  (testing "Testing the generation of the reduce-express where nesting occurs vs. does not occur."
+    (testing "Generating :redex/more; used where the attributes belong in 'this' object."
+      ;; ToDo: I am temporarily giving up in exploring why these aren't equal.
+      (is (= '{:name [:redex/express-key ?name],
+               :redex/user-key "name",
+               :redex/ek-val ?name,
+               :redex/more ; <==================
+               [#:redex{:bData--?name|bData [:redex/express-key ?name "bData"],
+                        :user-key "bData",
+                        :val ?bData}]}
+             (-> (ev/processRM :ptag/exp "express(){{'name': key(?name), 'bData': ?bData}}" {:rewrite? true})
+                 second
+                 :reduce-body
+                 unquote))))
+
+    (testing "Generating :redex/obj rather than :redex/more."
+      (is (= '[#:redex{:?name--?name [:redex/express-key ?name],
+                       :user-key ?name,
+                       :obj ; <==================
+                       [#:redex{:bData--?name|bData [:redex/express-key ?name "bData"],
+                                :user-key "bData",
+                                :val ?bData}]}]
+             (-> (ev/processRM :ptag/exp "express{{?name : {'bData' : ?bData}}}" {:rewrite? true})
+                 second
+                 :reduce-body
+                 unquote))))
+
+    (testing "When there are no keys, none of this matters." ; This is Case 2 in bi/redex-toplevel-merge
+      (is (= '[#:redex{:name--name [:redex/express-key "name"], :user-key "name", :val ?name}
+               #:redex{:bData--bData [:redex/express-key "bData"], :user-key "bData", :val ?bData}]
+             (-> (ev/processRM :ptag/exp "express{{'name' : ?name, 'bData' : ?bData}}" {:rewrite? true})
+                 second
+                 :reduce-body
+                 unquote)))))
+
+  (testing "Testing complete executions in these three cases."
+    (testing "express from the first one above (a :redex/more).  This one is a bit bogus as a reduce, produces a vector"
+      (run-test
+       "($DBa := [{'email' : 'bob@example.com', 'name' : 'Bob'},
+                  {'email' : 'alice@alice.org', 'name' : 'Alice'}];
+         $DBb := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
+                  {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
+         $qFn :=  query(){[$DBa ?e1 :email ?id] [$DBb ?e2 :id ?id] [$DBa ?e1 :name ?name] [$DBb ?e2 :bAttr ?bData]};
+         $bSet := $qFn($DBa, $DBb);
+         $eFn := express(){{'name': key(?name), 'bData': ?bData}};
+         $reduce($bSet, $eFn) )"
+       #{{"name" "Alice", "bData" "Alice-B-data"},
+         {"name" "Bob", "bData" "Bob-B-data"}}
+       :sets? true))
+
+    (testing "express from the second one above (a :redex/obj)."
+      (run-test
+       "($DBa := [{'email' : 'bob@example.com', 'name' : 'Bob'},
+                  {'email' : 'alice@alice.org', 'name' : 'Alice'}];
+         $DBb := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
+                  {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
+         $qFn :=  query(){[$DBa ?e1 :email ?id] [$DBb ?e2 :id ?id] [$DBa ?e1 :name ?name] [$DBb ?e2 :bAttr ?bData]};
+         $bSet := $qFn($DBa, $DBb);
+         $eFn := express{{?name : {'bData' : ?bData}}};
+         $reduce($bSet, $eFn) )"
+       {"alice@alice.org" {"name" "Alice", "bData" "Alice-B-data"},
+        "bob@example.com" {"name" "Bob", "bData" "Bob-B-data"}}))
+
+
+
 
 ;;; datalog allows you to package up sets of :where clauses into named rules.
 ;;; These rules make query logic reusable, and also composable, meaning that you can bind portions of a query's logic at query time.
@@ -1059,121 +1196,3 @@
   (ev/processRM :ptag/exp
                 "rule{(twitter? ?c)
                       [?c :community/type :community.type/twitter]}"))
-
-(defn tryme2 []
-  (ev/processRM :ptag/exp
-"( $schemaA := {'schema_subversion':'',
-                'library_content':
-                [{'sp_name':'Invoice',
-                  'schema_complexTypes':
-                  {'model_sequence':
-                   [{'sp_name':'Invoice_ID',
-                     'sp_type':'xs:int',
-                     'sp_minOccurs':1,
-                     'sp_maxOccurs':2,
-                     'sp_function':{'fn_type':'gelem'}},
-                    {'sp_name':'Document_date',
-                     'sp_type':'US_Date',
-                     'sp_minOccurs':1,
-                     'sp_maxOccurs':1,
-                     'sp_function':{'fn_type':'gelem'}},
-                    {'sp_name':'Address',
-                     'sp_minOccurs':1,
-                     'sp_maxOccurs':1,
-                     'sp_function':{'fn_type':'gelem'}}]},
-                  'sp_function':{'fn_type':'typeRef'}},
-                 {'sp_name':'Address',
-                  'schema_complexTypes':
-                  {'model_sequence':
-                   [{'sp_name':'Address_line_1',
-                     'sp_type':'xs:string',
-                     'sp_minOccurs':1,
-                     'sp_maxOccurs':1,
-                     'sp_function':{'fn_type':'gelem'}},
-                    {'sp_name':'Address_line_2',
-                     'sp_type':'xs:string',
-                     'sp_minOccurs':1,
-                     'sp_maxOccurs':1,
-                     'sp_function':{'fn_type':'gelem'}}]},
-                  'sp_function':{'fn_type':'typeRef'}}],
-                'schema_pathname':'data/testing/elena/Company A - Invoice_xsd',
-                'schema_sdo':'unknown',
-                'schema_type':'generic_xsd-file',
-                'schema_name':'Company A - Invoice_xsd',
-                'schema_spec':'default',
-                'schema_version':''};
-
-
-   $schemaB :=  {'schema_subversion':'',
-                 'library_content':
-                 [{'sp_name':'Data',
-                   'schema_complexTypes':
-                   {'model_sequence':
-                    [{'sp_name':'Invoice',
-                      'schema_complexTypes':
-                      {'model_sequence':
-                       [{'sp_name':'Invoice_ID',
-                         'sp_type':'xs:int',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'},
-                         'doc_doc-string':
-                         'This elemet is used to define the ID of an invoice document'},
-                        {'sp_name':'Creation_date',
-                         'sp_type':'EUDateFormat',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}},
-                        {'sp_name':'Bill_to_address',
-                         'sp_type':'xs:int',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}}]},
-                      'sp_function':{'fn_type':'gelem'}},
-                     {'sp_name':'Address',
-                      'schema_complexTypes':
-                      {'model_sequence':
-                       [{'sp_name':'Address_ID',
-                         'sp_type':'xs:int',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}},
-                        {'sp_name':'Street_number',
-                         'sp_type':'xs:int',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}},
-                        {'sp_name':'Street_name',
-                         'sp_type':'xs:string',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}},
-                        {'sp_name':'City',
-                         'sp_type':'xs:string',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}},
-                        {'sp_name':'State',
-                         'sp_type':'State_list',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}},
-                        {'sp_name':'Zip_code',
-                         'sp_type':'xs:string',
-                         'sp_minOccurs':1,
-                         'sp_maxOccurs':1,
-                         'sp_function':{'fn_type':'gelem'}}]},
-                      'sp_function':{'fn_type':'gelem'}}]},
-                   'sp_function':{'fn_type':'typeRef'}}],
-                 'schema_pathname':'data/testing/elena/Company B - Invoice_xsd',
-                'schema_sdo':'unknown',
-                'schema_type':'generic_xsd-file',
-                'schema_name':'Company B - Invoice_xsd',
-               'schema_spec':'default',
-               'schema_version':''};
-
-  // [$schemaA, $schemaB].library_content.schema_complexTypes.model_sequence.sp_name )
-
-     $query([?e
-
- {:execute? true}))

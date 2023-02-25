@@ -17,24 +17,8 @@
 ;;;       The solution here might be to distinguish 'block' from primary.
 ;;;       Whatever the solution, it should fix the abomination which is bi/conditional currently.
 
-;;; from utils.cljc
-(defn nspaces
-  "Return a string of n spaces."
-  [n]
-  (reduce (fn [s _] (str s " ")) "" (range n)))
-
 (declare rewrite)
 (def diag (atom nil))
-
-(defn type? [obj type]
-  (cond (keyword? type) (= (:typ obj) type)
-        (set? type) (-> obj :typ type)
-        (map? type) (-> obj :typ type)))
-
-(defn remove-nils
-  "Remove map values that are nil."
-  [m]
-  (reduce-kv (fn [m k v] (if (= nil v) m (assoc m k v))) {} m))
 
 (def tkn2sym
   "Rewrite parser tokens as the function symbol, boolean value, or operator that they represent.
@@ -182,7 +166,7 @@
           (:kv-pairs m)))
 
 (defrewrite :KeyExp [m]
-  [:rm/express-key (rewrite (:qvar m))])
+  [:redex/express-key (rewrite (:qvar m))])
 
 (defrewrite :KVPair [m]
   [(-> m :key rewrite) (-> m :val rewrite)])

@@ -212,106 +212,106 @@
     ;; ToDo: Find where a quote is missing in the the following ;^)
     #_(is (= ('bi/express
             {:schema
-             '{:_rm/ROOT #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
+             '{:redex/ROOT #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
                :box/keyword-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/keyword},
-               :_rm/t*type--owners|?ownerName|t*type
+               :redex/t*type--owners|?ownerName|t*type
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "t/type"],
-                :_rm/self :_rm/t*type--owners|?ownerName|t*type,
-                :_rm/user-key "t/type"},
-               :owner/id {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one, :_rm/cat-key ["owners" ?ownerName], :_rm/self :owner/id, :_rm/user-key ?ownerName, :_rm/exp-key? true},
-               :_rm/user-key #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
+                :redex/cat-key ["owners" ?ownerName "t/type"],
+                :redex/self :redex/t*type--owners|?ownerName|t*type,
+                :redex/user-key "t/type"},
+               :owner/id {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/one, :redex/cat-key ["owners" ?ownerName], :redex/self :owner/id, :redex/user-key ?ownerName, :redex/exp-key? true},
+               :redex/user-key #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
                :box/string-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
-               :_rm/t*type--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|t*type
+               :redex/t*type--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|t*type
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName "t/type"],
-                :_rm/self :_rm/t*type--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|t*type,
-                :_rm/user-key "t/type"},
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName "t/type"],
+                :redex/self :redex/t*type--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|t*type,
+                :redex/user-key "t/type"},
                :system/id
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName],
-                :_rm/self :system/id,
-                :_rm/user-key ?systemName,
-                :_rm/exp-key? true},
-               :_rm/vals #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName],
+                :redex/self :system/id,
+                :redex/user-key ?systemName,
+                :redex/exp-key? true},
+               :redex/vals #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
                :box/boolean-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/boolean},
-               :_rm/owners--owners
+               :redex/owners--owners
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName],
-                :_rm/self :_rm/owners--owners,
-                :_rm/user-key "owners"},
-               :_rm/device*status--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|device*status
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName],
+                :redex/self :redex/owners--owners,
+                :redex/user-key "owners"},
+               :redex/device*status--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|device*status
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName "device/status"],
-                :_rm/self :_rm/device*status--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|device*status,
-                :_rm/user-key "device/status"},
-               :_rm/owner*systems--owners|?ownerName|owner*systems
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName "device/status"],
+                :redex/self :redex/device*status--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|device*status,
+                :redex/user-key "device/status"},
+               :redex/owner*systems--owners|?ownerName|owner*systems
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices"],
-                :_rm/self :_rm/owner*systems--owners|?ownerName|owner*systems,
-                :_rm/user-key "owner/systems"},
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices"],
+                :redex/self :redex/owner*systems--owners|?ownerName|owner*systems,
+                :redex/user-key "owner/systems"},
                :box/number-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/number},
-               :_rm/val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
-               :_rm/t*type--owners|?ownerName|owner*systems|?systemName|t*type
+               :redex/val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
+               :redex/t*type--owners|?ownerName|owner*systems|?systemName|t*type
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName "t/type"],
-                :_rm/self :_rm/t*type--owners|?ownerName|owner*systems|?systemName|t*type,
-                :_rm/user-key "t/type"},
-               :_rm/attrs #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName "t/type"],
+                :redex/self :redex/t*type--owners|?ownerName|owner*systems|?systemName|t*type,
+                :redex/user-key "t/type"},
+               :redex/more #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
                :device/id
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName],
-                :_rm/self :device/id,
-                :_rm/user-key ?deviceName,
-                :_rm/exp-key? true},
-               :_rm/ek-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
-               :_rm/system*devices--owners|?ownerName|owner*systems|?systemName|system*devices
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName],
+                :redex/self :device/id,
+                :redex/user-key ?deviceName,
+                :redex/exp-key? true},
+               :redex/ek-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
+               :redex/system*devices--owners|?ownerName|owner*systems|?systemName|system*devices
                {:db/unique :db.unique/identity,
                 :db/valueType :db.type/string,
                 :db/cardinality :db.cardinality/one,
-                :_rm/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName],
-                :_rm/self :_rm/system*devices--owners|?ownerName|owner*systems|?systemName|system*devices,
-                :_rm/user-key "system/devices"}},
+                :redex/cat-key ["owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName],
+                :redex/self :redex/system*devices--owners|?ownerName|owner*systems|?systemName|system*devices,
+                :redex/user-key "system/devices"}},
              :reduce-body
              '[#:_rm{:owners--owners (:rm/express-key "owners"),
                      :user-key "owners",
                      :attrs
                      {:owner/id (:rm/express-key "owners" ?ownerName),
-                      :_rm/user-key "owner/id",
-                      :_rm/ek-val ?ownerName,
-                      :_rm/attrs
+                      :redex/user-key "owner/id",
+                      :redex/ek-val ?ownerName,
+                      :redex/more
                       [#:_rm{:t*type--owners|?ownerName|t*type (:rm/express-key "owners" ?ownerName "t/type"), :user-key "t/type", :val "OWNER"}
                        #:_rm{:owner*systems--owners|?ownerName|owner*systems (:rm/express-key "owners" ?ownerName "owner/systems"),
                              :user-key "owner/systems",
                              :vals
                              [{:system/id (:rm/express-key "owners" ?ownerName "owner/systems" ?systemName),
-                               :_rm/user-key "system/id",
-                               :_rm/ek-val ?systemName,
-                               :_rm/attrs
+                               :redex/user-key "system/id",
+                               :redex/ek-val ?systemName,
+                               :redex/more
                                [#:_rm{:t*type--owners|?ownerName|owner*systems|?systemName|t*type (:rm/express-key "owners" ?ownerName "owner/systems" ?systemName "t/type"), :user-key "t/type", :val "SYSTEM"}
                                 #:_rm{:system*devices--owners|?ownerName|owner*systems|?systemName|system*devices (:rm/express-key "owners" ?ownerName "owner/systems" ?systemName "system/devices"),
                                       :user-key "system/devices",
                                       :vals
                                       [{:device/id (:rm/express-key "owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName),
-                                        :_rm/user-key "device/id",
-                                        :_rm/ek-val ?deviceName,
-                                        :_rm/attrs
+                                        :redex/user-key "device/id",
+                                        :redex/ek-val ?deviceName,
+                                        :redex/more
                                         [#:_rm{:t*type--owners|?ownerName|owner*systems|?systemName|system*devices|?deviceName|t*type
                                                (:rm/express-key "owners" ?ownerName "owner/systems" ?systemName "system/devices" ?deviceName "t/type"),
                                                :user-key "t/type",
