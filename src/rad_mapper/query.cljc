@@ -113,15 +113,6 @@
 
 (defn qvar? [obj] (and (symbol? obj) (starts-with? (name obj) "?")))
 
-(defn child-node-type
-  "Argument is the child node of a key (qvar, string, whatever) in the express body.
-   returned is a attribute type from the support schema."
-  [k node]
-  (cond (and (qvar? k) (map? node))  :redex/obj,
-        (map? node)                  :redex/more,
-        (vector? node)               :redex/vals,
-        :else                        :redex/val))
-
 (defn exp-key?
   "Return true when the argument looks like [:redex/express-key ?some-qvar]."
   [obj]
@@ -160,7 +151,7 @@
     (keyword nspace (string/replace (str nam) "/" "*"))
     (keyword s)))
 
-;;; Here :redex/express-key are implied by qvar; they aren't spelled out in the base-body.
+;;; (1) Here :redex/express-key are implied by qvar; they aren't spelled out in the base-body.
 ;;;              {'owners':
 ;;;                 {?ownerName:
 ;;;                    {'systems':
@@ -168,61 +159,86 @@
 ;;;                          {?deviceName : {'id'     : ?id,
 ;;;                                          'status' : ?status}}}}
 
-;;; Here you have to essentially make it look like the above plus keep extras like 'owner/id' and 'device/id'.
+;;; (2) Here you have to essentially make it look like the above and add attrs 'owner/id', system/id, and 'device/id'.
 ;;;             {"owners" [{"owner/id" [:redex/express-key ?ownerName],
 ;;;                         "systems" [{"system/id" [:redex/express-key ?systemName],
 ;;;                                     "devices" [{"device/name" [:redex/express-key ?deviceName],
 ;;;                                                 "device/id" ?id, "status" ?status}]}]}]}
+
+(defn redex-more-for-slots
+  "In the case of rather ordinary base bodies such as {'id': ?v1, 'aAttr': {'val': ?v2}},
+   the schematic-express-body function returns a vector of slots.
+   In that case, make a :redex/more, but with no :redex/user-key."
+  [reduce-body]
+  (cond (and (vector? reduce-body) (second reduce-body))     {:redex/more reduce-body}
+        (vector? reduce-body)                                (first reduce-body) ; Another sort of problem...
+        :else reduce-body))
+
+(defn child-node-type
+  "Argument is the child node of a key (qvar, string, whatever) in the express body.
+   returned is a attribute type from the support schema."
+  [k node]
+  (cond (and (map? node) (or (qvar? k) (string? k))) :redex/obj,    ; an object at this key
+        (map? node)                                  :redex/more,   ; the continuation of a object with key()
+        (vector? node)                               :redex/vals,   ; many values, of any type.
+        :else                                        :redex/val))   ; a value of any type.
+
 (defn schematic-express-body
-  "Return a map containing
-      (1) :reduce-body : the express body rewritten rewritten for use in $reduce and,
+  "Analyzing the base-body, return a map containing
+      (1) :reduce-body : the express body rewritten for use in $reduce and,
       (2) :schema a schema describing all the attributes introduced in the reduce body.
+   The reduce-body is the base-body rewritten so that it can be mapped over by bsets and the result
+   put in the database under :redex/ROOT.
+   A completely resolved and cleaned-up query of :redex/ROOT gives the effect of a reduce over the base body.
+
    The schema produced is a little bit short on information. Examples:
       (a) Some values will be qvars and thus the type won't be known until a bset applied.
       (b) Values for :redex/val and :redex/vals, though defined db/valueType db.type/ref, could be
           primitive types. When bset values are substituted, primitives for :redex/val(s) are boxed.
-   - Note that express keys can only appear in value position of the user's map but on rewriting
+   - Note that express-keys, the things produce by the user wrapping a value/qvar in key() can only appear in the
+     value position of the user's map but on rewriting
      :redex/express 'catkey' are injected for non-express key attrs and REMOVED for express-key attrs.
        - The attrs that are user-define express keys have the form:
-         {:slot-name ?qvar :redex/user-key 'slot-name' :redex/{val,vals,attrs}}
+         {:slot-name ?qvar :redex/user-key 'slot-name' :redex/{val,vals,more}}
    - The values in key-position in the base-body can be qvars strings or whatever.
-   - There is no special processing needed for qvars in key-position."
+   - There is no special processing needed for qvars in key-position; the DB assures that."
   [base-body]
   (let [key-stack (atom [])
         schema (atom support-schema)]
-    (letfn [(rb [obj] ; Here there is an express-key in a map value.
+    (letfn [(rb [obj]
               (if-let [{:keys [key-key key-val]} (and (map? obj)
                                                       (some  (fn [[k v]] (when (exp-key? v)
                                                                            {:key-key k :key-val (second v)}))
                                                              (seq obj)))]
-                ;; a key-exp
+                ;; Here because there is a key() in a map value.
                 (let [ident (db-key-ident key-key)]   ; user-defined key slots don't need fancy names, but they concatenate.
                   (swap! key-stack conj key-val)
                   (swap! schema #(assoc % ident (key-schema ident key-val @key-stack :exp-key? true)))
-                   (-> {ident `[:redex/express-key  ~@(deref key-stack)]}
-                       (assoc :redex/user-key      (-> ident str (subs 1)))
-                       (assoc :redex/ek-val        key-val)
-                       (assoc :redex/more          (rb (dissoc obj key-key))))) ; Other attrs (_:redex/attrs) is a vector of maps because...
-                                                                              ; ...each has its own data such as :redex/user-key.
-                ;; not a key-exp
-                (cond (map? obj)      (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
-                                                   (swap! key-stack conj k)
-                                                   (let [ident (schema-ident k @key-stack)
-                                                         ident-val `[:redex/express-key ~@(deref key-stack)]
-                                                         attr (child-node-type k v)
-                                                         child (rb v)
-                                                         res (conj r (-> {}
-                                                                         (assoc ident ident-val)
-                                                                         (assoc :redex/user-key k)
-                                                                         (assoc attr child)))]
-                                                     (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
-                                                     (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
-                                                     res))
-                                                 []   ; Returning a vector of maps, which in the case of (dissoc obj key-key)...
-                                                 obj) ; ...is the value of :redex/more
-                     (vector? obj)    (mapv rb obj)
-                     :else            obj)))]
-      {:reduce-body (rb base-body) ;
+                   (-> {ident `[:redex/express-key ~@(deref key-stack)]}
+                       (assoc :redex/user-key                   (-> ident str (subs 1)))
+                       (assoc :redex/ek-val                     key-val)
+                       (assoc :redex/more                       (rb (dissoc obj key-key))))) ; Other attrs (_:redex/attrs) is a vector of maps because...
+                                                                                             ; ...each has its own data such as :redex/user-key.
+                ;; not a key(); could be a qvar in key pos, etc.
+                (cond (map? obj)  (reduce-kv (fn [r k v] ; Each key is treated, qvar, string, whatever.
+                                               (swap! key-stack conj k)
+                                               (let [ident (schema-ident k @key-stack)
+                                                     ident-val `[:redex/express-key ~@(deref key-stack)]
+                                                     typ (child-node-type k v)
+                                                     val (cond-> (-> {:redex/user-key k} (assoc ident ident-val))
+                                                           (= typ :redex/obj)  (assoc :redex/obj  (as-> (rb v) ?r (if (vector? ?r) ?r (vector ?r)))),
+                                                           (= typ :redex/more) (assoc :redex/more (rb v))
+                                                           (= typ :redex/vals) (assoc :redex/vals (mapv rb v))
+                                                           (= typ :redex/val)  (assoc :redex/val  (rb v)))
+                                                     res (conj r val)]
+                                                 (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
+                                                 (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
+                                                 res))
+                                             []  ; Returning a vector of maps about slots.
+                                             obj)
+                      (vector? obj)    (mapv rb obj)
+                      :else            obj)))]
+      {:reduce-body (-> base-body rb redex-more-for-slots)
        :schema @schema})))
 
 ;;; ToDo: Check that there is at most one key at each map level. (filter instead of some).

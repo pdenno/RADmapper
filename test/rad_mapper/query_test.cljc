@@ -16,7 +16,9 @@
    [dev.dutil :refer [run-rew]]
    [dev.dutil-util :refer [run remove-meta]]
    #?(:clj [dev.dutil-macros :refer [run-test unquote]]))
-#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test unquote]])))
+  #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test unquote]])))
+
+;;; ToDo: reorder the tests in this file so that easier ones are first.
 
 (defn read-str [s]
   #?(:clj  (read-string s)
@@ -254,10 +256,16 @@
     (testing "Testing rewriting."
 
     (testing "Testing that the function has metadata."
-      (is (= '#:bi{:params [b-set], :express? true, :options nil, :schema nil,
+      (is (= '#:bi{:params [b-set],
+                   :express? true,
+                   :options nil,
                    :base-body {"instance-of" "FixedType", "content" ?content},
-                   :reduce-body nil, :key-order nil}
-             (meta efn))))
+                   :reduce-body
+                   #:redex{:more
+                           [#:redex{:user-key "instance-of", :instance-of--instance-of [:redex/express-key "instance-of"], :val "FixedType"}
+                            #:redex{:user-key "content", :content--content [:redex/express-key "content"], :val ?content}]},
+                   :key-order nil}
+             (-> efn meta (dissoc :bi/schema)))))
 
     (testing "Testing that the function is executable with a binding set, creating content."
       (is (= {"instance-of" "FixedType", "content" "someContent"}
@@ -265,17 +273,7 @@
 
     (testing "Testing e1 : rewrite for the parametric ('higher-order') is similar :params and closed over $type differ."
       ;; Some issue with quotes here. Tedious!
-      #_(is (= {:reduce-body
-              [#:_rm{:instance-of--instance-of (:redex/express-key "instance-of"),
-                     :user-key "instance-of",
-                     :val '$type}
-                #:_rm{:content--content (:redex/express-key "content"),
-                      :user-key "content",
-                      :val '?class-iri}],
-              :params '($type),
-              :key-order ["instance-of" "content"],
-              :options 'nil,
-              :base-body {"instance-of" '$type, "content" '?class-iri}}
+      (is (= '{:params '($type), :key-order ["instance-of" "content"], :options 'nil, :base-body {"instance-of" $type, "content" '?class-iri}}
              (-> (run-rew "express($type) {  {'instance-of'  : $type,
                                               'content'      : ?class-iri }
                                           }")
@@ -285,14 +283,8 @@
     (testing "Testing the function returned is higher-order..."
 
       (testing "Testing that the function has the same metadata."
-        (is (= '#:bi{:params [b-set],
-               :express? true,
-               :options nil,
-               :schema nil,
-               :base-body nil,
-               :reduce-body nil,
-               :key-order nil}
-               (meta pefn))))
+        (is (= '#:bi{:params [b-set], :express? true, :options nil, :base-body nil, :reduce-body nil, :key-order nil}
+               (-> pefn meta (dissoc :bi/schema)))))
 
       ;; ToDo: Next two need investigation.
       ;; Note that the full example of this above, simple-parameteric-express, works fine.
@@ -595,48 +587,7 @@
 ;;; ToDo: Also demonstrate query with parameter for $id.
 (deftest two-source
   (testing "Testing a simple 2-source problem."
-    (testing "Show me the data...Oops!"
-      (is (every? fn?
-                  (run "( $DBa := [{'id' : 123, 'aAttr' : 'A-value'}];
-                          $DBb := [{'id' : 123, 'bAttr' : 'B-value'}];
-
-                          $aRes := query(){[?e :aAttr ?aData]};
-                          $bRes := query(){[?e :bAttr ?bData]};
-
-                          [$aRes, $bRes] )"))))
-
-
-    (testing "Really show me the data."
-      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'A-value'}];
-                   $DBb := [{'id' : 123, 'bAttr' : 'B-value'}];
-
-                   $aFn := query(){[?e :aAttr ?aData]};
-                   $bFn := query(){[?e :bAttr ?bData]};
-
-                   $aRes := $aFn($DBa);
-                   $bRes := $bFn($DBb);
-
-                   [$aRes, $bRes] )"
-      [[{'?aData "A-value"}] [{'?bData "B-value"}]]))
-
-    (testing "Really show me the data, and BTW, use a parametric query." ; FIX THIS??? Maybe skip this one in presentation.
-      (run-test
-        "( $DBa := [{'id' : 123, 'aAttr' : 'A-data'}];
-           $DBb := [{'id' : 123, 'bAttr' : 'B-data'}];
-
-           $pFnT := query($vAttr){[?e $vAttr ?data]     /* Send a qvar here??? */
-                                  [?e :id    ?id]};
-
-           $qaFn := $pFnT(:aAttr);
-           $qbFn := $pFnT(:bAttr);
-
-           $aRes := $qaFn($DBa);
-           $bRes := $qbFn($DBb);
-
-           [$aRes, $bRes] )"
-        [[{'?data "A-data", '?id 123}] [{'?data "B-data", '?id 123}]]))
-
-    (testing "The above isn't what you want! You want to query both DBs TOGETHER."
+    (testing "Testing query on both DBs."
       (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'A-data'}];
                    $DBb := [{'id' : 123, 'bAttr' : 'B-data'}];
 
@@ -648,8 +599,8 @@
                    $qFn($DBa, $DBb) )"
                 [{'?id 123, '?aData "A-data", '?bData "B-data"}]))
 
-    ;; ToDo: Use one "$Dba" to test argument counting!
-    (testing "Similar to the above, but parametric for Bob only."
+    ;; ToDo: Use one "$Dba" to test argument counting.
+    (testing "Testing query parameteric $name."
       (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
 
@@ -668,9 +619,20 @@
                     $qFn($DBa, $DBb) )"
                 '[{?id 123, ?name "Bob", ?aData "Bob-A-data", ?bData "Bob-B-data"}]))
 
-    ;; Illustrate swapping to $map with this one.
+    (testing "Small test through to $reduce."
+      (run-test "( $bSets := [{?id : 123, ?name : 'Bob',   ?aData : 'Bob-A-data',   ?bData : 'Bob-B-data'},
+                              {?id : 234, ?name : 'Alice', ?aData : 'Alice-A-data', ?bData : 'Alice-B-data'}];
+
+                  $eFn := express(){{?name : {'bData' : ?bData}}};
+
+                  $reduce($bSets, $eFn) )"
+
+                {"Alice" {"bData" "Alice-B-data"},
+                 "Bob"   {"bData" "Bob-B-data"}}))
+
+
     (testing "Now we express the result by processing the b-sets."
-      (run-test      "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+      (run-test "( $DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
                             {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
 
                    $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
@@ -687,7 +649,6 @@
                    $eFn := express{{?name : {'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}}};
 
                    $reduce($bSets, $eFn) )"
-
 
                 {"Alice" {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234},
                  "Bob"   {"aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}}))
@@ -753,7 +714,6 @@
              {"QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction" {"Instruction" "some instruction"}}},
           "QIFPlan/ActionMethods" {"QIFPlan/ActionMethods/ActionMethod" {"Method" "some method"}}}))))
 
-
 (deftest express-body-map
   (testing "Testing mapping over an express body"
     (is (=
@@ -793,7 +753,7 @@
                        {?deviceName : 'device2', ?id : 200}],
                       express{{'device/id' : key(?id)}})"
 
-               [{"device/id" 100} {"device/id" 200}]))
+                [{"device/id" 100} {"device/id" 200}]))
 
     (testing "Testing Type 2 (qvar-in-key-pos) -- vector."
        (run-test "$map([{?deviceName : 'device1', ?id : 100},
@@ -835,12 +795,13 @@
                                                                                 'device/name'   : ?deviceName,
                                                                                 'device/status' : ?status}]}]}]}})"
                 {"owners"
-                 [{"owner/id" "owner1",
-                   "systems" [{"system/id" "system1",
-                               "devices" [{"device/id" 100, "device/name" "device1", "device/status" "Ok"}]}]}
+                 #{{"owner/id" "owner1",
+                   "systems" #{{"system/id" "system1",
+                               "devices" #{{"device/id" 100, "device/name" "device1", "device/status" "Ok"}}}}}
                   {"owner/id" "owner2",
-                   "systems" [{"system/id" "system2",
-                               "devices" [{"device/id" 800, "device/name" "device8", "device/status" "Ok"}]}]}]}))))
+                   "systems" #{{"system/id" "system2",
+                               "devices" #{{"device/id" 800, "device/name" "device8", "device/status" "Ok"}}}}}}}
+                :sets? true))))
 
 (deftest express-body-reduce-medium-type2
   (testing "Test medium-sized express body $reduce / $maps with various body topology."
@@ -931,100 +892,6 @@
                                              "system2" {"device7" {"id" 700, "status" "Ok"},
                                                         "device8" {"id" 800, "status" "Ok"}}}}}})))
 
-(deftest express-body-rewriting []
-  (testing "Testing rewriting of an express body"
-    (is = (bi/express
-           {:schema
-            '{:redex/ROOT #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
-              :box/keyword-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/keyword},
-              :redex/systems--owners|?ownerName|systems
-              {:db/unique :db.unique/identity,
-               :db/valueType :db.type/string,
-               :db/cardinality :db.cardinality/many,
-               :redex/cat-key ["owners" ?ownerName "systems"],
-               :redex/self :redex/systems--owners|?ownerName|systems,
-               :redex/user-key "systems"},
-              :redex/user-key #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
-              :box/string-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/string},
-              :redex/?systemName--owners|?ownerName|systems|?systemName
-              {:db/unique :db.unique/identity,
-               :db/valueType :db.type/string,
-               :db/cardinality :db.cardinality/many,
-               :redex/cat-key ["owners" ?ownerName "systems" ?systemName],
-               :redex/self :redex/?systemName--owners|?ownerName|systems|?systemName,
-               :redex/user-key ?systemName},
-              :redex/vals #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
-              :box/boolean-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/boolean},
-              :redex/owners--owners {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/many,
-                                   :redex/cat-key ["owners"], :redex/self :redex/owners--owners, :redex/user-key "owners"},
-              :redex/id--owners|?ownerName|systems|?systemName|?deviceName|id
-              {:db/unique :db.unique/identity,
-               :db/valueType :db.type/string,
-               :db/cardinality :db.cardinality/one,
-               :redex/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName "id"],
-               :redex/self :redex/id--owners|?ownerName|systems|?systemName|?deviceName|id,
-               :redex/user-key "id"},
-              :redex/status--owners|?ownerName|systems|?systemName|?deviceName|status
-              {:db/unique :db.unique/identity,
-               :db/valueType :db.type/string,
-               :db/cardinality :db.cardinality/one,
-               :redex/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName "status"],
-               :redex/self :redex/status--owners|?ownerName|systems|?systemName|?deviceName|status,
-               :redex/user-key "status"},
-              :box/number-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/number},
-              :redex/val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref},
-              :redex/?deviceName--owners|?ownerName|systems|?systemName|?deviceName
-              {:db/unique :db.unique/identity,
-               :db/valueType :db.type/string,
-               :db/cardinality :db.cardinality/many,
-               :redex/cat-key ["owners" ?ownerName "systems" ?systemName ?deviceName],
-               :redex/self :redex/?deviceName--owners|?ownerName|systems|?systemName|?deviceName,
-               :redex/user-key ?deviceName},
-              :redex/?ownerName--owners|?ownerName
-              {:db/unique :db.unique/identity, :db/valueType :db.type/string, :db/cardinality :db.cardinality/many,
-               :redex/cat-key ["owners" ?ownerName], :redex/self :redex/?ownerName--owners|?ownerName, :redex/user-key ?ownerName},
-              :redex/more #:db{:cardinality :db.cardinality/many, :valueType :db.type/ref},
-              :redex/ek-val #:db{:cardinality :db.cardinality/one, :valueType :db.type/ref}},
-            :reduce-body
-            '[#:_rm{:owners--owners (:redex/express-key "owners"),
-                    :user-key "owners",
-                    :attrs
-                    [#:_rm{:?ownerName--owners|?ownerName (:redex/express-key "owners" ?ownerName),
-                           :user-key ?ownerName,
-                           :attrs
-                           [#:_rm{:systems--owners|?ownerName|systems (:redex/express-key "owners" ?ownerName "systems"),
-                                  :user-key "systems",
-                                  :attrs
-                                  [#:_rm{:?systemName--owners|?ownerName|systems|?systemName
-                                         (:redex/express-key "owners" ?ownerName "systems" ?systemName),
-                                         :user-key ?systemName,
-                                         :attrs
-                                         [#:_rm{:?deviceName--owners|?ownerName|systems|?systemName|?deviceName
-                                                (:redex/express-key "owners" ?ownerName "systems" ?systemName ?deviceName),
-                                                :user-key ?deviceName,
-                                                :attrs
-                                                [#:_rm{:id--owners|?ownerName|systems|?systemName|?deviceName|id
-                                                       (:redex/express-key "owners" ?ownerName "systems" ?systemName ?deviceName "id"),
-                                                       :user-key "id", :val ?id}
-                                                 #:_rm{:status--owners|?ownerName|systems|?systemName|?deviceName|status
-                                                       (:redex/express-key "owners" ?ownerName "systems" ?systemName ?deviceName "status"),
-                                                       :user-key "status",
-                                                       :val ?status}]}]}]}]}]}],
-            :params '(),
-            :key-order ["owners" "systems" "id" "status"],
-            :options 'nil,
-            :base-body '{"owners" {?ownerName {"systems" {?systemName {?deviceName {"id" ?id, "status" ?status}}}}}}}
-
-        (ev/processRM :ptag/exp
-                      "express()
-                           {  {'owners':
-                                  {?ownerName:
-                                    {'systems':
-                                       {?systemName:
-                                          {?deviceName : {'id'     : ?id,
-                                                          'status' : ?status}}}}}}
-                           }"
-                 {:rewrite? true})))))
 
 ;;; For clojure; Kaocha does this better!
 (defn check-all-express []
@@ -1034,8 +901,7 @@
    :express-body-reduce-medium-type2   (express-body-reduce-medium-type2)
    :express-body-reduce-medium-mixed   (express-body-reduce-medium-mixed)
    :express-body-reduce-type1          (express-body-reduce-type1)
-   :express-body-reduce-type2          (express-body-reduce-type2)
-   :express-body-rewriting             (express-body-rewriting)})
+   :express-body-reduce-type2          (express-body-reduce-type2)})
 
 (defn parse-test-not-here []
   (ev/processRM :ptag/query-patterns
@@ -1066,9 +932,8 @@
                           'bData' : ?bData}};
 
       $reduce($bSet, $eFn) )"
-     #{{"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"}
-       {"name" "Bob",   "aData" "Bob-A-data",   "bData" "Bob-B-data"}}
-     :sets? true)
+     [{"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"}
+      {"name" "Bob", "aData" "Bob-A-data", "bData" "Bob-B-data"}]))
 
     (testing "Testing qvar-in-key-pos, but WITH key(),  which should not matter."
       (run-test
@@ -1086,14 +951,14 @@
 
          $bSet := $qFn($DBa, $DBb);
 
-         $eFn := express(){{?id {'name'  : key(?name),
-                                 'aData' : ?aData,
-                                 'bData' : ?bData}}};
+         $eFn := express(){{?id : {'name'  : key(?name),
+                                   'aData' : ?aData,
+                                   'bData' : ?bData}}};
 
         $reduce($bSet, $eFn) )"
-     #{{"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"}
-       {"name" "Bob",   "aData" "Bob-A-data",   "bData" "Bob-B-data"}}
-     :sets? true))
+       {"alice@alice.org" {"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"},
+        "bob@example.com" {"name" "Bob", "aData" "Bob-A-data", "bData" "Bob-B-data"}}))
+
 
       (testing "Testing qvar-in-key-pos, no key()."
       (run-test
@@ -1111,14 +976,13 @@
 
          $bSet := $qFn($DBa, $DBb);
 
-         $eFn := express(){{?id {'name'  : key(?name),
-                                 'aData' : ?aData,
-                                 'bData' : ?bData}}};
+         $eFn := express(){{?id : {'name'  : key(?name),
+                                   'aData' : ?aData,
+                                   'bData' : ?bData}}};
 
         $reduce($bSet, $eFn) )"
-     #{{"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"}
-       {"name" "Bob",   "aData" "Bob-A-data",   "bData" "Bob-B-data"}}
-     :sets? true))))
+       {"alice@alice.org" {"name" "Alice", "aData" "Alice-A-data", "bData" "Alice-B-data"},
+        "bob@example.com" {"name" "Bob", "aData" "Bob-A-data", "bData" "Bob-B-data"}})))
 
 ;;; ToDo: placement of quotes is still a PITA, right?
 (deftest more-and-obj
@@ -1127,40 +991,35 @@
       (is (= '{:name [:redex/express-key ?name],
                :redex/user-key "name",
                :redex/ek-val ?name,
-               :redex/more ; <==================
-               [#:redex{:bData--?name|bData [:redex/express-key ?name "bData"],
-                        :user-key "bData",
-                        :val ?bData}]}
+               :redex/more [#:redex{:bData--?name|bData [:redex/express-key ?name "bData"], :user-key "bData", :val ?bData}]}
              (-> (ev/processRM :ptag/exp "express(){{'name': key(?name), 'bData': ?bData}}" {:rewrite? true})
                  second ; first is call to bi/express.
                  :base-body
+                 unquote
                  bi/reduce-body-and-schema
-                 :reduce-body
-                 unquote))))
+                 :reduce-body))))
 
     (testing "Generating :redex/obj for a fresh object at the key."
-      (is (= '[#:redex{:?name--?name [:redex/express-key ?name],
-                       :user-key ?name,
-                       :obj ; <==================
-                       [#:redex{:bData--?name|bData [:redex/express-key ?name "bData"],
-                                :user-key "bData",
-                                :val ?bData}]}]
+      (is (= '#:redex{:user-key ?name,
+                      :?name--?name [:redex/express-key ?name],
+                      :obj [#:redex{:user-key "bData", :bData--?name|bData [:redex/express-key ?name "bData"], :val ?bData}]}
              (-> (ev/processRM :ptag/exp "express{{?name : {'bData' : ?bData}}}" {:rewrite? true})
                  second
                  :base-body
+                 unquote
                  bi/reduce-body-and-schema
-                 :reduce-body
-                 unquote))))
+                 :reduce-body))))
 
     (testing "When there are no keys, none of this matters." ; This is Case 2 in bi/redex-toplevel-merge
-      (is (= '[#:redex{:name--name [:redex/express-key "name"], :user-key "name", :val ?name}
-               #:redex{:bData--bData [:redex/express-key "bData"], :user-key "bData", :val ?bData}]
+      (is (= '#:redex{:more
+                      [#:redex{:user-key "name", :name--name [:redex/express-key "name"], :val ?name}
+                       #:redex{:user-key "bData", :bData--bData [:redex/express-key "bData"], :val ?bData}]}
              (-> (ev/processRM :ptag/exp "express{{'name' : ?name, 'bData' : ?bData}}" {:rewrite? true})
                  second
                  :base-body
+                 unquote
                  bi/reduce-body-and-schema
-                 :reduce-body
-                 unquote)))))
+                 :reduce-body))))))
 
   (testing "Testing complete executions in these three cases."
     (testing "express from the first one above (a :redex/more).  This one is a bit bogus as a reduce, produces a vector."
@@ -1182,13 +1041,27 @@
        "($DBa   := [{'email' : 'bob@example.com', 'name' : 'Bob'},
                     {'email' : 'alice@alice.org', 'name' : 'Alice'}];
          $DBb   := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
-                  {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
+                    {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];
          $qFn   :=  query(){[$DBa ?e1 :email ?id] [$DBb ?e2 :id ?id] [$DBa ?e1 :name ?name] [$DBb ?e2 :bAttr ?bData]};
          $bSets := $qFn($DBa, $DBb);
          $eFn   := express{{?name : {'bData' : ?bData}}};
          $reduce($bSets, $eFn) )"
-       {"alice@alice.org" {"name" "Alice", "bData" "Alice-B-data"},
-        "bob@example.com" {"name" "Bob", "bData" "Bob-B-data"}}))))
+       {"Alice" {"bData" "Alice-B-data"},
+        "Bob"   {"bData" "Bob-B-data"}}))
+
+
+    (testing "like above but with deeper data."
+      (run-test
+       "($DBa   := [{'email' : 'bob@example.com', 'name' : 'Bob'},
+                    {'email' : 'alice@alice.org', 'name' : 'Alice'}];
+         $DBb   := [{'id' : 'bob@example.com', 'bAttr' : {'b1' : 'Bob-B1-data',   'b2' : 'Bob-B2-data'  }},
+                    {'id' : 'alice@alice.org', 'bAttr' : {'b1' : 'Alice-B1-data', 'b2' : 'Alice-B2-data'}}];
+         $qFn   :=  query{[$DBa ?e1 :email ?id] [$DBb ?e2 :id ?id] [$DBa ?e1 :name ?name] [$DBb ?e2 :bAttr ?e3] [$DBb ?e3 :b1 ?b1] [$DBb ?e3 :b2 ?b2]};
+         $bSets := $qFn($DBa, $DBb);
+         $eFn   := express{{?name : {'bData' : {'b1': ?b1, 'b2': ?b2}}}};
+         $reduce($bSets, $eFn) )"
+       [{"Bob"   {"bData" {"b1" "Bob-B1-data",   "b2" "Bob-B2-data"}}}
+        {"Alice" {"bData" {"b1" "Alice-B1-data", "b2" "Alice-B2-data"}}}])))
 
 (defn ident-code
   "Returns text for execution of a $qIdent/$eIdent problem when provided with a data (which will be pprinted)."
@@ -1223,6 +1096,37 @@
       (run-test
        (ident-code {"id" 123 "aAttr" {"val" "A-value"}})
        {"id" 123, "aAttr" {"val" "A-value"}}))))
+
+
+(deftest reduce-bodies
+  (testing "Testing reduce bodies."
+    (testing "simple object; it is just a vector of it kv pairs."
+      (is (= '#:redex{:more [#:redex{:user-key ?v1, :?v1--?v1 [:redex/express-key ?v1], :val "val1"}
+                             #:redex{:user-key ?v2, :?v2--?v2 [:redex/express-key ?v2], :val "val2"}]}
+             (-> (qu/schematic-express-body '{?v1 "val1" ?v2 "val2"}) :reduce-body))))
+
+    (testing "simple nested obj"
+      (is (= '#:redex{:user-key ?v1,
+                      :?v1--?v1 [:redex/express-key ?v1],
+                      :obj [#:redex{:user-key "value", :value--?v1|value [:redex/express-key ?v1 "value"], :val ?v2}]}
+             (-> (qu/schematic-express-body '{?v1 {"value" ?v2}}) :reduce-body))))
+
+    (testing "keyed obj, for example, {'owner/id' : key(?owner), 'owner/name' : ?name}; base-body has a e-k in it."
+      (is (= '{:owner/id [:redex/express-key ?owner],
+               :redex/user-key "owner/id",
+               :redex/ek-val ?owner,
+               :redex/more [#:redex{:owner*name--?owner|owner*name [:redex/express-key ?owner "owner/name"], :user-key "owner/name", :val ?name}]}
+             (-> (qu/schematic-express-body '{"owner/id" [:redex/express-key ?owner], "owner/name" ?name}) :reduce-body))))
+
+    (testing "nested obj"
+      (is (= '#:redex{:user-key ?systemName,
+                      :?systemName--?systemName [:redex/express-key ?systemName],
+                      :obj
+                      [#:redex{:user-key ?deviceName,
+                               :?deviceName--?systemName|?deviceName [:redex/express-key ?systemName ?deviceName],
+                               :obj
+                               [#:redex{:user-key "id", :id--?systemName|?deviceName|id [:redex/express-key ?systemName ?deviceName "id"], :val ?id}]}]}
+             (-> (qu/schematic-express-body '{?systemName {?deviceName {"id" ?id}}}) :reduce-body))))))
 
 (deftest redex-idents
   (testing "Testing ability to recover data with reduce/express on identity query and express."))

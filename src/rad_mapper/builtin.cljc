@@ -1756,12 +1756,24 @@
 ;;;      (3) the differences in how the two key positions are handled (express keys vs. qvar in key position).
 (declare evaluate-express-body express-sub)
 
+;;; base-body = {"id" '?v1, "aAttr" {"val" '?v2}}
 (defn reduce-body-and-schema
   "This is separate so that I can call it when testing.
    It returns a map containing :reduce-body and :schema."
   [base-body]
-  (qu/schematic-express-body base-body))
+  (qu/schematic-express-body base-body)
+  #_(let [res (qu/schematic-express-body base-body)
+          sub-body
+          '#:redex{:obj [#:redex{:?name--?name [:redex/express-key ?name],
+                                 :user-key ?name,
+                                 :val
+                                 #:redex{:obj [#:redex{:aData--?name|aData [:redex/express-key ?name "aData"], :user-key "aData", :val ?aData}
+                                               #:redex{:bData--?name|bData [:redex/express-key ?name "bData"], :user-key "bData", :val ?bData}
+                                               #:redex{:id--?name|id [:redex/express-key ?name "id"], :user-key "id", :val ?id}]}}]}]
+    (swap! diag #(assoc % :reduce-body sub-body))
+    (assoc res :reduce-body sub-body)))
 
+;;; ToDo: It may be possible to push the reduce deeper, so it is in evaluate-express-body, but I'm not sure that's an improvement.
 (defn express
   "Return an function that either
     (1) has no template variable and can be used directly with a binding set, or
@@ -1837,40 +1849,15 @@
                   :else x))]
     (es-aux form)))
 
-;;; ToDo: I make a big show of checking that the data structure is homogeneous, then assume
-;;;       it has just a custom-key, a :redex/more and a :redex/user-key!
-{:name "Alice",
-  :redex/ek-val "Alice",
-  :redex/more [#:redex{:bData--?name|bData "Alice|bData", :user-key "bData", :val "Alice-B-data"}],
-  :redex/user-key "name"}
-
-(defn redex-toplevel-merge
-  "There can be more than one top-level entity retrieved from the DB.
-   In Case 1 they are maps with the same keys, they should be merged by that key (or more precisely, by the :redex/user-key).
-   In Case 2 they are :redex/user-key :redex/val+ pairs and can merge."
-  [data]
-  (if (and (vector? data) (second data))
-    (let [key-set (-> data first keys set)]
-      (cond #_(every? #(and (map? %) (= key-set (-> % keys set))) data) ; Case 1:
-            #_(reduce (fn [res obj] (assoc res (:redex/user-key obj) (or (:redex/obj obj) (:redex/more obj))))
-                      {} data),
-
-            (every? #(and (map? %) (contains? % :redex/user-key) (contains? % :redex/val+)) data) ; Case 2
-            (reduce (fn [res obj] (assoc res (:redex/user-key obj) (:redex/val obj))) {} data),
-
-            :else data))
-    data))
-
 (defn redex-val+
   "Walk the object replacing :redex/val and :redex/vals with :redex/val+.
    This simplifies the work of redex-keys-values."
   [obj]
-  (cond (map? obj)    (as-> obj ?obj
-                        (reduce-kv (fn [m k v] (if (#{:redex/val :redex/vals :redex/ek-val} k)
-                                                 (assoc m :redex/val+ (redex-val+ v))
-                                                 (assoc m k (redex-val+ v))))
-                                     {} ?obj)
-                        (dissoc ?obj :redex/val :redex/vals #_:redex/ek-val)) ; Keep ek-val for sorting.
+  (cond (map? obj)    (reduce-kv (fn [m k v] (if (#{:redex/val :redex/vals :redex/ek-val} k)
+                                               (cond-> (assoc m :redex/val+ (redex-val+ v))
+                                                 (= :redex/ek-val k) (assoc :redex/ek-val v)) ; for sorting later
+                                               (assoc m k (redex-val+ v))))
+                                 {} obj)
         (vector? obj) (mapv redex-val+ obj)
         :else         obj))
 
@@ -1884,6 +1871,19 @@
   [obj]
   (-> obj :redex/user-key second util/qvar?))
 
+(defn merge-cond?
+  "Return true if the results of rkv from multiple EIDs can be merged"
+  [data+ reduce-body]
+  (or (and (map? reduce-body) (-> reduce-body :redex/user-key util/qvar?))
+      (when (second data+)
+        (or
+         ;; They are qvar in key pos.
+         (and (-> data+ first map?)
+              (-> data+ first (contains? :redex/obj))
+              (->> reduce-body :redex/obj (every? #(-> % :redex/user-key qvar?))))
+         ;; They are slot values
+         (not-any? #(or (contains? % :redex/more) (contains? % :redex/obj)) data+)))))
+
 ;;; "redex" is REDuce on EXpress body.
 (defn redex-keys-values
   "Rewrite the :redex/ROOT object(s) retrieved from the database so that it/they match the shape that
@@ -1895,24 +1895,26 @@
      - The ones with :redex/obj are similar the :redex/more ones, but put content into a fresh object at the key.
      - The ones without :redex/more or :redex/obj are maps of just one key that isn't an express-key nor qvar-in-key-position.
    Further, there can be a redex-toplevel-merge when the express form leads off with a qvar." ; ToDo: Is this the only time this kind of work is needed?
-  [data]
+  [data reduce-body]
   (swap! diag #(assoc % :redex-data data))
-  (letfn [(rkv [obj]
+  (letfn [(add-ek-val? [making src] (if-let [ekv (:redex/ek-val src)] (assoc making :redex/ek-val ekv) making)) ; maintain :ek-val for sorting.
+          (rkv [obj]
             (cond  (map? obj)     (cond (contains? obj :redex/more) ; :redex/more : continue 'this object'.
-                                        {(:redex/user-key obj) (reduce (fn [m attr]
-                                                                         (let [[k v] (-> attr rkv seq first)] ; It is (and map? count==1)
-                                                                           (assoc m k (rkv v))))
-                                                                       {(:redex/user-key obj) (:redex/val+ obj)}
-                                                                       (:redex/more obj))},
+                                        (reduce (fn [m attr] (merge m (rkv attr)))
+                                                (cond-> {} ; more without user-key is case for simple map, e.g. {'id': ?v1, 'aAttr': {'val': ?v2}}
+                                                  (:redex/user-key obj) (assoc (:redex/user-key obj) (:redex/val+ obj))
+                                                  true (add-ek-val? obj))
+                                                (:redex/more obj)),
 
-                                        (contains? obj :redex/obj) ; qvar key with object value ; <====================== MAYBE NOT! =======================
-                                        {(:redex/user-key obj) (reduce (fn [m attr] (merge m (rkv attr))) {} (mapv rkv (:redex/obj obj)))},
+                                          (contains? obj :redex/obj) ; Then obj is a key with an object (:obj) value
+                                          {(:redex/user-key obj) ; The :obj things are slots (ALWAYS, thus merge okay); their values can be anything.
+                                           (reduce (fn [m attr] (merge m (rkv attr))) {} (:redex/obj obj))}
 
                                         ;; leaf attrs of a map have no attrs themselves; will be merged.
-                                        (contains? obj :redex/val+) {(:redex/user-key obj) (-> obj :redex/val+ rkv)},
+                                        (contains? obj :redex/user-key)
+                                        (-> {(:redex/user-key obj) (-> obj :redex/val+ rkv)} (add-ek-val? obj))
 
-                                        :else ; Lands here if redex-toplevel-merge found and reduced multiple toplevel DB results. ; <=================== GONE?
-                                        (reduce-kv (fn [m k v] (assoc m k (rkv v))) {} obj)),
+                                        :else (-> obj :redex/val+ rkv))
 
                    (vector? obj)  (if (every? redex-keys? obj) ; a vector db redex objects. ToDo: Can I assume these are homogeneous?
                                     (if (-> obj first qvar-key?)
@@ -1920,7 +1922,10 @@
                                       (mapv rkv obj))
                                     (mapv rkv obj))
                    :else  obj))]
-    (->> data redex-val+ #_redex-toplevel-merge rkv)))
+    (let [data+  (redex-val+ data)]
+      (cond (== 1 (count data+))                           (-> data+ first rkv),
+            (merge-cond? data+ reduce-body)                (->> data+ (map rkv) (apply merge)),
+            :else                                          (mapv rkv data+)))))
 
 ;;; ToDo: Do sort-by-body when *in-reduce* = false. Where to put it might not be straightforward!
 (defn sort-by-body
@@ -1967,15 +1972,6 @@
                     :else          obj))]
       (rrv data))))
 
-(defn redex-rem-keys
-  "At this point in processing, any remaining DB keys are removed."
-  [obj]
-  (letfn [(rrk [obj]
-            (cond (map? obj)     (reduce-kv (fn [m k v] (if (#{:redex/user-key :redex/ek-val} k) m (assoc m k (rrk v)))) {} obj)
-                  (vector? obj)  (mapv rrk obj)
-                  :else obj))]
-    (rrk obj)))
-
 (defn redex-data-cleanup
   "Return the evaluated express body in the form expected of output from $reduce on
    and express body. This entails:
@@ -1985,12 +1981,12 @@
      4) and (by default), things sorted nicely.
    schema argument should be 'full-schema' (containing :_rm entries).
    key-order argument is the order of keys found in the base body."
-  [data key-order schema]
+  [data key-order schema reduce-body]
   (-> data
       unbox
       (redex-restore-values schema)
-      redex-keys-values
-      redex-rem-keys ; ToDo: I don't think this should be necessary.
+      (redex-keys-values reduce-body)
+      #_redex-rem-keys ; ToDo: I don't think this should be necessary.
       (sort-by-body key-order)))
 
 (defn known-lookup?
@@ -2078,12 +2074,14 @@
 (defn reduce-express
   "This function performs $reduce on an express function; *in-reduce?* = true.
    Prior to this call, query/schematic-express-body defined metadata (:bi/reduce-body and :bi/schema).
-   The data is built-up according to this schema and the b-sets. The data is set to the value of :redex/ROOT.
+   These two are produced by calling bi/reduce-body-and-schema with the sole argument being the base-body.
+   The data is built-up according to the schema, the reduce-body and the b-sets.
+   The data is set to the value of :redex/ROOT.
    Lookup-refs are used, and the data is pushed into a database. The ROOT is pulled back, and cleaned up.
    The result is the value of the the express body reduced by the data."
   ([b-sets efn] (reduce-express b-sets efn {}))
   ([b-sets efn _init] ; ToDo: Don't know what to do with the init!
-   (let [full-schema (-> efn meta :bi/schema (update-schema-for-bsets b-sets))
+   (let [full-schema (update-schema-for-bsets (-> efn meta :bi/schema) b-sets)
          base-data   (->> (mapv efn b-sets) walk/keywordize-keys)
          lookup-refs (create-lookup-refs full-schema base-data (util/cljs?))
          data        (data-with-lookups full-schema base-data)
@@ -2115,8 +2113,8 @@
      ;; What the data indicates is that "more than one thing can have a :redex/ROOT". Hard to argue with that!
      (let [root-eids (d/q '[:find [?ref ...] :where [?top :redex/ROOT ?ref]] @db-atm)
            pre-clean (mapv #(du/resolve-db-id {:db/id %} db-atm #{:db/id}) root-eids)]
-       (swap! diag #(-> % (assoc :root-eids root-eids) (assoc :pre-clean pre-clean)))
-       (redex-data-cleanup pre-clean (-> efn meta :bi/key-order) full-schema)))))
+       (swap! diag #(-> % (assoc :root-eids root-eids) (assoc :db-atm db-atm) (assoc :pre-clean pre-clean)))
+       (redex-data-cleanup pre-clean (-> efn meta :bi/key-order) full-schema (-> efn meta :bi/reduce-body))))))
 
 ;;;---- not express ------------
 ;;; ToDo: update the schema. This doesn't yet do what its doc-string says it does!
