@@ -15,30 +15,12 @@
    [rad-mapper.util               :as util]
    [dev.dutil :refer [run-rew]]
    [dev.dutil-util :refer [run remove-meta]]
-   #?(:clj [dev.dutil-macros :refer [run-test unquote]]))
-  #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test unquote]])))
-
-;;; ToDo: reorder the tests in this file so that easier ones are first.
+   #?(:clj [dev.dutil-macros :refer [run-test unquote-body]]))
+  #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test unquote-body]])))
 
 (defn read-str [s]
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
-
-
-;;; ToDo: I think I intended to test whether some data (from express?) results in this?
-(def test-schema
-    [{:schema  {:db/attrs   [{:schema/name    {:db/type  :db/string, :db/cardinality  :one}}],
-                :db/key     [:schema/name]}}
-
-     {:table   {:db/attrs   [{:table/name     {:db/type :db/string, :db/cardinality :one },
-                              :table/schema   {:db/type :db/object, :db/cardinality :one, :db/in-line? true},
-                              :table/columns  {:db/type :db/object, :db/cardinality :many}}], ; Just to make it interesting.
-                :db/key     [:table/schema, :table/name]}}
-
-     {:column  {:db/attrs   [{:column/name  {:db/type  :db/string, :db/cardinality  :one}},
-                             {:column/type  {:db/type  :db/string, :db/cardinality  :one}},
-                             {:column/table {:db/type  :db/object, :db/cardinality  :one}}],
-                :db/key     [:column/table, :column/name]}}])
 
 ;;; ToDo: Dissoc is temporary; boxing.
 ;;; dolce-1.edn is both :owl/Class and :owl/ObjectProperty.
@@ -995,7 +977,7 @@
              (-> (ev/processRM :ptag/exp "express(){{'name': key(?name), 'bData': ?bData}}" {:rewrite? true})
                  second ; first is call to bi/express.
                  :base-body
-                 unquote
+                 unquote-body
                  bi/reduce-body-and-schema
                  :reduce-body))))
 
@@ -1006,7 +988,7 @@
              (-> (ev/processRM :ptag/exp "express{{?name : {'bData' : ?bData}}}" {:rewrite? true})
                  second
                  :base-body
-                 unquote
+                 unquote-body
                  bi/reduce-body-and-schema
                  :reduce-body))))
 
@@ -1017,7 +999,7 @@
              (-> (ev/processRM :ptag/exp "express{{'name' : ?name, 'bData' : ?bData}}" {:rewrite? true})
                  second
                  :base-body
-                 unquote
+                 unquote-body
                  bi/reduce-body-and-schema
                  :reduce-body))))))
 
@@ -1097,7 +1079,6 @@
        (ident-code {"id" 123 "aAttr" {"val" "A-value"}})
        {"id" 123, "aAttr" {"val" "A-value"}}))))
 
-
 (deftest reduce-bodies
   (testing "Testing reduce bodies."
     (testing "simple object; it is just a vector of it kv pairs."
@@ -1129,7 +1110,22 @@
              (-> (qu/schematic-express-body '{?systemName {?deviceName {"id" ?id}}}) :reduce-body))))))
 
 (deftest redex-idents
-  (testing "Testing ability to recover data with reduce/express on identity query and express."))
+  (testing "Testing ability to recover data with reduce/express on identity query and express."
+    (testing "Testing simple redex identity"
+      (run-test (ident-code {"abc" 123})               {"abc" 123})
+      (run-test (ident-code {"abc" 123, "xyz" 456})    {"abc" 123, "xyz" 456})
+      #_(run-test (ident-code {"abc" [1 2 3]})           {"abc" [1 2 3]})
+      #_(run "( $data := {'abc': [1, 2, 3]};
+                  $qFn   := query{[?e1 :abc ?v1]};
+                  $bSets := $qFn($data);
+                  $eFn   := express{{'abc': ?v1}};
+                  $reduce($bSets, $eFn) )")
+      #_(run "( $data := {'abc': [1, 2, 3]};
+                  $qFn   := query{[?e1 :abc ?v1]};
+                  $bSets := $qFn($data);
+                  $eFn   := express{{'abc': [?v1]}};
+                  $map($bSets, $eFn) )")))) ; <======================== Start here!
+
 
 ;;; datalog allows you to package up sets of :where clauses into named rules.
 ;;; These rules make query logic reusable, and also composable, meaning that you can bind portions of a query's logic at query time.

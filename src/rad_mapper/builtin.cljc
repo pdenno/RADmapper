@@ -2055,10 +2055,10 @@
             (keys ?types))))
 
 (defn update-schema-for-bsets
-  "The schema necessarily uses strings for :redex/user-key.
-   However, it the user's data might use something else (particularly numbers).
-   Here we check whether bset qvars that are also :redex/user-key qvar are in fact strings.
-   Where they are not (e.g. when they are numbers), we add :redex/orignal-key-type to the schema entry."
+  "(1) The schema necessarily uses strings for :redex/user-key.
+       However, it the user's data might use something else (particularly numbers).
+       Here we check whether bset qvars that are also :redex/user-key qvar are in fact strings.
+       Where they are not (e.g. when they are numbers), we add :redex/orignal-key-type to the schema entry."
   [schema bsets]
   (let [bset-type (bset-db-types bsets)]
     (reduce-kv (fn [m k v]
@@ -2085,6 +2085,10 @@
          base-data   (->> (mapv efn b-sets) walk/keywordize-keys)
          lookup-refs (create-lookup-refs full-schema base-data (util/cljs?))
          data        (data-with-lookups full-schema base-data)
+         #_[{:redex/user-key #:box{:string-val "abc"}, :db/id [:redex/abc--abc "abc"], :redex/vals {:box/number-val 1}}
+          {:redex/user-key #:box{:string-val "abc"}, :db/id [:redex/abc--abc "abc"], :redex/vals {:box/number-val 2}}
+          {:redex/user-key #:box{:string-val "abc"}, :db/id [:redex/abc--abc "abc"], :redex/vals {:box/number-val 3}}]
+
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
          zippy       (reset! diag {:schema      full-schema
                                    :efn         efn

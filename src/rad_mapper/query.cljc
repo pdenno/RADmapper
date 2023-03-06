@@ -133,10 +133,10 @@
 
 (defn key-schema
   "Define schema information for a user key (constant string or qvar doesn't matter)."
-  [ident k all-keys & {:keys [exp-key?]}]
+  [ident k v all-keys & {:keys [exp-key?]}]
   (cond-> {:db/unique :db.unique/identity
            :db/valueType :db.type/string
-           :db/cardinality :db.cardinality/one
+           :db/cardinality (if (vector? v) :db.cardinality/many :db.cardinality/one)
            :redex/cat-key all-keys          ; ToDo: This is just for debugging, I think.
            :redex/self ident
            :redex/user-key (box k)}               ; Will be a qvar if exp-key? = true
@@ -213,7 +213,7 @@
                 ;; Here because there is a key() in a map value.
                 (let [ident (db-key-ident key-key)]   ; user-defined key slots don't need fancy names, but they concatenate.
                   (swap! key-stack conj key-val)
-                  (swap! schema #(assoc % ident (key-schema ident key-val @key-stack :exp-key? true)))
+                  (swap! schema #(assoc % ident (key-schema ident key-val nil @key-stack :exp-key? true)))
                    (-> {ident `[:redex/express-key ~@(deref key-stack)]}
                        (assoc :redex/user-key                   (-> ident str (subs 1)))
                        (assoc :redex/ek-val                     key-val)
@@ -231,7 +231,7 @@
                                                            (= typ :redex/vals) (assoc :redex/vals (mapv rb v))
                                                            (= typ :redex/val)  (assoc :redex/val  (rb v)))
                                                      res (conj r val)]
-                                                 (swap! schema #(assoc % ident (key-schema ident k @key-stack)))
+                                                 (swap! schema #(assoc % ident (key-schema ident k v @key-stack)))
                                                  (swap! key-stack #(-> % butlast vec)) ; Since iterating on slots, pop stack.
                                                  res))
                                              []  ; Returning a vector of maps about slots.

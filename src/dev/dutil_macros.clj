@@ -11,7 +11,7 @@
         (vector? obj)  (->> (map vec2set obj) set)
         :else          obj))
 
-(defn unquote
+(defn unquote-body
   "Walk through the body replacing (quote <qvar>) with <qvar>.
    Rationale: In most situations we want qvars to be rewritten as quoted symbols.
    An exception is their use in the :where of a datalog query. There may be more usages."
