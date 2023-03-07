@@ -275,7 +275,6 @@
       :generic/xsd-file)))
 
 ;;; ToDo: A schema is getting past this with schema-name "".
-(clojure.string/split "data/testing/elena/Company A - Invoice.xsd" #"/")
 (defn schema-name
   "Return the name of the schema object. This uses the XML content to determine one."
   [xmap]
@@ -288,16 +287,18 @@
       (= :oagi sdo)
       (if-let [[_ fname] (re-matches #".*Components/(\w+).xsd" pname)]
         (str "urn:oagis-" ver-str ":Components:" fname)
-        (if-let [[_ fname] (re-matches #".*Common/ISO20022/(pain[0-9,\.]+).xsd" pname)]
-          (str "urn:oagis-" ver-str ":Common:" fname)
-          (if-let [name  (-> (xpath xmap :xsd/schema :xsd/element) :xml/attrs :name)]
-            (str  "urn:oagis-" ver-str ":" name)
-            (if-let [res-pname (-> pname (str/split #"/") last (str/split #"\.") first)]
-              (do (log/warn "Using pathname to define OAGIS" ver-str "schema name:" res-pname)
-                  (str "urn:oagis-" ver-str ":" res-pname))
-              (do (log/warn "Could not determine OAGIS" ver-str "schema name.")
-                  :mm/nil))))),
-      (= :qif sdo)
+        (if-let [[_ fname] (re-matches #".*Model/Nouns/(\w+).xsd" pname)]
+          (str "urn:oagis-" ver-str ":Nouns:" fname)
+          (if-let [[_ fname] (re-matches #".*Common/ISO20022/(pain[0-9,\.]+).xsd" pname)]
+            (str "urn:oagis-" ver-str ":Common:" fname)
+            (if-let [name  (-> (xpath xmap :xsd/schema :xsd/element) :xml/attrs :name)]
+              (str  "urn:oagis-" ver-str ":" name)
+              (if-let [res-pname (-> pname (str/split #"/") last (str/split #"\.") first)]
+                (do (log/warn "Using pathname to define OAGIS" ver-str "schema name:" res-pname)
+                    (str "urn:oagis-" ver-str ":" res-pname))
+                (do (log/warn "Could not determine OAGIS" ver-str "schema name.")
+                    :mm/nil)))))),
+        (= :qif sdo)
       (if-let [[_ fname] (re-matches #".*/QIFLibrary/(\w+).xsd" pname)]
         (str "urn:QIF-" ver-str ":Library:" fname)
         (if-let [[_ fname] (re-matches #".*/QIFApplications/(\w+).xsd" pname)]

@@ -1,6 +1,8 @@
 (ns rad-mapper.data-util.resolvers
   "This is temporarily part of rad-mapper. This plus schema-db.clj ought to be their own libaray"
   (:require
+   [clojure.core.async :refer [<!!]]
+   [com.wsscode.pathom.core      :as p]
    [com.wsscode.pathom.connect   :as pc]
    #?(:clj  [datahike.api        :as d]
       :cljs [datascript.core     :as d])
@@ -17,14 +19,21 @@
 ;;; See also person-resolver at Part 6, 43:26.
 
 ;;; Note that when you send an Ident, you get back a map with that ident and the response <=========
-;;;(tryme [{[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] [:sdb/schema-id]}])
+;;; (tryme [{[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] [:sdb/schema-id]}])
+;;; (tryme [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-id]}])
 ;;; ==> {[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] #:sdb{:schema-id 1230}}
 (pc/defresolver schema-by-name-r [env {:schema/keys [name]}]
   {::pc/input #{:schema/name}
    ::pc/output [:sdb/schema-id]}
   {:sdb/schema-id (d/q `[:find ?e . :where [?e :schema/name ~name]] @du/conn)})
 
-;;; This is based on the book. https://book.fulcrologic.com/#GoingRemote (See friends-resolver
+;;; (tryme [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
+;;; [{"schema/name" : "urn:oagis-10.8:Nouns:Invoice"}, ["schema-object"]]
+(pc/defresolver full-schema-r [env {:sdb/keys [schema-id]}]
+  {::pc/input #{:sdb/schema-id}
+   ::pc/output [:sdb/schema-object]}
+   {:sdb/schema-object (du/resolve-db-id {:db/id schema-id} du/conn #{:db/id})})
+
 ;;; (tryme [{:ccts/message-schema [:list/id  {:list/schemas [:sdb/schema-id :schema/name]}]}]) ; RIGHT!
 ;;; (tryme [{[:list/id :ccts/message-schema] {:list/schemas [:sdb/schema-id :schema/name]}}])  ; WRONG! WHY?
 (pc/defresolver list-r [env {:list/keys [id]}] ; e.g :list/id = :ccts/message-schema
@@ -49,10 +58,10 @@
   {::pc/output [{:ccts/message-schema [:list/id {:list/schemas [:schema/name :sdb/schema-id]}]}]}
   {:ccts/message-schema {:list/id :ccts/message-schema}})
 
-;;; (tryme [{[:sdb/schema-id 5173] [{:model/sequence [{:sdb/elem-id [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]}])
-;;; (tryme [{[:sdb/schema-id 5173] [{:model/sequence [:sp/name :sp/type]}]}])
-;;; (tryme [{[:sdb/schema-id 5173] [:schema/name]}])
-;;; (tryme [{[:sdb/schema-id 5173] [:model/sequence]}])
+;;; (tryme [{[:sdb/schema-id 3569] [{:model/sequence [{:sdb/elem-id [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]}])
+;;; (tryme [{[:sdb/schema-id 3569] [{:model/sequence [:sp/name :sp/type]}]}])
+;;; (tryme [{[:sdb/schema-id 3569] [:schema/name]}])
+;;; (tryme [{[:sdb/schema-id 3569] [:model/sequence]}])
 (pc/defresolver schema-props-r [env {:sdb/keys [schema-id]}]
   {::pc/input #{:sdb/schema-id}
    ::pc/output [:schema/name :sdb/schema-id :schema/sdo :schema/type :schema/topic
@@ -114,9 +123,24 @@
     (log/warn "Could not find owning schema for" elem-id)))
 
 (def resolvers [schema-by-name-r
+                full-schema-r
                 schema-props-r
                 elem-props-r
                 list-r
                 message-schema-r
                 data-file-r
                 current-system-time-r])
+
+(def parser
+  (p/parser
+    {::p/env     {::p/reader               [p/map-reader
+                                            pc/reader2
+                                            pc/open-ident-reader
+                                            p/env-placeholder-reader]
+                  ::p/placeholder-prefixes #{">"}}
+     ::p/mutate  pc/mutate
+     ::p/plugins [(pc/connect-plugin {::pc/register resolvers})
+                  p/error-handler-plugin
+                  p/trace-plugin]}))
+
+(defn tryme [path] (parser {} path))

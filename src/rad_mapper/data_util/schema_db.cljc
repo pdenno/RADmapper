@@ -8,7 +8,7 @@
    :uDT and :qDT specify restrictions on :CCT (core component type) and value sets of :BCC.
    Elements are organized into schema.
    Most access is through pathom, but some key functions for the REPL:
-     (list-schemas) - Get the list of schema (their :mm/schema-name), which is a URN string.
+     (list-schemas) - Get the list of schema (their :schema/name), which is a URN string.
      (get-schema <schema-urn-string>) - Get a map describing the whole schema. Its elements are :schema/content.
      (get-term <schema-urn-string> <term>) - Get the map of information for the :schema/term.
      (get-term-schemas <term>) - Get a list of schema (their URN strings) for the term (a string)."
@@ -48,7 +48,7 @@
 (def ubl-root   "/home/msid/pdenno/Documents/specs/OASIS/UBL-2.3/xsdrt/")
 (def oagis-10-8-root "data/OAGIS/10.8/Model/")
 (def michael-root    "data/testing/michaelQIF/")
-(def qif-root        "data/testing/QIF/xsd/")
+(def qif-root        "data/QIF/xsd/")
 
 (defonce bad-file-on-rebuild? (atom #{})) ; For debugging
 
@@ -116,6 +116,7 @@
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/keyword, :ident :schema/type}
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :schema/version
         :doc "e.g. for OAGIS 10.8 it is '10'"}
+   ;; sp is 'schema property', general sort of things.
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/boolean, :ident :sp/abstract}
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/ref,     :ident :sp/component
         :doc "CCT see also supplementary"}
@@ -343,7 +344,7 @@
         (do ; ToDo: This one is a combination of all the others. I don't yet see the point.
           (log/warn "Skipping CodeLists_1.xsd")
           (assoc ?x :mm/debug "Skipping Code List that is an aggregate of others."))
-        (assoc ?x :codeList/lists (mapv #(rewrite-xsd % :codeList)
+        (assoc ?x :codeList/lists (mapv #(rewrite-xsd % :code-list)
                                         (filter #(xml-type? % :xsd/simpleType) content))))
       (dissoc ?x :xml/ns-info :xml/content))))
 
@@ -1092,15 +1093,20 @@
     (d/transact conn db-schema)
     (add-schema-files! (str ubl-root "maindoc"))
     (add-schema-files! (str ubl-root "common"))
-;;;;;    (add-schema-files! (str oagis-10-6-root "Nouns"))
-;;;;;    (add-schema-files! (str oagis-10-6-root "Platform/2_6/Common"))
     (add-schema-files! (str oagis-10-8-root "Nouns"))
     (add-schema-files! (str oagis-10-8-root "Platform/2_7/Common"))
     (add-schema-files! (str qif-root "QIFApplications"))
     (add-schema-files! (str qif-root "QIFLibrary"))
-    (add-schema-files! michael-root)
+    ;(add-schema-files! michael-root) Currently has nils
     (postprocess-schemas!)
     (log/info "Created schema DB")))
+
+(defn get-db-atm
+  "Do a d/connect to the database, returning a connection atom."
+  []
+  (if (d/database-exists? db-cfg)
+    (d/connect db-cfg)
+    (log/warn "There is no example DB to connect to.")))
 
 (defn connect-db
   "Set the var rad-mapper.schema-db/conn by doing a d/connect."
