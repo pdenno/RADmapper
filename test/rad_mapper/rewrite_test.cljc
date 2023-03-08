@@ -4,14 +4,20 @@
    [clojure.test :refer [deftest is testing]]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.rewrite  :as rew]
-   [dev.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
-  #?(:clj [dev.dutil-macros :as dutil]))
-#?(:cljs (:require-macros [dev.dutil-macros :as dutil])))
+   [dev.dutil :refer [run-rew]]
+   [dev.dutil-util :refer [run remove-meta]]
+   #?(:clj [dev.dutil-macros :as dutilm :refer [run-test unquote-body]]))
+  #?(:cljs (:require-macros [dev.dutil-macros :as dutilm :refer [run-test unquote-body]])))
+
+
+;   [dev.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
+;  #?(:clj [dev.dutil-macros :as dutil :refer [vec2set run-test]]))
+;#?(:cljs (:require-macros [dev.dutil-macros :as dutil :refer [vec2set run-test]])))
 
 (defn run-test
   "run-test for rewrite sets :rewrite? true."
   [exp expect & {:keys [keep-meta?]}]
-  (dutil/run-test exp expect :rewrite? true :keep-meta? keep-meta?))
+  (dutilm/run-test exp expect :rewrite? true :keep-meta? keep-meta?))
 
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[1] translate correctly."

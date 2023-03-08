@@ -32,4 +32,4 @@
             (cond-> (run ~form-string
                       :rewrite? ~rewrite?
                       :keep-meta? ~keep-meta?)
-              ~sets? vec2set)))))
+              #_#_~sets? vec2set))))) ; ToDo: problem with shadow; can't find vec2set

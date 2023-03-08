@@ -20,11 +20,13 @@
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
    #?(:cljs ["nata-borrowed"  :as nb])
+   #?(:cljs ["superagent" :as request])
+   #?(:cljs [applied-science.js-interop :as j])
    #?(:cljs [goog.crypt.base64 :as jsb64])
-   [rad-mapper.data-util.db-util  :as du :refer [box unbox]]
-   [rad-mapper.data-util.resolvers :refer [pathom-resolve]]
+   #?(:clj [schema-db.resolvers           :as path :refer [pathom-resolve]])
+   #?(:clj [schema-db.core                :as sdb  :refer [connect-db]])
    [rad-mapper.query              :as qu]
-   [rad-mapper.util               :as util :refer [qvar?]]
+   [rad-mapper.util               :as util :refer [qvar? box unbox]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
@@ -66,6 +68,8 @@
 (s/def ::objects (s/and vector? (s/coll-of map? :min-count 1)))
 (s/def ::radix (s/and number? #(<= 2 % 36)))
 (s/def ::fn fn?)
+
+#?(:cljs (def svr-prefix "http://localhost:3000"))
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -1552,7 +1556,9 @@
                  set-context!)))
    :cljs (defn read-local
            [_fname _opts]
-           (throw (ex-info "$read() from the browser requires a graph query argument."))))
+           (throw (ex-info "$read() from the browser requires a graph query argument." {}))))
+
+(def diag (atom nil))
 
 ;;; ($read [["schema/name" "urn:oagis-10.8:Nouns:Invoice"],  ["schema-object"]])
 ;;; = (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
@@ -1562,11 +1568,15 @@
   ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]
    (cond (string? spec)    (read-local spec opts)
-         (vector? spec)    (let [[[k v] out-objs] spec]
-                             (pathom-resolve
-                              [{[(keyword k) v] ; This is the db-ident
-                                (mapv #(keyword "sdb" %) out-objs)}])))))
-
+         (vector? spec)    (let [[[k v] out-props] spec]
+                             #?(:clj (pathom-resolve
+                                      [{[(keyword k) v] ; This is the db-ident
+                                        (mapv #(keyword "sdb" %) out-props)}])
+                                :cljs (-> (request "GET" (str svr-prefix "/api/graph-query"))
+                                          (.send (clj->js {:ident-type k :ident-val v :request-objs out-props}))
+                                          (.then    #(when-let [objs (-> % (j/get :body) (j/get :request-objs))]
+                                                       (reset! diag objs)))
+                                          (.catch   #(js/console.log "catch = " %))))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -1713,8 +1723,6 @@
         #_#_false                      unkeywordize-bsets
         true                       (vec))
       (with-meta ?bsets {:bi/b-set? true}))))
-
-(def diag (atom nil))
 
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body."
@@ -2060,9 +2068,9 @@
   "Return a map each qvar's db-type (e.g :db.type/string) except in cases where the bsets do not exhibit a homogeneous type.
    In that case the qvar's value in the map returned is set to :redex/must-be-boxed." ; _rm/must-be-boxed is not yet used.
   [bsets]
-  (as-> (reduce-kv (fn [m k v] (assoc m k (du/db-type-of v))) {} (first bsets)) ?types
+  (as-> (reduce-kv (fn [m k v] (assoc m k (util/db-type-of v))) {} (first bsets)) ?types
     (reduce (fn [res qvar]
-              (if (every? (fn [val] (= (get ?types qvar) (du/db-type-of val)))
+              (if (every? (fn [val] (= (get ?types qvar) (util/db-type-of val)))
                           (map #(get % qvar) (rest bsets)))
                 res
                 (assoc res qvar :redex/must-be-boxed)))
@@ -2131,7 +2139,7 @@
      ;; This implies one extra, useless entry per b-set. Can it be avoided? Maybe not;
      ;; What the data indicates is that "more than one thing can have a :redex/ROOT". Hard to argue with that!
      (let [root-eids (d/q '[:find [?ref ...] :where [?top :redex/ROOT ?ref]] @db-atm)
-           pre-clean (mapv #(du/resolve-db-id {:db/id %} db-atm #{:db/id}) root-eids)]
+           pre-clean (mapv #(util/resolve-db-id {:db/id %} db-atm #{:db/id}) root-eids)]
        (swap! diag #(-> % (assoc :root-eids root-eids) (assoc :db-atm db-atm) (assoc :pre-clean pre-clean)))
        (redex-data-cleanup pre-clean (-> efn meta :bi/key-order) full-schema (-> efn meta :bi/reduce-body))))))
 

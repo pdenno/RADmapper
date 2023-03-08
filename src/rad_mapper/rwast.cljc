@@ -4,9 +4,9 @@
   (:require
    [clojure.pprint         :refer [cl-format]]    ; CLJS needs this because it is used in rwast_macros.
    [rad-mapper.parse       :refer [builtin-fns]]  ; Yeah, this is crazy! ; Read about it in javascript.org, 2023-01-25.
-   [rad-mapper.util        :as util :refer [rwast-meth *debugging-rwast?* tags locals]] ; This is especially crazy!
-   #?(:clj  [rad-mapper.rwast-macros :refer [defrwast]]))
-  #?(:cljs (:require-macros [rad-mapper.rwast-macros :refer [defrwast]])))
+   [rad-mapper.util        :as util #_#_:refer [rwast-meth *debugging-rwast?* tags locals]] ; This is especially crazy!
+   [rad-mapper.rwast-macros :refer [defrwast rwast-meth]])
+  #?(:cljs (:require-macros [rad-mapper.rwast-macros :refer [defrwast rwast-meth]])))
 
 (def diag (atom nil))
 (declare rwast)

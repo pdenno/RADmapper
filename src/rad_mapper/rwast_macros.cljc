@@ -4,11 +4,18 @@
    [clojure.pprint   :refer [cl-format]]
    [rad-mapper.util  :as util #_#_:refer [rwast-meth tags locals *debugging-rwast?*]])) ; ToDo: Why is this here?
 
+;;; --- rwast
+(defn rwast-dispatch [tag _ & _] tag)
+(defmulti rwast-meth #'rwast-dispatch)
+(def ^:dynamic *debugging-rwast?* false)
+(def tags   (atom []))
+(def locals (atom [{}]))
+
 (defn clear-rwast!
   "Trouble just passing tags and locals to rewrite.cljc!"
   []
-  (reset! util/tags [:toplevel])
-  (reset! util/locals [{}]))
+  (reset! tags [:toplevel])
+  (reset! locals [{}]))
 
 ;;; Similar to par/defparse except that it serves no role except to make debugging nicer.
 ;;; You could eliminate this by global replace of "defrewrite" --> "defmethod rewrite" and removing defn rewrite.
@@ -16,13 +23,13 @@
 ;;;       It is necessary when using dynamic binding or want state in an atom to be seen.
 (defmacro defrwast [tag [obj & keys-form] & body]
   `(defmethod rwast-meth ~tag [~'tag ~obj ~@(or keys-form '(& _))]
-     (when util/*debugging-rwast?* (println (cl-format nil "~A==> ~A" (util/nspaces (count @tags)) ~tag)))
-     (swap! util/tags #(conj % ~tag))
-     (swap! util/locals #(into [{}] %))
+     (when *debugging-rwast?* (println (cl-format nil "~A==> ~A" (util/nspaces (count @tags)) ~tag)))
+     (swap! tags #(conj % ~tag))
+     (swap! locals #(into [{}] %))
      (let [res# (do ~@body)
            result# (if (seq? res#) (doall res#) res#)] ; See note above.
-     (swap! util/tags   #(-> % rest vec))
-     (swap! util/locals #(-> % rest vec))
-     (do (when util/*debugging-rwast?*
+     (swap! tags   #(-> % rest vec))
+     (swap! locals #(-> % rest vec))
+     (do (when *debugging-rwast?*
            (println (cl-format nil "~A<-- ~A returns ~S" (util/nspaces (count @tags)) ~tag result#)))
          result#))))

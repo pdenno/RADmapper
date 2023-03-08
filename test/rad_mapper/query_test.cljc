@@ -9,14 +9,27 @@
    ;;  #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
    #?(:cljs [cljs.reader])
    [rad-mapper.builtin            :as bi]
-   [rad-mapper.data-util.db-util  :as du] ; For some testing
    [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util]
    [dev.dutil :refer [run-rew]]
    [dev.dutil-util :refer [run remove-meta]]
-   #?(:clj [dev.dutil-macros :refer [run-test unquote-body]]))
-  #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test unquote-body]])))
+   #?(:clj [dev.dutil-macros :as dutilm :refer [run-test #_unquote-body]]))
+  #?(:cljs (:require-macros [dev.dutil-macros :as dutilm :refer [run-test #_unquote-body]])))
+
+;;; Shadow can't see the one in dutilm. I think generally speaking, it can see the macros in those files, but nothing else.
+(defn unquote-body
+  "Walk through the body replacing (quote <qvar>) with <qvar>.
+   Rationale: In most situations we want qvars to be rewritten as quoted symbols.
+   An exception is their use in the :where of a datalog query. There may be more usages."
+  [form]
+  (letfn [(unq [obj]
+            (cond (map? obj)                   (reduce-kv (fn [m k v] (assoc m (unq k) (unq v))) {} obj),
+                  (vector? obj)                (mapv unq obj),
+                  (and (seq? obj)
+                       (= 'quote (first obj))) (if (== 2 (count obj)) (second obj) (rest obj)),
+                  :else obj))]
+    (unq form)))
 
 (defn read-str [s]
   #?(:clj  (read-string s)

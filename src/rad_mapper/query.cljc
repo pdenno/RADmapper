@@ -3,7 +3,7 @@
   (:require
    [clojure.string                :refer [starts-with?] :as string]
    [clojure.walk                  :refer [keywordize-keys]]
-   [rad-mapper.data-util.db-util  :refer [db-type-of box]]
+   [rad-mapper.util               :refer [db-type-of box]]
    #?(:clj  [datahike.api         :as d]
       :cljs [datascript.core      :as d])
    [taoensso.timbre :as log]))
