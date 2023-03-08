@@ -22,6 +22,7 @@
    #?(:cljs ["nata-borrowed"  :as nb])
    #?(:cljs [goog.crypt.base64 :as jsb64])
    [rad-mapper.data-util.db-util  :as du :refer [box unbox]]
+   [rad-mapper.data-util.resolvers :refer [pathom-resolve]]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util :refer [qvar?]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
@@ -1541,17 +1542,31 @@
 
 ;;;==========================================================================
 ;;;=================== Non-JSONata functions ================================
-#?(:clj
+#?(:clj  (defn read-local
+           [fname opts]
+           (let [type (-> (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname) second)]
+             (-> (case (or (get opts "type") type "xml")
+                   "json" (-> fname slurp json/read-str)
+                   "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
+                   "edn"  (-> fname slurp util/read-str util/string-keys))
+                 set-context!)))
+   :cljs (defn read-local
+           [_fname _opts]
+           (throw (ex-info "$read() from the browser requires a graph query argument."))))
+
+;;; ($read [["schema/name" "urn:oagis-10.8:Nouns:Invoice"],  ["schema-object"]])
+;;; = (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
+;;;                   [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
 (defn $read
   "Read a file of JSON or XML, creating a map."
-  ([fname] ($read fname {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
-  ([fname opts]
-   (let [type (-> (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname) second)]
-     (-> (case (or (get opts "type") type "xml")
-           #?(:clj "json") #?(:clj (-> fname slurp json/read-str))
-           "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-           "edn"  (-> fname slurp util/read-str util/string-keys))
-         set-context!)))))
+  ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
+  ([spec opts]
+   (cond (string? spec)    (read-local spec opts)
+         (vector? spec)    (let [[[k v] out-objs] spec]
+                             (pathom-resolve
+                              [{[(keyword k) v] ; This is the db-ident
+                                (mapv #(keyword "sdb" %) out-objs)}])))))
+
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to

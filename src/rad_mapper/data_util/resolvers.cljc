@@ -12,30 +12,30 @@
 
 ;;;============================ Resolvers (communication with clients)  ==================================
 ;;; I think the key idea here for pathom-mediated composabiltiy is for each resolver to rename all db/id
-;;; to context specific names. These are currently #{:sdb/schema-id :sdb/elem-id :sdb/imported-schema-id}.
+;;; to context-specific names. These are currently #{:sdb/schema-id :sdb/elem-id :sdb/imported-schema-id}.
 ;;; (The last one isn't just a schema but a prefix too.)
 ;;; The simplest composition then is implemented as a flat table with values and foreign key references.
 ;;; I think, however, you can 'go deep' in the ::pc/output and still maintain. See all-schema-ids-r.
 ;;; See also person-resolver at Part 6, 43:26.
 
 ;;; Note that when you send an Ident, you get back a map with that ident and the response <=========
-;;; (tryme [{[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] [:sdb/schema-id]}])
-;;; (tryme [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-id]}])
+;;; (pathom-resolve [{[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] [:sdb/schema-id]}])
+;;; (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-id]}])
 ;;; ==> {[:schema/name "urn:oasis:names:specification:ubl:schema:xsd:Invoice-2"] #:sdb{:schema-id 1230}}
 (pc/defresolver schema-by-name-r [env {:schema/keys [name]}]
   {::pc/input #{:schema/name}
    ::pc/output [:sdb/schema-id]}
   {:sdb/schema-id (d/q `[:find ?e . :where [?e :schema/name ~name]] @du/conn)})
 
-;;; (tryme [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
+;;; (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
 ;;; [{"schema/name" : "urn:oagis-10.8:Nouns:Invoice"}, ["schema-object"]]
 (pc/defresolver full-schema-r [env {:sdb/keys [schema-id]}]
   {::pc/input #{:sdb/schema-id}
    ::pc/output [:sdb/schema-object]}
    {:sdb/schema-object (du/resolve-db-id {:db/id schema-id} du/conn #{:db/id})})
 
-;;; (tryme [{:ccts/message-schema [:list/id  {:list/schemas [:sdb/schema-id :schema/name]}]}]) ; RIGHT!
-;;; (tryme [{[:list/id :ccts/message-schema] {:list/schemas [:sdb/schema-id :schema/name]}}])  ; WRONG! WHY?
+;;; (pathom-resolve [{:ccts/message-schema [:list/id  {:list/schemas [:sdb/schema-id :schema/name]}]}]) ; RIGHT!
+;;; (pathom-resolve [{[:list/id :ccts/message-schema] {:list/schemas [:sdb/schema-id :schema/name]}}])  ; WRONG! WHY?
 (pc/defresolver list-r [env {:list/keys [id]}] ; e.g :list/id = :ccts/message-schema
   {::pc/input  #{:list/id}
    ::pc/output [{:list/schemas [:sdb/schema-id :schema/name]}]}
@@ -58,10 +58,10 @@
   {::pc/output [{:ccts/message-schema [:list/id {:list/schemas [:schema/name :sdb/schema-id]}]}]}
   {:ccts/message-schema {:list/id :ccts/message-schema}})
 
-;;; (tryme [{[:sdb/schema-id 3569] [{:model/sequence [{:sdb/elem-id [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]}])
-;;; (tryme [{[:sdb/schema-id 3569] [{:model/sequence [:sp/name :sp/type]}]}])
-;;; (tryme [{[:sdb/schema-id 3569] [:schema/name]}])
-;;; (tryme [{[:sdb/schema-id 3569] [:model/sequence]}])
+;;; (pathom-resolve [{[:sdb/schema-id 3569] [{:model/sequence [{:sdb/elem-id [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]}])
+;;; (pathom-resolve [{[:sdb/schema-id 3569] [{:model/sequence [:sp/name :sp/type]}]}])
+;;; (pathom-resolve [{[:sdb/schema-id 3569] [:schema/name]}])
+;;; (pathom-resolve [{[:sdb/schema-id 3569] [:model/sequence]}])
 (pc/defresolver schema-props-r [env {:sdb/keys [schema-id]}]
   {::pc/input #{:sdb/schema-id}
    ::pc/output [:schema/name :sdb/schema-id :schema/sdo :schema/type :schema/topic
@@ -76,10 +76,10 @@
                            (assoc :sdb/imported-schema-id (:db/id %))
                            (dissoc :db/id)) s)))))
 
-;;; (tryme [{[:sdb/elem-id 1280] [:schema/min-occurs]}])                          ; Simple
-;;; (tryme [{[:schema/name invoice] [{[:sdb/elem-id 1280] [:schema/min-occurs]}]}]) ; YES!
-;;; (tryme [{[:schema/name invoice] [{:model/sequence [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]) ; COMPLETE!
-;;; (tryme [{[:sdb/schema-id 1230] [{:model/sequence [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]) ; COMPLETE!
+;;; (pathom-resolve [{[:sdb/elem-id 1280] [:schema/min-occurs]}])                          ; Simple
+;;; (pathom-resolve [{[:schema/name invoice] [{[:sdb/elem-id 1280] [:schema/min-occurs]}]}]) ; YES!
+;;; (pathom-resolve [{[:schema/name invoice] [{:model/sequence [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]) ; COMPLETE!
+;;; (pathom-resolve [{[:sdb/schema-id 1230] [{:model/sequence [:sp/name :sp/type :sp/minOccurs :sp/maxOccurs]}]}]) ; COMPLETE!
 (pc/defresolver elem-props-r [env {:sdb/keys [elem-id]}]
   {::pc/input #{:sdb/elem-id}
    ::pc/output [:doc/docString
@@ -96,7 +96,7 @@
   {:server/time (java.util.Date.)})
 
 ;;; ToDo: Of course, this needs to take an argument or be part of a user's project, etc.
-;;; (tryme [{[:file/id :map-spec] [:user/data-file]}])
+;;; (pathom-resolve [{[:file/id :map-spec] [:user/data-file]}])
 (pc/defresolver data-file-r [env {:file/keys [id]}]
   {::pc/input #{:file/id}
    ::pc/output [:file/text]}
@@ -143,4 +143,7 @@
                   p/error-handler-plugin
                   p/trace-plugin]}))
 
-(defn tryme [path] (parser {} path))
+(defn pathom-resolve
+  "Run the pathom parser on the path and return results."
+  [query]
+  (parser {} query))
