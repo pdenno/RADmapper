@@ -1561,8 +1561,7 @@
 (def diag (atom nil))
 
 ;;; ($read [["schema/name" "urn:oagis-10.8:Nouns:Invoice"],  ["schema-object"]])
-;;; = (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
-;;;                   [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
+;;;  = (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
 (defn $read
   "Read a file of JSON or XML, creating a map."
   ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
@@ -1572,8 +1571,12 @@
                              #?(:clj (pathom-resolve
                                       [{[(keyword k) v] ; This is the db-ident
                                         (mapv #(keyword "sdb" %) out-props)}])
+                                ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
                                 :cljs (-> (request "GET" (str svr-prefix "/api/graph-query"))
-                                          (.send (clj->js {:ident-type k :ident-val v :request-objs out-props}))
+                                          (.query (-> {:ident-type k
+                                                       :ident-val v
+                                                       :request-objs (cl-format nil "~{~A~^|~}" out-props)}
+                                                      clj->js))
                                           (.then    #(when-let [objs (-> % (j/get :body) (j/get :request-objs))]
                                                        (reset! diag objs)))
                                           (.catch   #(js/console.log "catch = " %))))))))
