@@ -6,10 +6,10 @@
            applied-science/js-interop          {:mvn/version "0.3.3"}
            org.apache.logging.log4j/log4j-api  {:mvn/version "2.19.0"}
            org.apache.logging.log4j/log4j-core {:mvn/version "2.19.0"}
+           cljs-ajax/cljs-ajax            {:mvn/version "0.8.4"}
            com.cemerick/url               {:mvn/version "0.1.1"}
            com.taoensso/timbre            {:mvn/version "6.0.4"}
            com.wsscode/pathom3            {:mvn/version "2022.10.19-alpha"}
-           ;com.wsscode/pathom             {:mvn/version "2.4.0"}
            dk.ative/docjure               {:mvn/version "1.19.0"}  ; spreadsheets
            io.replikativ/datahike         {:mvn/version "0.6.1538"} ; Remember to rebuild databases on update.
            datascript/datascript          {:mvn/version "1.4.0"}
@@ -21,10 +21,10 @@
            org.clojure/data.json          {:mvn/version "2.4.0"}
            org.clojure/data.xml           {:mvn/version "0.2.0-alpha8"}
            org.clojure/data.zip           {:mvn/version "1.0.0"}
-           com.github.pdenno/schema-db    {:mvn/version "1.0.5"}
+           com.github.pdenno/schema-db    {:mvn/version "1.0.6"}
 
-           nrepl/nrepl        {:mvn/version "1.0.0"}   ; ToDo: Can't shake 0.28.0
-           cider/cider-nrepl  {:mvn/version "0.30.0"}} ; ToDo: Can't shake 0.28.0
+           nrepl/nrepl        {:mvn/version "1.0.0"}
+           cider/cider-nrepl  {:mvn/version "0.30.0"}}
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
  :aliases {:dev       {:extra-paths    ["src/dev"]

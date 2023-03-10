@@ -7,6 +7,7 @@
 
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:require
+   #?(:cljs[ajax.core :refer [GET POST]])
    [cemerick.url                      :as url]
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
@@ -20,8 +21,6 @@
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
    #?(:cljs ["nata-borrowed"  :as nb])
-   #?(:cljs ["superagent" :as request])
-   #?(:cljs [applied-science.js-interop :as j])
    #?(:cljs [goog.crypt.base64 :as jsb64])
    #?(:clj [schema-db.resolvers           :as path :refer [pathom-resolve]])
    #?(:clj [schema-db.core                :as sdb  :refer [connect-db]])
@@ -1560,6 +1559,13 @@
 
 (def diag (atom nil))
 
+(defn handler [response]
+  (log/info (str "CLJS-AJAX returns:" response))
+  (reset! diag response))
+
+(defn error-handler [{:keys [status status-text]}]
+  (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text)))
+
 ;;; ($read [["schema/name" "urn:oagis-10.8:Nouns:Invoice"],  ["schema-object"]])
 ;;;  = (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
 (defn $read
@@ -1572,14 +1578,15 @@
                                       [{[(keyword k) v] ; This is the db-ident
                                         (mapv #(keyword "sdb" %) out-props)}])
                                 ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
-                                :cljs (-> (request "GET" (str svr-prefix "/api/graph-query"))
-                                          (.query (-> {:ident-type k
+                                ;; ToDo: /api/health to check that the server is running.
+                                :cljs (do
+                                        (GET "/api/graph-query" ; ToDo: Need localhost:3000 or localhost:1818 here?
+                                             {:params {:ident-type k
                                                        :ident-val v
                                                        :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                                                      clj->js))
-                                          (.then    #(when-let [objs (-> % (j/get :body) (j/get :request-objs))]
-                                                       (reset! diag objs)))
-                                          (.catch   #(js/console.log "catch = " %))))))))
+                                              :handler handler
+                                              :error-handler error-handler
+                                              :timeout 3000})))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
