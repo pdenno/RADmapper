@@ -9,7 +9,7 @@
   (:require
    #?(:cljs[ajax.core :refer [GET POST]])
    [cemerick.url                      :as url]
-   #?(:cljs [clojure.core.async :refer [chan >!! <!! close!]]) ; This comment!
+   #?(:cljs [clojure.core.async :refer [chan >! <! go close!]]) ; This comment!
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha                :as s]
@@ -1577,20 +1577,22 @@
                             ;; Currently this can't be tested in stand-alone RM.
                             :cljs (let [[[k v] out-props] spec
                                         ch (chan 10)]
-                                    (GET "/api/graph-query" ; ToDo: Need localhost:3000 (exerciser) here?
-                                         {:params {:ident-type k
-                                                   :ident-val v
-                                                   :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                                          :handler (fn [resp]
-                                                     (log/info (str "CLJS-AJAX returns:" response))
-                                                     (>!! ch resp))
-                                          :error-handler (fn [{:keys [status status-text]}]
-                                                           (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text)))
-                                          :timeout 3000})
-                                    (let [res (:objects (<!! ch))]
-                                      (log/info "graph-query returns" res)
-                                      (close! ch)
-                                      res))))))
+                                    (go (GET "/api/graph-query" ; ToDo: Need localhost:3000 (exerciser) here?
+                                             {:params {:ident-type k
+                                                       :ident-val v
+                                                       :request-objs (cl-format nil "~{~A~^|~}" out-props)}
+                                              :handler (fn [resp]
+                                                         (log/info (str "CLJS-AJAX returns:" resp))
+                                                         (>! ch resp))
+                                              :error-handler (fn [{:keys [status status-text]}]
+                                                               (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
+                                                               (close! ch))
+                                              :timeout 3000})
+                                        (let [res (:graph-query-response (<! ch))]
+                                          (reset! diag res)
+                                          (log/info "graph-query returns" res)
+                                          (close! ch)
+                                          res)))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
