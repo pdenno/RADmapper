@@ -9,7 +9,7 @@
   (:require
    #?(:cljs[ajax.core :refer [GET POST]])
    [cemerick.url                      :as url]
-   #?(:cljs [cljs.core.async :refer [chan >!! <!! close!]])
+   #?(:cljs [clojure.core.async :refer [chan >!! <!! close!]])
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha                :as s]
@@ -1587,7 +1587,7 @@
                                           :error-handler (fn [{:keys [status status-text]}]
                                                            (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text)))
                                           :timeout 3000})
-                                    (let [res (<!! ch)]
+                                    (let [res (:objects (<!! ch))]
                                       (log/info "graph-query returns" res)
                                       (close! ch)
                                       res))))))
