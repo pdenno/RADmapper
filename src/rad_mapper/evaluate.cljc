@@ -5,6 +5,7 @@
     [clojure.pprint               :refer [cl-format pprint]]
     [clojure.spec.alpha           :as s :refer [check-asserts]]
     [clojure.string               :as str]
+    [mount.core                   :refer [defstate]]
     [rad-mapper.builtin           :as bi]
     [rad-mapper.builtin-macros    :as bm]
     [rad-mapper.parse-macros      :as pm]
@@ -269,3 +270,8 @@
                     (fn? obj)      (swap! strg #(str %  "<<a function>>"))
                     :else          (swap! strg #(str % obj))))]
       (pp obj))))
+
+(defstate evaluate
+  :start
+  (do
+    (util/config-log :info)))

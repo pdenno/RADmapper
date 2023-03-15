@@ -9,6 +9,7 @@
   (:require
    #?(:cljs[ajax.core :refer [GET POST]])
    [cemerick.url                      :as url]
+   #?(:cljs [cljs.core.async :refer [chan >!! <!! close!]])
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha                :as s]
@@ -20,10 +21,10 @@
       :cljs [datascript.core              :as d])
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
-   #?(:cljs ["nata-borrowed"  :as nb])
+   #?(:cljs ["nata-borrowed"  :as nb]) ; ToDo: Replaces this with cljs-time, which wraps goog.time
    #?(:cljs [goog.crypt.base64 :as jsb64])
    #?(:clj [schema-db.resolvers           :as path :refer [pathom-resolve]])
-   #?(:clj [schema-db.core                :as sdb  :refer [connect-db]])
+   #?(:clj [schema-db.db-util   :as du :refer [connect-atm]])
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util :refer [qvar? box unbox]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
@@ -1559,34 +1560,37 @@
 
 (def diag (atom nil))
 
-(defn handler [response]
-  (log/info (str "CLJS-AJAX returns:" response))
-  (reset! diag response))
-
-(defn error-handler [{:keys [status status-text]}]
-  (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text)))
-
-;;; ($read [["schema/name" "urn:oagis-10.8:Nouns:Invoice"],  ["schema-object"]])
-;;;  = (pathom-resolve [{[:schema/name "urn:oagis-10.8:Nouns:Invoice"] [:sdb/schema-object]}])
+;;; ($read [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]])
+;;;  = (schema-db.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
 (defn $read
   "Read a file of JSON or XML, creating a map."
   ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]
    (cond (string? spec)    (read-local spec opts)
-         (vector? spec)    (let [[[k v] out-props] spec]
-                             #?(:clj (pathom-resolve
-                                      [{[(keyword k) v] ; This is the db-ident
-                                        (mapv #(keyword "sdb" %) out-props)}])
-                                ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
-                                ;; ToDo: /api/health to check that the server is running.
-                                :cljs (do
-                                        (GET "/api/graph-query" ; ToDo: Need localhost:3000 or localhost:1818 here?
-                                             {:params {:ident-type k
-                                                       :ident-val v
-                                                       :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                                              :handler handler
-                                              :error-handler error-handler
-                                              :timeout 3000})))))))
+         (vector? spec)  #?(:clj
+                            (let [[[k v] out-props] spec
+                                  ident-map {(keyword k) v} ; ident-map
+                                  outputs (mapv #(keyword "sdb" %) out-props)]
+                              (reset! diag {:ident-map ident-map :outputs outputs})
+                              (pathom-resolve ident-map outputs))
+                            ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
+                            ;; Currently this can't be tested in stand-alone RM.
+                            :cljs (let [[[k v] out-props] spec
+                                        ch (chan 10)]
+                                    (GET "/api/graph-query" ; ToDo: Need localhost:3000 (exerciser) here?
+                                         {:params {:ident-type k
+                                                   :ident-val v
+                                                   :request-objs (cl-format nil "~{~A~^|~}" out-props)}
+                                          :handler (fn [resp]
+                                                     (log/info (str "CLJS-AJAX returns:" response))
+                                                     (>!! ch resp))
+                                          :error-handler (fn [{:keys [status status-text]}]
+                                                           (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text)))
+                                          :timeout 3000})
+                                    (let [res (<!! ch)]
+                                      (log/info "graph-query returns" res)
+                                      (close! ch)
+                                      res))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
