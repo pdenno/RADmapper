@@ -9,7 +9,7 @@
   (:require
    #?(:cljs[ajax.core :refer [GET POST]])
    [cemerick.url                      :as url]
-   #?(:cljs [clojure.core.async :refer [chan >!! <!! close!]])
+   #?(:cljs [clojure.core.async :refer [chan >!! <!! close!]]) ; This comment!
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha                :as s]
