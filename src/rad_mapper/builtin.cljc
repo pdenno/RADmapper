@@ -1577,6 +1577,7 @@
                             ;; Currently this can't be tested in stand-alone RM.
                             :cljs (let [[[k v] out-props] spec
                                         ch (chan 10)]
+                                    (log/info "Call to $read(graph-query): k =" k " v = " v " out-props = " out-props)
                                     (go (GET "/api/graph-query" ; ToDo: Need localhost:3000 (exerciser) here?
                                              {:params {:ident-type k
                                                        :ident-val v

@@ -1,6 +1,6 @@
 {:paths   ["src" "test"]
  :deps    {applied-science/js-interop     {:mvn/version "0.3.3"}
-           com.github.pdenno/schema-db    {:mvn/version "1.0.10"}
+           com.github.pdenno/schema-db    {:mvn/version "1.0.11"}
            cljs-ajax/cljs-ajax            {:mvn/version "0.8.4"}
            cider/cider-nrepl              {:mvn/version "0.30.0"} ; ToDo: Really?
            com.cemerick/url               {:mvn/version "0.1.1"}
