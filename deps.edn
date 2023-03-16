@@ -7,8 +7,9 @@
            com.taoensso/timbre            {:mvn/version "6.0.4"}
            com.wsscode/pathom3            {:mvn/version "2022.10.19-alpha"}
            dk.ative/docjure               {:mvn/version "1.19.0"}  ; spreadsheets
-           io.replikativ/datahike         {:mvn/version "0.6.1538"} ; Remember to rebuild databases on update.
            datascript/datascript          {:mvn/version "1.4.0"}
+           funcool/promesa                {:mvn/version "10.0.594"}
+           io.replikativ/datahike         {:mvn/version "0.6.1538"} ; Remember to rebuild databases on update.
            mount/mount                    {:mvn/version "0.1.17"} ; ToDo: Maybe temporary for schema-db/pathom
            nrepl/nrepl                    {:mvn/version "1.0.0"}
            org.babashka/sci               {:mvn/version "0.6.37"}
