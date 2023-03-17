@@ -1,12 +1,15 @@
 (ns rad-mapper.evaluate-test
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
+   [ajax.core :refer [GET]]
+   [dev.dutil-util :refer [run]]
    [clojure.test        :refer  [deftest is testing]]
+   [promesa.core :as p]
    [rad-mapper.builtin   :as bi]
    [rad-mapper.evaluate  :as ev]
-   [dev.dutil-util :refer [run]]
+   [taoensso.timbre :as log :refer-macros [info debug log]]
    #?(:clj [dev.dutil-macros :refer [run-test]]))
-#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+ #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
 
 (deftest today
   (run-test "-5"-5)
@@ -321,7 +324,7 @@
                            $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
                                     {'id' : 234, 'bAttr' : 'Alice-B-data'}]"}))))))
 
-(defn tryme [which]
+(defn try-them-all [which]
   (case which
     1 (println (ev/pprint-obj {"a-longer" 1 "b" 2}))
     2 (println (ev/pprint-obj {"a" 1 "b-much-much-much-longer" 2 "ccc" 3} :width 40 :depth 2))
@@ -333,3 +336,34 @@
                                "key-2" ["a-much-much-much-longer" "b"]} :width 40 :depth 4))
     8 (println (ev/pprint-obj {"key-1" 1
                                "key-2" ["a-much-much-much-longer" "b"]} :width 50 :depth 4))))
+
+
+(def test-obj
+   {:ident-type "schema/name"
+    :ident-val "urn:oagis-10.8.4:Nouns:Invoice"
+    :request-objs "schema-object"})
+
+(def result-atm (atom nil))
+
+(defn tryme [] ; Modern promesa with p/do, The winner!
+  (let [p (p/deferred)]
+    (p/do
+      (log/info "Do this first")
+      (p/do
+        (log/info "Do this next")
+        (GET "/api/graph-query" ; ToDo: Need localhost:3000 (exerciser) here?
+             {:params test-obj
+              :handler (fn [resp]
+                         (log/info (str "CLJS-AJAX returns ok."))
+                         (reset! result-atm resp)
+                         (p/resolve! p resp)) ; This isn't 'returned'!
+              :error-handler (fn [{:keys [status status-text]}]
+                               (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
+                               (reset! result-atm :failure!)
+                               (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                     {:status status :status-text status-text})))
+              :timeout 3000})
+        p ; It waits? here
+        (log/info "'***$read(graph-query)' returns " (-> @result-atm str (subs 0 100) (str "...")))
+        (log/info "Do this penultimately."))
+      (log/info "Do this last"))))

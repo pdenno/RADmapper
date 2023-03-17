@@ -7,7 +7,7 @@
 
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:require
-   #?(:cljs[ajax.core :refer [GET POST]])
+   #?(:cljs[ajax.core :refer [GET]])
    [cemerick.url                      :as url]
    #?(:clj [clojure.data.json         :as json])
    #?(:clj [clojure.data.codec.base64 :as b64])
@@ -20,11 +20,10 @@
       :cljs [datascript.core              :as d])
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
-   #?(:cljs ["nata-borrowed"  :as nb]) ; ToDo: Replaces this with cljs-time, which wraps goog.time
-   #?(:cljs [goog.crypt.base64 :as jsb64])
-   #?(:cljs [promesa.core             :as p])
+   #?(:cljs ["nata-borrowed"      :as nb]) ; ToDo: Replaces this with cljs-time, which wraps goog.time
+   #?(:cljs [goog.crypt.base64    :as jsb64])
+   #?(:cljs [promesa.core         :as p])
    #?(:clj [schema-db.resolvers           :as path :refer [pathom-resolve]])
-   #?(:clj [schema-db.db-util   :as du :refer [connect-atm]])
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util :refer [qvar? box unbox]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]

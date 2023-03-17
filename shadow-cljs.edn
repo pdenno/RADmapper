@@ -1,5 +1,6 @@
+;;; Only :light-client and :kaocha-test have been used much.
 {:deps {:aliases [:test-cljs]}
- :nrepl {:port 7004} ; exerciser uses 7002. This suggests that you can only connect to one of them!
+ :nrepl {:port 7004} ; exerciser uses 7002.
  :dev-http {8000 "resources/public"}
  :builds
  {:lib-dev {:target :browser
@@ -12,6 +13,14 @@
             :output-to "lib.js"
             :exports-vars rad-mapper.rewrite/processRad
             :compiler-options {:externs ["datascript/externs.js"]}}
+
+  :light-client {:target :browser
+                 :output-dir "resources/public/js"
+                 :asset-path "/js"
+                 :compiler-options {:externs ["datascript/externs.js"]}
+                 :modules  {:app {:entries [rad-mapper.app.core] ; creates app.js owing to key :app.
+                                  :init-fn rad-mapper.app.core/mount-root}}
+                 :devtools {:after-load rad-mapper.app.core/mount-root}}
 
   :kaocha-test {:target           :browser-test
                 :test-dir         "target/kaocha-test"

@@ -2,7 +2,7 @@
  :deps    {applied-science/js-interop     {:mvn/version "0.3.3"}
            com.github.pdenno/schema-db    {:mvn/version "1.0.11"}
            cljs-ajax/cljs-ajax            {:mvn/version "0.8.4"}
-           cider/cider-nrepl              {:mvn/version "0.30.0"} ; ToDo: Really?
+           #_#_cider/cider-nrepl              {:mvn/version "0.30.0"} ; ToDo: Really?
            com.cemerick/url               {:mvn/version "0.1.1"}
            com.taoensso/timbre            {:mvn/version "6.0.4"}
            com.wsscode/pathom3            {:mvn/version "2022.10.19-alpha"}
@@ -23,7 +23,10 @@
            org.clojure/data.json          {:mvn/version "2.4.0"}
            org.clojure/data.xml           {:mvn/version "0.2.0-alpha8"}
            org.clojure/data.zip           {:mvn/version "1.0.0"}
-           org.clojure/core.async         {:mvn/version "1.6.673"}} ; For bi/$read(graph-query), at least
+
+           lilactown/helix                {:mvn/version "0.1.9"} ; Ugh!
+
+           org.clojure/core.async         {:mvn/version "1.6.673"}}
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
  :aliases {:dev       {:extra-paths    ["dev" "src/dev"]
@@ -41,11 +44,21 @@
                        :exec-args      {}}
 
            :test-cljs {:extra-paths    ["test" "src/dev"]
-                       :extra-deps     {thheller/shadow-cljs {:mvn/version "2.20.20"}
-                                        lambdaisland/kaocha {:mvn/version "1.72.1136"}
+                       :extra-deps     {thheller/shadow-cljs      {:mvn/version "2.20.20"}
+                                        lambdaisland/kaocha       {:mvn/version "1.72.1136"}
                                         lambdaisland/kaocha-cljs2 {:mvn/version "0.1.58"}
-                                        com.lambdaisland/glogi        {:mvn/version "1.2.164"}
-                                        #_#_com.github.pdenno/owl-db-tools {:mvn/version "1.0.42"}}}
+                                        com.lambdaisland/glogi    {:mvn/version "1.2.164"}
+
+                                        ;; These for test/server.clj
+                                        luminus-transit/luminus-transit {:mvn/version "0.1.5" :exclusions [com.cognitect/transit-clj]}
+                                        metosin/muuntaja           {:mvn/version "0.6.8"}
+                                        metosin/reitit             {:mvn/version "0.6.0"}
+                                        metosin/ring-http-response {:mvn/version "0.9.3"}
+                                        ring/ring-jetty-adapter    {:mvn/version "1.7.1"}
+                                        ring/ring-core             {:mvn/version "1.9.6"}
+                                        ring/ring-defaults         {:mvn/version "0.3.4"}
+                                        lilactown/helix            {:mvn/version "0.1.9"}
+                                        selmer/selmer              {:mvn/version "1.12.55"}}}
 
            :deploy    {:replace-deps   {slipset/deps-deploy {:mvn/version "0.2.0"}}
                        :exec-fn        deps-deploy.deps-deploy/deploy
