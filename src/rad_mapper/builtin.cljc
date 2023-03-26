@@ -2058,7 +2058,7 @@
         cnt (atom 0)
         ref-ident? (reduce-kv (fn [r k v] (if (contains? v :db/unique) (conj r k) r)) #{} schema)]
     (letfn [(dlr [obj]
-              (cond (map? obj)    (doseq [[k v] (seq obj)] ; v should already be a string. ToDo: It isnt!
+              (cond (map? obj)    (doseq [[k v] (seq obj)] ; v should already be a string. ToDo: It isn't!
                                     (when (and (ref-ident? k) (not (known-lookup? @lookup-refs k v db)))
                                         (swap! lookup-refs conj (case db
                                                                   :datascript {:db/id (swap! cnt inc) k v}

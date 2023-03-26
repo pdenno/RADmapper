@@ -1,10 +1,7 @@
 (ns rad-mapper.app.core
   (:require
-   #_[rad-mapper.evaluate :as ev]
-   #_[applied-science.js-interop :as j]
    [helix.core :as helix :refer [defnc $]]
-   ["react-dom/client" :as react-dom]
-   #_[taoensso.timbre :as log :refer-macros [info debug log]]))
+   ["react-dom" :as react-dom]))
 
 (def svr-prefix "http://localhost:3000")
 

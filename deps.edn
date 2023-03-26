@@ -29,27 +29,35 @@
            org.clojure/core.async         {:mvn/version "1.6.673"}}
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
- :aliases {:dev       {:extra-paths    ["dev" "src/dev"]
+ :aliases {:dev       {:extra-paths    ["env/dev" "dev" "src/dev" "test/server" "env/dev"] ; env/dev is for test/server src/dev is for other testing.
                        :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
                        :extra-deps     {cider/cider-nrepl  {:mvn/version "0.30.0"}
-                                        org.clojure/java.classpath {:mvn/version "1.0.0"}
-                                        org.clojure/tools.namespace {:mvn/version "1.3.0"}}}
+                                        org.clojure/java.classpath  {:mvn/version "1.0.0"}
+                                        org.clojure/tools.namespace {:mvn/version "1.3.0"}
+                                        ;; These for test/server.clj
+                                        metosin/muuntaja            {:mvn/version "0.6.8"}
+                                        metosin/reitit              {:mvn/version "0.6.0"}
+                                        metosin/ring-http-response  {:mvn/version "0.9.3"}
+                                        ring/ring-jetty-adapter     {:mvn/version "1.7.1"}
+                                        ring/ring-core              {:mvn/version "1.9.6"}
+                                        ring/ring-defaults          {:mvn/version "0.3.4"}
+                                        lilactown/helix             {:mvn/version "0.1.9"}}}
 
            :lib-dev   {:extra-paths    ["test" "src/dev"] ; Not needed?
                        :extra-deps     {thheller/shadow-cljs {:mvn/version "2.20.20"}}}
 
-           :test      {:extra-paths    ["test" "src/dev"]
+           :test      {:extra-paths    ["test" "src/dev"]  ; This includes test/server
                        :extra-deps     {lambdaisland/kaocha {:mvn/version "1.72.1136"}}
                        :exec-fn        kaocha.runner/exec-fn
                        :exec-args      {}}
 
-           :test-cljs {:extra-paths    ["test" "src/dev"]
+           :test-cljs {:extra-paths    ["test" "src/dev"] ; This includes test/server
                        :extra-deps     {thheller/shadow-cljs      {:mvn/version "2.20.20"}
                                         lambdaisland/kaocha       {:mvn/version "1.72.1136"}
                                         lambdaisland/kaocha-cljs2 {:mvn/version "0.1.58"}
                                         com.lambdaisland/glogi    {:mvn/version "1.2.164"}
 
-                                        ;; These for test/server.clj
+                                        ;; These for test/server
                                         luminus-transit/luminus-transit {:mvn/version "0.1.5" :exclusions [com.cognitect/transit-clj]}
                                         metosin/muuntaja           {:mvn/version "0.6.8"}
                                         metosin/reitit             {:mvn/version "0.6.0"}
