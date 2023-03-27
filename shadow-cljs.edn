@@ -1,7 +1,7 @@
 ;;; Only :light-client and :kaocha-test have been used much.
 {:deps {:aliases [:test-cljs]}
  :nrepl {:port 7004} ; exerciser uses 7002.
- :dev-http {8000 "resources/public"}
+ #_#_:dev-http {8000 "resources/public"}
  :builds
  {:lib-dev {:target :browser
             :output-dir "resources/public/js"
