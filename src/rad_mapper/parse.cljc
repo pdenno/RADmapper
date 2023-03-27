@@ -271,6 +271,13 @@
           (#{\space \tab \newline} c) n
           :else (recur (inc n)))))))
 
+(defn strip-backquotes
+  [s]
+  (let [len- (-> s count dec)]
+    (if (and (= \` (get s 0)) (= \` (get s len-)))
+      (subs s 1 len-)
+      s)))
+
 ;;; ToDo: See split-at.
 (defn get-more
   "Update :string-block and :line-seq by getting more lines from the line-seq lazy seq."
@@ -304,7 +311,7 @@
                (when-let [[_ num] (re-matches #"(?s)([-]?\d+(\.\d+(e[+-]?\d+)?)?).*" s)] ; + cannot be used as a unary operator.
                  {:ws ws :raw num :tkn (util/read-str num)}),          ; number
                (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)] ; backquoted field
-                 {:ws ws :raw st :tkn {:typ :Field :field-name st}})
+                 {:ws ws :raw st :tkn {:typ :Field :field-name (strip-backquotes st)}})
                (and (syntactic? c) {:ws ws :raw (str c) :tkn c}) ; literal syntactic char.
                (let [pos (position-break s)
                      word (-> (subs s 0 (or pos (count s))) str/trim)]

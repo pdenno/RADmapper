@@ -1568,34 +1568,36 @@
   ([spec opts]
    (cond (string? spec)    (read-local spec opts)
          (vector? spec)
-         #?(:clj
-            (let [[[k v] out-props] spec
-                  ident-map {(keyword k) v} ; ident-map
-                  outputs (mapv #(keyword "sdb" %) out-props)]
-              (reset! diag {:ident-map ident-map :outputs outputs})
-              (pathom-resolve ident-map outputs))
-            ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
-            ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
-            :cljs (let [[[k v] out-props] spec
-                        p (:promise opts)] ; ToDo: This should be passed in.
-                    (log/info "Call to $read(graph-query): k =" k " v = " v " out-props = " out-props)
-                    (p/do
-                      (GET "/api/graph-query"
-                           {:params {:ident-type k
-                                     :ident-val v
-                                     :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                            :handler (fn [resp]
-                                       (log/info (str "CLJS-AJAX returns resp =" resp))
-                                       (reset! result-atm resp)
-                                       (p/resolve! p resp)) ; This isn't 'returned'!
-                            :error-handler (fn [{:keys [status status-text]}]
-                                             (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
-                                             (reset! result-atm :failure!)
-                                             (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                                   {:status status :status-text status-text})))
-                            :timeout 3000})
-                      p ; await resolution in one of the handers above.
-                      @result-atm)))))) ; ToDo: Why isn't p/extract found in promesa.core?
+         (let [[[k v] out-props] spec
+               ident-map {(keyword k) v} ; ident-map
+               outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
+                                (when-not (and ns nam)
+                                  (throw (ex-info "$read output ids should have be namespace <text>/<text>" {:given bad?})))
+                                (keyword ns nam))
+                             out-props)]
+           (reset! diag {:ident-map ident-map :outputs outputs})
+           #?(:clj (pathom-resolve ident-map outputs)
+              ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
+              ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
+              :cljs (let [p (:promise opts)] ; ToDo: This should be passed in.
+                      (log/info "Call to $read(graph-query): k =" k " v = " v " out-props = " out-props)
+                      (p/do
+                        (GET "/api/graph-query"
+                             {:params {:ident-type k
+                                       :ident-val v
+                                       :request-objs (cl-format nil "~{~A~^|~}" (map name out-props))}
+                              :handler (fn [resp]
+                                         (log/info (str "CLJS-AJAX returns resp =" resp))
+                                         (reset! result-atm resp)
+                                         (p/resolve! p resp)) ; This isn't 'returned'!
+                              :error-handler (fn [{:keys [status status-text]}]
+                                               (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
+                                               (reset! result-atm :failure!)
+                                               (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                                     {:status status :status-text status-text})))
+                              :timeout 3000})
+                        p ; await resolution in one of the handers above.
+                        @result-atm))))))) ; ToDo: Why isn't p/extract found in promesa.core?
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to

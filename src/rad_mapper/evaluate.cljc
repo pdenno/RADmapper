@@ -198,7 +198,19 @@
                execute?            (user-eval opts)
                (:pprint? opts)     (pprint-obj)))))))
 
+(defn indent-additional-lines
+  "Indent every line but the first by the amount indicated by indent."
+  [s indent]
+  (let [spaces (nspaces indent)
+        [one & others] (str/split-lines s)]
+    (cl-format nil "~A~{~%~A~}"
+               one
+               (map #(str spaces %) others))))
+
 ;;;==========  Pretty printing. This is unrelated to the above uses of the term pretty-print. ====================
+;;; The functions for pprint each return a string that may have line breaks.
+;;; The string starts with no spaces, the spaces to place after a line-break are passed in as "ident"
+;;; The map and vector functions add indentation to the values, which may themselves be multi-line.
 (defn pprint-map
   "Print a map:
      (1) If it all fits within width minus indent, print it that way.
@@ -209,65 +221,84 @@
   [obj indent width]
   (if (empty? obj)
     "{}"
-    (let [kv-pairs (reduce-kv (fn [m k v]
-                                (let [kk (pprint-obj k :width width) ; I assume key is atomic (i.e. fits on one line)!
-                                      vv (pprint-obj v)]
+    (let [kv-pairs (reduce-kv (fn [m k v] ; Here we get the 'dense' size; later calculate a new rest-start
+                                (let [kk (pprint-obj k :width width)
+                                      vv (pprint-obj v :width width)]
                                   (conj m {:k kk :v vv
                                            :k-len (count kk)
                                            :v-len (->> vv str/split-lines (map count) (apply max))})))
                               []
                               obj)
-          kv-pairs (update-in kv-pairs [0 :k] #(str "{" %)) ; This makes printing easier!
           max-key (apply max (map :k-len kv-pairs)) ; We will line them all up with the widest.
           max-val (apply max (map :v-len kv-pairs))]
-      (cond ;; (1) The map fits on one line.
-        (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
-        (cl-format nil "~A~{~A: ~A~^, ~}}" (nspaces indent) (interleave (map :k kv-pairs) (map :v kv-pairs))),
-
-        ;; (2) It fits. The values are made to line up with the entry with the longest key.
-        (<= (+ max-key max-val) (- width indent))
-        (cl-format nil "~{~A: ~A~^,~% ~}}"
-                   (interleave
-                    (map #(str (nspaces indent) (:k %) (nspaces (- max-key (:k-len %)))) kv-pairs)
-                    (map :v kv-pairs))),
-        ;; (3) Too wide; break into two lines for each k/v pair.
-        :else
-        (cl-format nil "~{~A:~%     ~A~^,~% ~}}"
-                   (interleave
-                    (map #(str (nspaces indent) (:k %)) kv-pairs)
-                    (map #(str (nspaces (+ indent 3)) (:v %)) kv-pairs)))))))
+      (if (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
+        ;; (1) The map fits on one line.
+        (cl-format nil "{~{~A: ~A~^, ~}}" (interleave (map :k kv-pairs) (map :v kv-pairs)))
+        ;; It doesn't fit on one line.
+        (let [indent-spaces (nspaces indent)
+              key-strs (into (-> kv-pairs first :k str vector)
+                             (map #(str indent-spaces (:k %) (nspaces (- max-key (:k-len %)))) (rest kv-pairs)))
+              ;; Values may have line breaks, each line but the first needs the indent plus the max-key
+              val-strs (mapv #(indent-additional-lines (:v %) (+ indent 2)) kv-pairs)]
+          (if (<= (+ max-key max-val) (- width indent))
+            ;; (2) It fits. The values are made to line up with the entry with the longest key.
+            (cl-format nil "{~{~A: ~A~^,~% ~}}" ; one space after ~% because starts with a '{'
+                       (interleave key-strs val-strs))
+            ;; (3) Too wide; break into two lines for each k/v pair.
+            ;;     Now all the values need to be indented
+            ;;     The cl-format indents the values a few spaces relative to their key.
+            (cl-format nil "{~{~A:~%  ~A~^,~%  ~}}"
+                       (interleave
+                        key-strs
+                        (map #(str indent-spaces %) val-strs)))))))))
 
 (defn pprint-vec
-  "Print a vector:
-    If it all fits on one line within width minus indent, print it that way.
-    Else print one element per line." ; ToDo: Maybe a mode where a few are printed on each line (at least 3).
+  "Return a string representing vector:
+    If it all fits on one line within width minus indent, the returned string contains now newlines.
+    Else each element is on a new-line. (In fact, the elements themselves can run multiple lines.
+    The first element no indentation, other are preceded by indent spaces."
   [obj indent width]
   (let [query-form? (-> obj meta :query-form?)
         elem-objs (reduce (fn [res elem]
-                            (let [s (pprint-obj elem :width width)]
+                            (let [s (pprint-obj elem :width width :indent indent)]
                               (conj res {:val s :len (->> s str/split-lines (map count) (apply max))})))
                           [] obj)]
-    (if (>= (- width indent) (+ (apply + (map :len elem-objs)) (* (count elem-objs) 2)))
+    (if (>= (- width indent) (+ (apply + (map :len elem-objs)) (* (count elem-objs) 2))) ; All on one line?
       (if query-form?
-        (cl-format nil "[~{~A~^ ~}]" (map :val elem-objs))
+        (cl-format nil "[~{~A~^ ~}]"  (map :val elem-objs))
         (cl-format nil "[~{~A~^, ~}]" (map :val elem-objs)))
-      (if query-form?
-        (cl-format nil "[~{~A~^~% ~}]" (map :val elem-objs))
-        (cl-format nil "[~{~A~^,~% ~}]" (map :val elem-objs))))))
+      ;; Not printable on one line, so every line but the first need the indent.
+      ;; And the values might be multi-line; every line but the first needs the indent.
+      (let [spaces (nspaces indent)
+            elems (->> elem-objs (map :val) (map #(indent-additional-lines % indent)))
+            val-strs (into (-> elems first vector)
+                           (->> elems rest (map #(str spaces %))))]
+        (if query-form?
+          (cl-format nil "[~{~A~^~% ~}]" val-strs)
+          (cl-format nil "[~{~A~^,~% ~}]" val-strs))))))
 
-(def print-width (atom 80))
+(def print-width "Number of characters that can be comfortably fit on a line.
+                  This is an atom so that it can be set by other libraries."
+  (atom 80))
+
 (defn pprint-obj
   "Pretty print the argument object.
    (This tries to print the content within the argument width, but because we assume
-   that there is a horizontal scrollbar, it doesn't work too hard at it!)"
-  [obj & {:keys [indent width depth] :or {indent 2 width @print-width depth 0}}]
-  (let [strg (atom "")
-        depth (atom depth)]
+   that there is a horizontal scrollbar, it doesn't work too hard at it!)
+     - width: the character length of the total area we have to work with.
+     - indent: a number of space characters per nesting level,
+     - depth: the number of nesting levels.
+     - start: a number of characters to indent owing to where this object starts because of key for which it is a value."
+  [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
+  (let [strg (atom "")]
     (letfn [(pp [obj]
-              (cond (map? obj)     (swap! strg #(str % (pprint-map obj (* @depth indent) width)))
-                    (vector? obj)  (swap! strg #(str % (pprint-vec obj (* @depth indent) width)))
+              (cond (map? obj)     (swap! strg #(str % (pprint-map obj indent width)))
+                    (vector? obj)  (swap! strg #(str % (pprint-vec obj indent width)))
                     (string? obj)  (swap! strg #(str %  "'" obj "'"))
-                    (fn? obj)      (swap! strg #(str %  "<<a function>>"))
+                    (keyword? obj) (if-let [ns (namespace obj)]
+                                     (swap! strg #(str %  "'" ns "/" (name obj) "'"))
+                                     (swap! strg #(str %  "'" (name obj) "'")))
+                    (fn? obj)      (swap! strg #(str %  "<<function>>"))
                     :else          (swap! strg #(str % obj))))]
       (pp obj))))
 
