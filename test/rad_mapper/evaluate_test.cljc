@@ -6,10 +6,11 @@
    [clojure.test        :refer  [deftest is testing]]
    [promesa.core :as p]
    [rad-mapper.builtin   :as bi]
-   [rad-mapper.evaluate  :as ev]
+   [rad-mapper.evaluate  :as ev :refer [processRM]]
    [taoensso.timbre :as log :refer-macros [info debug log]]
    #?(:clj [dev.dutil-macros :refer [run-test]]))
- #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+  #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+
 
 (deftest today
   (run-test "-5"-5)

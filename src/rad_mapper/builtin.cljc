@@ -7,23 +7,27 @@
 
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:require
-   #?(:cljs[ajax.core :refer [GET]])
+;;;   #?@(:cljs [[ajax.core :refer [GET]]
+;;;              [ajax.xhrio]
+;;;              [ajax.xml-http-request]]) ; Cannot find module 'xmlhttprequest'
+
+   #?@(:clj  [[clojure.data.json            :as json]
+              [clojure.data.codec.base64    :as b64]
+              [dk.ative.docjure.spreadsheet :as ss]
+              [datahike.api                 :as d]
+              [datahike.pull-api            :as dp]
+              [schema-db.resolvers          :as path :refer [pathom-resolve]]]
+       :cljs [[datascript.core              :as d]
+              [datascript.pull-api  :as dp]
+              ["nata-borrowed"      :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
+              [goog.crypt.base64    :as jsb64]
+              [goog.net.XhrIo]              ; trying to fix problem with ajax. <====================
+              [promesa.core         :as p]])
    [cemerick.url                      :as url]
-   #?(:clj [clojure.data.json         :as json])
-   #?(:clj [clojure.data.codec.base64 :as b64])
    [clojure.spec.alpha                :as s]
    [clojure.pprint                             :refer [cl-format]]
    [clojure.string                    :as str  :refer [index-of]]
    [clojure.walk                      :as walk :refer [keywordize-keys]]
-   #?(:clj  [dk.ative.docjure.spreadsheet :as ss])
-   #?(:clj  [datahike.api                 :as d]
-      :cljs [datascript.core              :as d])
-   #?(:clj  [datahike.pull-api    :as dp]
-      :cljs [datascript.pull-api  :as dp])
-   #?(:cljs ["nata-borrowed"      :as nb]) ; ToDo: Replaces this with cljs-time, which wraps goog.time
-   #?(:cljs [goog.crypt.base64    :as jsb64])
-   #?(:cljs [promesa.core         :as p])
-   #?(:clj [schema-db.resolvers           :as path :refer [pathom-resolve]])
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util :refer [qvar? box unbox]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
@@ -709,7 +713,6 @@
      (subs str 0 ix)
      str)))
 
-;;; $trim
 (defn $trim
   "Normalizes and trims all whitespace characters in str by applying the following steps:
       * All tabs, carriage returns, and line feeds are replaced with spaces.
@@ -1562,7 +1565,14 @@
 
 ;;; ($read [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]] {:promise (p/deferred)})
 ;;;  = (schema-db.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
+
 (defn $read
+  "Read a file of JSON or XML, creating a map."
+  ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
+  ([spec opts] []))
+
+;;; PPP
+#_(defn $read
   "Read a file of JSON or XML, creating a map."
   ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]

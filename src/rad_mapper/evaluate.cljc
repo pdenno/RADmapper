@@ -16,6 +16,7 @@
     [sci.core                     :as sci]
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
+
 (defn start
   "NOT USED (yet)."
   []
@@ -91,11 +92,12 @@
                         #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
                         '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
                         '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}]
-    (sci/init
+    (list publics)
+    #_(sci/init
      {:namespaces {'rad-mapper.builtin               builtin-ns,
                    'rad-mapper.builtin-macros        builtin-m-ns,
                    'taoensso.timbre                  timbre-ns,
-                   'clojure-pprint                   pprint-ns}
+                   #_#_'clojure-pprint                   pprint-ns}
       ; ToDo: SCI doesn't seem to want namespaced entries for macros.
       :bindings  {'init-step  rad-mapper.builtin/init-step
                   'map-step   rad-mapper.builtin/map-step
@@ -163,6 +165,7 @@
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
+   (log/info "str = " str)
    (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval?
                        :debug-parse? :debug-rewrite? :pprint?} %)
                      (keys opts)))
@@ -208,6 +211,7 @@
                (map #(str spaces %) others))))
 
 ;;;==========  Pretty printing. This is unrelated to the above uses of the term pretty-print. ====================
+;;; Maybe forget this and try json.stringify? / (json/pprint obj)
 ;;; The functions for pprint each return a string that may have line breaks.
 ;;; The string starts with no spaces, the spaces to place after a line-break are passed in as "ident"
 ;;; The map and vector functions add indentation to the values, which may themselves be multi-line.

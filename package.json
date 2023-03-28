@@ -10,7 +10,6 @@
     "react": "^16.14.0",
     "react-dom": "^16.13.0",
     "react-refresh": "^0.14.0",
-    "shadow-cljs": "^2.20.5",
     "stack-trace": "0.0.10",
     "stacktrace-js": "^2.0.2",
     "ws": "^7.5.9"
@@ -21,5 +20,8 @@
     "CLJRM": "clj -A:dev -Sdeps '{:deps {nrepl/nrepl {:mvn/version \"1.0.0\"} cider/cider-nrepl {:mvn/version \"0.30.0\"}} :aliases {:cider/nrepl {:main-opts [\"-m\" \"nrepl.cmdline\" \"--middleware\" \"[cider.nrepl/cider-middleware]\"]}}}' -M:cider/nrepl"
   },
   "author": "Peter Denno",
-  "license": "ISC"
+  "license": "ISC",
+  "devDependencies": {
+    "shadow-cljs": "^2.22.8"
+  }
 }

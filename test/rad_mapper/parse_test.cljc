@@ -7,6 +7,9 @@
    [rad-mapper.evaluate :as ev]
    [rad-mapper.parse    :as par]))
 
+;;; ToDo: JSONata uses either quote or backquote for field names with spaces and funky stuff
+;;;       I use backquote, and I'm not sure what sort of funky stuff ;^)
+
 (defn tokenize-head
   "test-tokenize (below) doesn't produce tokens (except for head) it creates maps
    containing :tkn, :line and :col. (:head ps) is a token; make it a vector of one of these maps."
@@ -47,7 +50,7 @@
              (test-tokenize "'This is a string.'")))
       (is (= [{:tkn {:typ :StringLit :value "hello's world"}, :line 1, :col 1}           {:tkn ::par/eof}]
              (test-tokenize "'hello\\'s world'")))
-      (is (= [{:tkn {:typ :Field, :field-name "`foo ?`"}, :line 1, :col 1} {:tkn ::par/eof}]
+      (is (= [{:tkn {:typ :Field, :field-name "foo ?"}, :line 1, :col 1} {:tkn ::par/eof}]
              (test-tokenize "`foo ?`")))) ; Fields use backquote; otherwise, it is a StringLit.
 
     (testing "Testing regex"
