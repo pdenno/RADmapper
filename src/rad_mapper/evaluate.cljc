@@ -163,7 +163,6 @@
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
-   (log/info "str = " str)
    (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval?
                        :debug-parse? :debug-rewrite? :pprint?} %)
                      (keys opts)))
@@ -208,11 +207,66 @@
                one
                (map #(str spaces %) others))))
 
+(def name-order
+  "The values here are listed in the order in which they should appear."
+  {"schema"      ["name" "shortname" "type" "sdo" "spec" "version" "subversion" "topic" "pathname" "content"]
+   "model"       ["name" "elementDef" "elementRef" "complexType" "sequence" "union" "extension"]
+   "element"     ["name" "ref" "id" "sequence" "complexType"]
+   "complexType" ["name" "id"]
+   "codeList"    ["name" "id" "terms" "restriction" "union"]})
+
+(def ns-order
+  "This is the order that things should be presented when they have different namespaces.
+   after these nspaces, it is alphabetical (so that 'xsd' is towards the end."
+  ["schema" "model" "codeList" "complexType" "component"  "cct" "attribute" "has"])
+
 ;;;==========  Pretty printing. This is unrelated to the above uses of the term pretty-print. ====================
 ;;; Maybe forget this and try json.stringify? / (json/pprint obj)
 ;;; The functions for pprint each return a string that may have line breaks.
 ;;; The string starts with no spaces, the spaces to place after a line-break are passed in as "ident"
 ;;; The map and vector functions add indentation to the values, which may themselves be multi-line.
+(defn sort-map
+  "Sort maps so that
+    - '*/name' comes first, xsd/* comes last, */documentation comes next to last.
+    - schema/* stuff is ordered by schema/name, schema/type ... with schema/content last."
+  [m]
+  (letfn [(compare-names [ns x y]
+            (if-let [v (get name-order ns)]
+              (let [xi (as-> (.indexOf v x) ?i (if (neg? ?i) nil ?i))
+                    yi (as-> (.indexOf v y) ?i (if (neg? ?i) nil ?i))]
+                (cond (and xi yi)  (if (< xi yi) -1 +1)
+                      xi           -1
+                      yi           +1
+                      :else        (compare x y)))
+              (compare x y)))
+          (compare-namespaces [x y]
+              (let [xi (as-> (.indexOf ns-order x) ?i (if (neg? ?i) nil ?i))
+                    yi (as-> (.indexOf ns-order y) ?i (if (neg? ?i) nil ?i))]
+                (cond (and xi yi)  (if (< xi yi) -1 +1)
+                      xi           -1
+                      yi           +1
+                      :else        (compare x y))))
+          (compar [x y]
+            (let [nsp-x (namespace x)
+                  nsp-y (namespace y)
+                  name-x (name x)
+                  name-y (name y)]
+              (cond (and nsp-x nsp-y)           (if (= nsp-x nsp-y)
+                                                  (compare-names nsp-x name-x name-y)
+                                                  (compare-namespaces nsp-x nsp-y))
+                    nsp-x                       -1
+                    nsp-y                       +1
+                    :else                       (compare name-x name-y))))]
+    (into (sorted-map-by compar) m)))
+
+(defn sort-obj
+  "Recursively sort the maps in the given object.
+   Everything else, of course, is left alone."
+  [obj]
+  (cond (map? obj)      (->> obj (reduce-kv (fn [m k v] (assoc m k (sort-obj v))) {}) sort-map)
+        (vector? obj)   (mapv sort-obj obj)
+        :else           obj))
+
 (defn pprint-map
   "Print a map:
      (1) If it all fits within width minus indent, print it that way.

@@ -1554,7 +1554,7 @@
              (-> (case (or (get opts "type") type "xml")
                    "json" (-> fname slurp json/read-str)
                    "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-                   "edn"  (-> fname slurp util/read-str util/string-keys))
+                   "edn"  (-> fname slurp util/read-str #_util/string-keys))
                  set-context!)))
    :cljs (defn read-local
            [_fname _opts]
@@ -1569,7 +1569,18 @@
 (defn $read
   "Read a file of JSON or XML, creating a map."
   ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
-  ([spec opts] []))
+  ([spec opts]
+   (cond (string? spec)    (read-local spec opts)
+         (vector? spec)
+         (let [[[k v] out-props] spec
+               ident-map {(keyword k) v} ; ident-map
+               outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
+                                (when-not (and ns nam)
+                                  (throw (ex-info "$read output ids should have be namespace <text>/<text>" {:given bad?})))
+                                (keyword ns nam))
+                             out-props)]
+           (reset! diag {:ident-map ident-map :outputs outputs})
+           #?(:clj (pathom-resolve ident-map outputs))))))
 
 ;;; PPP
 #_(defn $read
