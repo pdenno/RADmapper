@@ -16,7 +16,6 @@
     [sci.core                     :as sci]
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
-
 (defn start
   "NOT USED (yet)."
   []
@@ -92,8 +91,7 @@
                         #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
                         '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
                         '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}]
-    (list publics)
-    #_(sci/init
+    (sci/init
      {:namespaces {'rad-mapper.builtin               builtin-ns,
                    'rad-mapper.builtin-macros        builtin-m-ns,
                    'taoensso.timbre                  timbre-ns,
