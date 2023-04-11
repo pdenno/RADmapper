@@ -159,7 +159,7 @@
 
 (defn processRM
   "A top-level function for all phases of translation.
-   parse-string, rewrite, and execute, but with controls for partial evaluation, debugging etc.
+   parse-string, rewrite, and execute, but with controls to quit before doing all of these, debugging etc.
    With no opts it returns the parse structure without debug output."
   ([tag str] (processRM tag str {}))
   ([tag str opts]
@@ -211,14 +211,14 @@
   "The values here are listed in the order in which they should appear."
   {"schema"      ["name" "shortname" "type" "sdo" "spec" "version" "subversion" "topic" "pathname" "content"]
    "model"       ["name" "elementDef" "elementRef" "complexType" "sequence" "union" "extension"]
-   "element"     ["name" "ref" "id" "sequence" "complexType"]
+   "element"     ["name" "ref" "id" "sequence" "complexType" "simpleType"]
    "complexType" ["name" "id"]
    "codeList"    ["name" "id" "terms" "restriction" "union"]})
 
 (def ns-order
   "This is the order that things should be presented when they have different namespaces.
    after these nspaces, it is alphabetical (so that 'xsd' is towards the end."
-  ["schema" "model" "codeList" "complexType" "component"  "cct" "attribute" "has"])
+  ["schema" "element" "model" "codeList" "complexType" "component"  "cct" "attribute" "has"])
 
 ;;;==========  Pretty printing. This is unrelated to the above uses of the term pretty-print. ====================
 ;;; Maybe forget this and try json.stringify? / (json/pprint obj)
@@ -356,7 +356,10 @@
                                      (swap! strg #(str %  "'" (name obj) "'")))
                     (fn? obj)      (swap! strg #(str %  "<<function>>"))
                     :else          (swap! strg #(str % obj))))]
-      (pp obj))))
+      (cond-> obj
+        (map? obj) sort-obj
+        (vector? obj) sort-obj
+        true pp))))
 
 (defstate evaluate
   :start

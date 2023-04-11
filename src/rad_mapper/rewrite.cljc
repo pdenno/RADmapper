@@ -82,7 +82,7 @@
                     :else
                     `(~(->> x :var rewrite)
                       ~(-> x :init-val rewrite)))))]
-    (if *inside-let?*
+    (if *inside-let?* ; Not sure when this wouldn't be true!
       (name-exp-pair m)
       `(let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no primary.
          ~(-> m :var rewrite)))))
@@ -99,7 +99,7 @@
   false)
 
 (def ^:dynamic *inside-step?*
-  "When true, modify rewriting behavior inside 'a step'." ; ToDo: different context than *inside-delim?*
+  "When true, modify rewriting behavior inside 'a step'."    ; ToDo: different context than *inside-delim?*
   false)
 
 (defrewrite :Field [m]
@@ -107,7 +107,10 @@
         *inside-step?*  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than *inside-delim?*
         :else `(~'bi/get-step  ~(:field-name m))))
 
-(defrewrite :Qvar [m] `'~(-> m :qvar-name symbol))
+(defrewrite :Qvar [m]
+  (if *inside-step?*
+    `(~'bi/get-scoped '~(-> m :qvar-name symbol)),
+    `'~(-> m :qvar-name symbol)))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
 ;;; https://www.codeguage.com/courses/regexp/flags
@@ -142,13 +145,18 @@
 
 (defrewrite :ExpressDef [m]
   (reset! key-order [])
-  (let [params    (-> m :params rewrite)
-        base-body (-> m :body rewrite)
-        order @key-order]
-    `(~'bi/express {:params      '~(remove map? params)
-                    :options     '~(some #(when (map? %) %) params)
-                    :base-body   ~base-body
-                    :key-order   ~order})))
+  (letfn [(cleanup [obj] ; :base-body is data; it should not contain get-scoped. ToDo: What else might it contains?
+            (cond (map? obj)    (reduce-kv (fn [m k v] (assoc m (cleanup k) (cleanup v))) {} obj)
+                  (vector? obj) (mapv cleanup obj)
+                  (seq? obj)    (if (= (first obj) 'bi/get-scoped) (second obj) obj)
+                  :else obj))]
+    (let [params    (-> m :params rewrite)
+          base-body (-> m :body rewrite)
+          order @key-order]
+      `(~'bi/express {:params      '~(remove map? params)
+                      :options     '~(some #(when (map? %) %) params)
+                      :base-body   ~(cleanup base-body)
+                      :key-order   ~order}))))
 
 (defrewrite :ObjExp [m]
   (reduce (fn [res [k v]] (assoc res k v)) {} (map rewrite (:kv-pairs m))))
@@ -267,8 +275,10 @@
 (defrewrite :FnDef [m]
   (let [vars (mapv #(-> % :jvar-name symbol) (:vars m))
         body (-> m :body rewrite)]
-    `(with-meta (fn ~(mapv rewrite (:vars m)) ~body)
-      {:bi/params '~vars :bi/type :bi/user-fn})))
+    (if *inside-let?* ; prepare for letfn.
+      {:typ :letfn :vars (mapv rewrite (:vars m)) :fn-body body}
+      `(with-meta (fn ~(mapv rewrite (:vars m)) ~body)
+         {:bi/params '~vars :bi/type :bi/user-fn}))))
 
 (defrewrite :PatternRole [m] (:role-name m))
 
@@ -363,9 +373,9 @@
 (def path-fn? #{:get-step :filter-step :reduce-step :value-step :primary})
 
 (defn wrap-non-path
-  "The steps of bi/run-steps that aren't expressly path functions (for example,
-   they aren't in the set path-fn but rather define data) are wrapped in a function
-   of no arguments. This function takes a form, analyzes it and does that work."
+  "The steps of bi/run-steps that aren't expressly path functions (e.g aren't in
+   the set path-fn but rather define data) are wrapped in a function of no arguments.
+   This function takes a form, analyzes it and does that work."
   [forms]
   (letfn [(wrap-form? [form sub]
             (if (or (and (symbol? form) (-> form name keyword path-fn?))
@@ -373,7 +383,10 @@
               form
               `(~sub ~form)))]
     (into (-> (wrap-form? (first forms) 'bi/init-step) vector)
-          (map #(wrap-form? % 'bi/map-step) (rest forms)))))
+          (map #(if (and (= (first %) 'quote) (-> % second qvar?)) ; ToDo: Why this special condition for qvar, and not for Field?
+                  (wrap-form? % 'bi/get-step)                      ; Answer: Field uses *inside-step?* binding, which I'm trying to avoid.
+                  (wrap-form? % 'bi/map-step))                     ; (See ToDo at top of file.) This might be the way to get that done!
+               (rest forms)))))
 
 ;;; Path are created in gather-steps.
 (defrewrite :Path [m]
@@ -386,41 +399,65 @@
              (map rewrite)
              wrap-non-path))))
 
+;;; (-> (ev/processRM :ptag/exp "( $a := 1; $b := 2; $f := function($x){$x+1}; $c := 3; $a )" {:rewrite? true}) du/nicer)
+;;; produces the following input to rewrite-nested-body:
+;;;#:r{:bindings [($a 1) ($b 2)],
+;;;    :body #:r{:bindings [($f {:typ :letfn, :vars [$x], :fn-body (bi/add $x 1)})],
+;;;              :body #:r{:bindings [($c 3)], :body $a}}}
+(defn rewrite-nested-body
+  [nested-body]
+  (letfn [(rnb [form] ; Rewrite nested-body
+            (cond (= :letfn (-> form :r/bindings first second :typ))
+                  `(letfn [~@(map #(list (first %) (-> % second :vars) (-> % second :fn-body))
+                              (:r/bindings form))]
+                     ~(->> form :r/body rnb))
+                  (:r/bindings form)
+                  `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                     ~(->> form :r/body rnb))
+                  (vector? form)      (mapv rnb form),
+                  (seq? form)         (map rnb form),
+                  (map? form)         (reduce-kv (fn [m k v] (assoc m k (rnb v))) {} form),
+                  :else               form))]
+    `(bi/primary
+      ~(cond (:r/bindings nested-body)              (rnb nested-body),
+             (== 1 (-> nested-body :r/body count))  (-> nested-body :r/body first rnb)
+             :else                                 `(do ~@(rnb (:r/body nested-body)))))))
+
 ;;; Where any of the :exps are JvarDecl, they need to wrap the things that follow in a let.
 ;;; Essentially, this turns a sequence into a tree.
+;;; ToDo: Distinquish ":CodeBlock" from :Primary. All of the following is :CodeBlock!
 (defrewrite :Primary [m]
   (binding [*inside-step?* true]
-    (let [segs (util/split-by (complement #(= :JvarDecl (:typ %))) (:exps m)) ; split a let
-          map-vec (loop [segs segs
-                         res []]
-                    (if (empty? segs) res
-                        (let [seg (first segs)
-                              new-forms (if (= :JvarDecl (-> seg first :typ))
-                                          (reduce (fn [r form]
-                                                    (binding [*inside-let?* true]
-                                                      (if (= :JvarDecl (:typ form))
-                                                        (update r :r/bindings conj (rewrite form))
-                                                        (update r :r/body conj (rewrite form)))))
-                                                  {:r/bindings [] :r/body []}
-                                                  seg)
-                                          {:r/body (mapv rewrite seg)})]
-                          (recur (rest segs) (conj res new-forms)))))
-          res (reduce (fn [r m] (update r :r/body conj m)) (first map-vec) (rest map-vec))] ; nest body
-      (letfn [(rew [form] ; Rewrite nested map as a s-exp.
-                (cond (:r/bindings form)  (if (-> form :r/body empty?)
-                                              `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                                                 ~(-> form :r/bindings last first)) ; Then return value of the := assignment.
-                                              `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                                                 ~@(->> form :r/body (map rew))))
-                      (:r/body form)      (->> form :r/body (map rew)),
-                      (vector? form)      (mapv rew form),
-                      (seq? form)         (map rew form),
-                      (map? form)         (reduce-kv (fn [m k v] (assoc m k (rew v))) {} form),
-                      :else                form))]
-        `(bi/primary
-          ~(cond (:r/bindings res)              (rew res),
-                 (== 1 (-> res :r/body count))  (-> res :r/body first rew)
-                 :else                         `(do ~@(rew (:r/body res)))))))))
+    (let [segs (util/split-by (complement #(= :JvarDecl (:typ %))) (:exps m)) ; split a let, OR is new for letfn.
+          ;; Split some more to distinguish where the :JvarDecl is binding a function.
+          segs (mapcat (fn [x] (util/split-by (complement #(= :FnDef (-> % :init-val :typ))) x)) segs)
+          segs (mapcat (fn [x] (util/split-by #(= :FnDef (-> % :init-val :typ)) x)) segs)
+          ;; ( $a := 1; $b := 2; $f := function($x){$x+1}; $c := 3; $a ) ==> flat is the following:
+          ;; [#:r{:bindings [($a 1) ($b 2)]}
+          ;;  #:r{:bindings [($f {:typ :letfn, :vars [$x], :fn-body (bi/add $x 1)})]}
+          ;;  #:r{:bindings [($c 3)], :body $a}]
+          flat (loop [segs segs
+                      res []]
+                 (if (empty? segs) res
+                     (let [seg (first segs)
+                           new-forms (if (= :JvarDecl (-> seg first :typ))
+                                       (reduce (fn [r form] ; Doesn't make sense to have :body except last. (No side-effects!)
+                                                 (binding [*inside-let?* true]
+                                                   (if (= :JvarDecl (:typ form))
+                                                     (update r :r/bindings conj (rewrite form)),
+                                                     (assoc  r :r/body (rewrite form))))) ; body is an expression.
+                                               {:r/bindings []}
+                                               seg)
+                                       {:r/body (rewrite seg)})] ; This was mapv rewrite. Hmmm.
+                       (recur (rest segs) (conj res new-forms)))))
+          flat-stack (atom (rest flat))]
+      (letfn [(nest [obj]
+                (if (empty? @flat-stack) obj
+                    (let [nxt (first @flat-stack)]
+                      (swap! flat-stack #(-> % rest vec))
+                      (assoc obj :r/body (nest nxt)))))]
+        (let [res (-> flat first nest)]
+          (rewrite-nested-body res))))))
 
 (defrewrite :ApplyFilter [m]
   (reset-dgensym!)

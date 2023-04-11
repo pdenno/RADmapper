@@ -76,12 +76,12 @@
 (def boolean-fns  (fn-maps ["$boolean" "$exists" "$not"]))
 (def array-fns    (fn-maps ["$append" "$count" "$distinct" "$reverse" "$shuffle" "$sort" "$zip"]))
 (def object-fns   (fn-maps ["$assert" "$each" "$error" "$keys" "$lookup"  "$merge" "$sift" "$spread" "$type"
-                            "$mapObject" "$assoc" "$reduceKV" ; These three are provisional.
+                            "$mapObject" "$assoc" "$reduceKV" "$update" ; These four are provisional.
                             ]))
 (def datetime-fns (fn-maps ["$fromMillis" "$millis" "$now" "$toMillis"]))
 (def higher-fns   (fn-maps ["$filter" "$map" "$reduce" "$sift" "$single"]))
 ;;; Non-JSONata functions
-(def rm-fns       (fn-maps ["$db" "$eIdent" "$identities" "$pull" "$qIdent" "$read" "$readSpreadsheet"]))
+(def rm-fns       (fn-maps ["$db" "$eIdent" "$identities" "$pull" "$qIdent" "$get" "$getSpreadsheet"]))
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns rm-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" \$]) set))

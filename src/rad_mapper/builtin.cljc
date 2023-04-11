@@ -188,14 +188,11 @@
                                                                 :bi/attr (-> sfn meta :bi/arg)}),
                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
-                          :bi/value-step   (do (log/info (cl-format nil "Run step -- value-step vec? = ~S fn = ~S res = ~S"
-                                                                  (vector? res) sfn res))
-                                               #_(sfn res)
-                                               (if (vector? res)
-                                                 (mapv #(binding [$ (atom %)] (sfn $)) res)
-                                                 (sfn res))),
+                          :bi/value-step   (if (vector? res)
+                                             (mapv #(binding [$ (atom %)] (sfn $)) res)
+                                             (sfn res)),
                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
-                          :bi/map-step     (cmap sfn (containerize? res)),
+                          :bi/map-step     (cmap sfn (containerize? res)), ; get-step is a function; this is a macro; it just executes its body.
                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
@@ -1558,17 +1555,17 @@
                  set-context!)))
    :cljs (defn read-local
            [_fname _opts]
-           (throw (ex-info "$read() from the browser requires a graph query argument." {}))))
+           (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
 (def diag (atom nil))
 (def result-atm (atom nil))
 
-;;; ($read [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]] {:promise (p/deferred)})
+;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
 ;;;  = (schema-db.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
 
-(defn $read
+(defn $get
   "Read a file of JSON or XML, creating a map."
-  ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
+  ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]
    (cond (string? spec)    (read-local spec opts)
          (vector? spec)
@@ -1576,16 +1573,16 @@
                ident-map {(keyword k) v} ; ident-map
                outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
                                 (when-not (and ns nam)
-                                  (throw (ex-info "$read output ids should have be namespace <text>/<text>" {:given bad?})))
+                                  (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
                                 (keyword ns nam))
                              out-props)]
            (reset! diag {:ident-map ident-map :outputs outputs})
            #?(:clj (pathom-resolve ident-map outputs))))))
 
 ;;; PPP
-#_(defn $read
+#_(defn $get
   "Read a file of JSON or XML, creating a map."
-  ([spec] ($read spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
+  ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]
    (cond (string? spec)    (read-local spec opts)
          (vector? spec)
@@ -1593,7 +1590,7 @@
                ident-map {(keyword k) v} ; ident-map
                outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
                                 (when-not (and ns nam)
-                                  (throw (ex-info "$read output ids should have be namespace <text>/<text>" {:given bad?})))
+                                  (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
                                 (keyword ns nam))
                              out-props)]
            (reset! diag {:ident-map ident-map :outputs outputs})
@@ -1601,7 +1598,7 @@
               ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
               ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
               :cljs (let [p (:promise opts)] ; ToDo: This should be passed in.
-                      (log/info "Call to $read(graph-query): k =" k " v = " v " out-props = " out-props)
+                      (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
                       (p/do
                         (GET "/api/graph-query"
                              {:params {:ident-type k
@@ -1651,12 +1648,12 @@
        (reduce-kv (fn [res k v] (assoc res (-> (str/replace k #"[\s+,\.+]" "_") keyword) v))
                   {})))
 
-;;; ToDo: make this part of $read.
-;;; $readSpreadsheet
+;;; ToDo: make this part of $get.
+;;; $getSpreadsheet
 #?(:clj
-(defn $readSpreadsheet
+(defn $getSpreadsheet
   "Read the .xlsx and make a clojure map for each row. No fancy names, just :A,:B,:C,...!"
-  ([filename sheet-name] ($readSpreadsheet filename sheet-name false))
+  ([filename sheet-name] ($getSpreadsheet filename sheet-name false))
   ([filename sheet-name invert?]
    (reset! $$ (when-let [sheet (->> (ss/load-workbook filename) (ss/select-sheet sheet-name))]
                (let [row1 (mapv ss/read-cell (-> sheet ss/row-seq first ss/cell-seq ss/into-seq))
@@ -1803,7 +1800,7 @@
 
    Example usage (of the second sort):
 
-  ( $data := $newContext() ~> $addSource($read('data/testing/owl-example.edn'));
+  ( $data := $newContext() ~> $addSource($get('data/testing/owl-example.edn'));
     $q := query($type){[?class :rdf/type            $type]
                        [?class :resource/iri        ?class-iri]
                        [?class :resource/namespace  ?class-ns]
@@ -2290,9 +2287,13 @@
 ;;; ===== These were conceived for the Dataweave example; they might not survive.
 (defn $reduceKV
   "Reduce INIT by calling FUN with each key/value pair of OBJ."
-  [fn init coll]
+  [coll fn init] ; I changed this to make it match $reduce !
   (reduce-kv fn init coll))
 
 (defn $assoc
   [obj k v]
   (assoc obj k v))
+
+(defn $update
+  [m k f]
+  (update m k f))

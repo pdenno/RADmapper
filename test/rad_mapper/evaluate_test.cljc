@@ -12,16 +12,13 @@
    #?(:clj [dev.dutil-macros :refer [run-test]]))
   #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
 
-(deftest wg
-  (run  "query([?x :schema/name ?name])"))
-
-
 (deftest today
   (run-test "-5"-5)
   (run-test "[[1,2,3], 4].$[1]" 2)
   (run-test "[[1,2,3], 4].$[0][0]" [1 4])
   (run-test "($v := [[1,2,3], 4]; $v.$[0][0])" [1 4] )
   (run-test "{'num' : [[1,2,3], 4]}.num.$[0][0]" [1 4])
+  (run-test "[{?parent : 2}].?parent" 2)
   (run-test "[[[1,2,3], 4]].$" [[1 2 3] 4])
   (run-test "[{'nums' : [1, 2]}, {'nums' : [3, 4]}].nums[1]" [2 4])
   (run-test "{'nums' : [[1], 2, 3]}.nums[0]" [1])
@@ -258,18 +255,18 @@
       (run-test  "{'a' : 1, 'b' : 2}.($x := 3)" 3))
 
     #?(:clj (testing "advancing context variable on apply-map."
-              (run-test "( $:= $read('data/testing/jsonata/try.json');
+              (run-test "( $:= $get('data/testing/jsonata/try.json');
                    Account.Order.Product.(Price*Quantity) )"
                         [68.9, 21.67, 137.8, 107.99])))
     #?(:clj (testing "like the try.jsonata page"
-              (run-test "( $:= $read('data/testing/jsonata/try.json');
+              (run-test "( $:= $get('data/testing/jsonata/try.json');
                    $sum(Account.Order.Product.(Price*Quantity)) )"
                         336.36)))))
 
 #_(deftest nyi
   (testing "NYI:"
     (testing "reduce using delimiters;  ToDo: the backquote thing."
-      (run-test "(  $:= $read('data/testing/jsonata/try.json');
+      (run-test "(  $:= $get('data/testing/jsonata/try.json');
                       Account.Order.Product{`Product Name` : $.(Price*Quantity)} )"
                 {"Bowler Hat" [68.9, 137.8], "Trilby hat" 21.67, "Cloak" 107.99}))))
 
@@ -350,7 +347,7 @@
 
 (def result-atm (atom nil))
 
-(defn tryme [] ; Modern promesa with p/do, The winner!
+#_(defn tryme [] ; Modern promesa with p/do, The winner!
   (let [p (p/deferred)]
     (p/do
       (log/info "Do this first")
@@ -369,6 +366,90 @@
                                                      {:status status :status-text status-text})))
               :timeout 3000})
         p ; It waits? here
-        (log/info "'***$read(graph-query)' returns " (-> @result-atm str (subs 0 100) (str "...")))
+        (log/info "'***$get(graph-query)' returns " (-> @result-atm str (subs 0 100) (str "...")))
         (log/info "Do this penultimately."))
       (log/info "Do this last"))))
+
+(def sdata
+  [{:parent "ProcessInvoice", :child "ApplicationArea"},
+   {:parent "Address", :child "BuildingNumber"},
+   {:parent "Address", :child "PostalCode"},
+   {:parent "BuyerParty", :child "Location"},
+   {:parent "Location", :child "Address"},
+   {:parent "BuyerParty", :child "TaxIDSet"},
+   {:parent "Address", :child "CountryCode"},
+   {:parent "Address", :child "CityName"},
+   {:parent "ManufacturingParty", :child "Name"},
+   {:parent "DataArea", :child "Invoice"},
+   {:parent "ProcessInvoice", :child "DataArea"},
+   {:parent "TaxIDSet", :child "ID"},
+   {:parent "Invoice", :child "InvoiceLine"},
+   {:parent "InvoiceLine", :child "BuyerParty"},
+   {:parent "ApplicationArea", :child "CreationDateTime"},
+   {:parent "Item", :child "ManufacturingParty"},
+   {:parent "Address", :child "StreetName"},
+   {:parent "DataArea", :child "Process"},
+   {:parent "InvoiceLine", :child "Item"}])
+
+(def answer
+  {"ProcessInvoice"
+   {"ApplicationArea" {"CreationDateTime" {}}
+    "DataArea" {"Process" {}
+                "Invoice" {"InvoiceLine"
+                           {"Item" {"ManufacturingParty" {"Name" {}}}
+                            "BuyerParty" {"TaxIDSet" {"ID" {}}
+                                          "Location" {"Address" {"CountryCode" {}
+                                                                 "PostalCode" {}
+                                                                 "CityName" {}
+                                                                 "StreetName" {}
+                                                                 "BuildingNumber" {}}}}}}}}})
+;;; We have $reduce, but do we have $update and $assoc?
+;;; Also need to get-step on qvars:  $.`?parent`.
+(defn example-shape []
+  (letfn [(children [p] (->> sdata (filter #(= (:parent %) p)) (map :child)))
+          (shape [parent]
+            (reduce (fn [pmap c]
+                      (update pmap parent #(assoc % c (or (not-empty (-> (shape c) (get c))) {}))))
+                    {}
+                    (children parent)))]
+    (shape "ProcessInvoice")))
+
+(defn tryme []
+  (run "(
+  $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+  $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+
+  $pcQuery := query{[?x     :element/name        ?parent] // pc = 'parent/child'
+                    [?x     :element/complexType ?cplx1]
+                    [?cplx1 :model/sequence      ?def]
+                    [?def   :model/elementDef    ?cplx2]
+                    [?cplx2 :element/name        ?child]};
+
+  $rootQuery := query{[?c :schema/content   ?e]
+                      [?e :model/elementDef ?d]
+                      [?d :element/name     ?name]};
+
+  $children := function($spc, $p) { $spc[?parent = $p] }; // This function just gets the children for a parent as {?parent : x, ?child : y}.
+
+  $shape := function($p, $spc) { $reduce($children($spc, $p),
+                                         function($tree, $c) { $update($tree, $p, function($x) { $assoc($x, $c, $shape($c))}) },
+                                         {})};
+
+  $schema1PC    := $pcQuery($schema1);
+  $schema2PC    := $pcQuery($schema2);
+  $schema1Roots := $rootQuery($schema1);
+  $schema2Roots := $rootQuery($schema2);
+
+  {'shape1' : $shape( $schema1Roots.?name, $schema1PC),
+   'shape2' : $shape( $schema2Roots.?name, $schema2PC)}
+
+)"))
+
+(defn tryme2 []
+  (ev/processRM :ptag/exp "( $a := 1; $f := function($x){$x+1} )" {:rewrite? true}))
+
+(defn trylet []
+  (letfn [(xyz [obj] (cond (map? obj)     (reduce-kv (fn [m k v] (assoc m (xyz k) (xyz v))) {} obj)
+                           (vector? obj)  (mapv xyz obj)
+                           :else obj))]
+    (xyz [{:a 1 :b {:c 2}} 3])))

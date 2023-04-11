@@ -245,7 +245,7 @@
     (run-test "$keys({'a' : 1, 'b' :2})" ["a" "b"])
 
     #?(:clj
-    (run-test "($ := $read('data/testing/jsonata/try.json');
+    (run-test "($ := $get('data/testing/jsonata/try.json');
                 Account.Order.Product.$sift(function($v, $k) {$k ~> /^Product/}) )"
               [{"Product Name" "Bowler Hat", "ProductID" 858383}
                {"Product Name" "Trilby hat", "ProductID" 858236}
