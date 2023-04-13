@@ -50,7 +50,10 @@
                "key" :tk/key
                "query" :tk/query
                "rule"  :tk/rule
-               "true" :tk/true})
+               "true" :tk/true
+               "and" "and"    ; Also in boolean-operators, but if not here, tokenizer will make symbols of them.
+               "or"  "or"     ; Also in boolean-operators, but if not here, tokenizer will make symbols of them.
+               "in"  "in"})   ; Also in comparison-operator, but if not here, tokenizer will make symbols of them???
 (def syntactic?
   "Chars that are valid tokens in themselves."
   #{\[, \], \(, \), \{, \}, \=, \,, \., \:, \;, \*, \+, \/, \-, \<, \>, \%, \&, \\, \? \`})
@@ -302,11 +305,10 @@
           {:ws ws :raw "" :tkn ::end-of-block},   ; Lazily pulling lines from line-seq; need more.
           ;; The problem with use of the clj regex in cljs is that it reads past the closing */
           (or  (when (re-matches #"(?s)/\*.*" s) (read-c-comment string-block)) ; JS needs the (?s) even though it is not used!
-               #_(when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"  ; #"(?s)(/\*.*\*/).*" ; NOT WORKING cljs <==============
-                                                    :clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*")
-                                               s)]   ; comment; JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
-                 {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
-
+;;;               (when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"  ; #"(?s)(/\*.*\*/).*" ; NOT WORKING cljs <==============
+;;;                                                    :clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*")
+;;;                                               s)]   ; comment; JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
+;;;                 {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
                (and (long-syntactic? c) (read-long-syntactic s ws))    ; string literals, /regex-pattern/ ++, <=, == etc.
                (when-let [[_ num] (re-matches #"(?s)([-]?\d+(\.\d+(e[+-]?\d+)?)?).*" s)] ; + cannot be used as a unary operator.
                  {:ws ws :raw num :tkn (util/read-str num)}),          ; number

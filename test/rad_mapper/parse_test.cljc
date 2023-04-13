@@ -175,7 +175,7 @@
     (is (= {:typ :QueryDef,
             :params [],
             :options nil,
-            :patterns
+            :patterns|qcall
             [{:typ :QueryPattern,
               :ent {:typ :Qvar, :qvar-name "?class"},
               :rel {:typ :PatternRole, :role-name :rdf/type},
@@ -207,11 +207,11 @@
              :def {:typ :QueryDef,
                    :options nil,
                    :params [{:typ :Jvar, :jvar-name "$name"}],
-                   :patterns [{:typ :QueryPattern,
-                               :ent {:typ :Qvar, :qvar-name "?e"},
-                               :rel {:typ :PatternRole, :role-name :name},
-                               :val {:typ :Jvar, :jvar-name "$name"}
-                               :db nil}]},
+                   :patterns|qcall [{:typ :QueryPattern,
+                                     :ent {:typ :Qvar, :qvar-name "?e"},
+                                     :rel {:typ :PatternRole, :role-name :name},
+                                     :val {:typ :Jvar, :jvar-name "$name"}
+                                     :db nil}]},
              :args [{:typ :Array,
                      :exprs [{:typ :ObjExp, :kv-pairs [{:typ :KVPair,
                                                         :key "name",

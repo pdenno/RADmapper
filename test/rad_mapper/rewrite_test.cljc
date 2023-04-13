@@ -8,11 +8,6 @@
    #?(:clj [dev.dutil-macros :as dutilm :refer [run-test unquote-body]]))
   #?(:cljs (:require-macros [dev.dutil-macros :as dutilm :refer [run-test unquote-body]])))
 
-
-;   [dev.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
-;  #?(:clj [dev.dutil-macros :as dutil :refer [vec2set run-test]]))
-;#?(:cljs (:require-macros [dev.dutil-macros :as dutil :refer [vec2set run-test]])))
-
 (defn run-rew
   "run-test for rewrite sets :rewrite? true."
   [exp expect & {:keys [keep-meta?]}]
@@ -195,6 +190,14 @@
            (ev/processRM :ptag/options-map "<|keepDBid   : true,
                                               otherStuff : true|>"
                          {:rewrite? true})))))
+
+;;; ToDo: Investigate this rewrite that contains :op/or {:typ :ReduceExp, :kv-pairs []}.
+;;;       The ReduceExp isn't what I intended.
+;;;       Note also that JSONata return false for "$lookup({}, 'a') or {}" (which isn't what I need either)!
+#_(deftest empty-object-in-exp
+  (testing "Empty object in an expression"
+    (run-rew "$assoc($x, $c, $lookup($shape($c, $spc), $c) or {})"
+             "Whatever, it doesn't rewrite.")))
 
 (deftest literal-bsets
   (testing "rewriting a literal-bsets"

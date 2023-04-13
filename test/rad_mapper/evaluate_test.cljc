@@ -437,24 +437,20 @@
   // This function just gets the children for a parent.
   $children := function($spc, $p) { $spc[?parent = $p].?child };
 
+  // This function calls itself recursively to build the schema shape, starting from the root.
   $shape := function($p, $spc) { $reduce($children($spc, $p),
                                          function($tree, $c)
                                              { $update($tree,
                                                        $p,
-                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c))}) },
+                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<data>')}) },
                                          {})};
 
-  $schema1PC    := $pcQuery($schema1);
-  $schema2PC    := $pcQuery($schema2);
-  $schema1Roots := $rootQuery($schema1);
+  $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.
+  $schema2PC    := $pcQuery($schema2);     // The first two return binding sets for {?parent x ?child y}
+  $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
   $schema2Roots := $rootQuery($schema2);
 
-  //{'s1pc'   : $schema1PC,
-  // 's1root' : $schema1Roots.?name[0],
-  // 's2pc'   : $schema2PC,
-  // 's2root' : $schema2Roots.?name[0]}
-
-  {'shape1' : $shape( $schema1Roots.?name[0], $schema1PC),
-   'shape2' : $shape( $schema2Roots.?name[0], $schema2PC)}
+  {'shape1' : $shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
+   'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 
 )"))

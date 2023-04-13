@@ -33,7 +33,8 @@
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
-            jflatten containerize containerize? container? flatten-except-json]])
+            jflatten containerize containerize? container? flatten-except-json]]
+   [wkok.openai-clojure.api :as openai])
   #?(:cljs (:require-macros [rad-mapper.builtin-macros]))
    #?(:clj
       (:import java.text.DecimalFormat
@@ -1600,7 +1601,7 @@
               :cljs (let [p (:promise opts)] ; ToDo: This should be passed in.
                       (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
                       (p/do
-                        (GET "/api/graph-query"
+                        (GET "/api/graph-query" ; ToDo: Use https://github.com/oliyh/martian
                              {:params {:ident-type k
                                        :ident-val v
                                        :request-objs (cl-format nil "~{~A~^|~}" (map name out-props))}
@@ -2298,3 +2299,109 @@
 (defn $update
   [m k f]
   (update m k f))
+
+(def shape1
+  {:ProcessInvoice
+   {:DataArea
+    {:Invoice
+     {:InvoiceLine
+      {:Item {:ManufacturingParty {:Name "<mfg-party-name-data>"}},
+       :BuyerParty {:Location {:Address {:AddressLine "<buyer-address-data>"}},
+                    :TaxIDSet {:ID "<tax-id-set-data>"}}}},
+     :Process "<process-data>"},
+    :ApplicationArea {:CreationDateTime "<creation-date-data>"}}})
+
+(def shape2
+  {:ProcessInvoice
+   {:DataArea
+    {:Invoice
+     {:InvoiceLine
+      {:Item {:ManufacturingParty {:Name "<mfg-party-name-data>"}},
+       :BuyerParty {:Location {:Address {:PostalCode "<postal-code-data>",
+                                         :StreetName "<street-name-data>",
+                                         :CountryCode "<country-code-data>",
+                                         :CityName "<city-name-data>",
+                                         :BuildingNumber "<building-number-data>"}},
+                    :TaxIDSet {:ID "<id-data>"}}}},
+     :Process "<process-data>"},
+    :ApplicationArea {:CreationDateTime "<creation-date-time-data>"}}})
+
+(def semantic-match-prompt
+  "A prompt for an LLM to produce a solution for reconciling information in two EDN structures.
+   See 'Active Prompting with Chain-of-Thought for Large Language Models', Shizhe Diao et al.
+   http://arxiv.org/abs/2302.12246"
+
+"Reconcile the two Clojure EDN data structures, identified below as :structure-one and :structure-two
+ by producing a vector of two EDN maps named :one-data-to-structure-two and :two-data-to-structure-one, which respectively describe how
+ the information abstracted out as \"<xxx-data>\" from :structure-one (:structure-two) can best be accommodated in :structure-two (:structure-one).
+ For example, given :structure-one and :structure-two as below:
+
+   {:name :structure-one
+    :structure {:Invoice
+                 {:InvoiceLine
+                    {:BuyerParty {:Location {:Address {:CompanyName \"<company-name-data>\"
+                                                       :Street \"<street-data>\"
+                                                       :BuildingNumber \"<building-number-data>\"
+                                                       :City \"<city-data>\"
+                                                       :State \"<state-data>\"
+                                                       :ZipCode \"<zip-code-data>\"}}
+                                   :TaxID \"<tax-id-data>\"}}}}}
+
+   {:name :structure-two
+    :structure {:Invoice
+                 {:InvoiceLine
+                    {:BuyerParty {:Location {:Address {:AddressLine \"<address-line-data>\"
+                                                       :City \"<city-data>\"
+                                                       :State \"<state-data>\"
+                                                       :PostalCode \"<postal-code-data>\"}}}}}}}
+
+   the resulting :one-data-to-structure-two and :two-data-to-structure-one are:
+
+   [{:name :one-data-to-structure-two
+     :reconciled {:Invoice
+                   {:InvoiceLine {:BuyerParty {:Location {:Address {:AddressLine (str \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\")
+                                                                    :PostalCode  \"<zip-code-data>\"}},
+                                  :TaxID :info/lost}}}}
+     :assumed-equivalence [[:BuyerParty :Buyer]]}
+
+    {:name :two-data-to-structure-one
+     :reconciled {:Invoice
+                   {:InvoiceLine {:Buyer {:Location {:Address {:CompanyName     (extract \"<address-line-data>\" :CompanyName)
+                                                               :Street          (extract \"<address-line-data>\" :Street)
+                                                               :BuildingNumber  (extract \"<address-line-data>\" :BuildingNumber)
+                                                                :ZipCode  \"<postal-code-data>\"}}}}}}
+     :assumed-equivalence [[:Buyer :BuyerParty]]}
+
+  Notice that:
+    (1) Clojure str is used on :one-data-to-two-structure to signify that AddressLine is concatenating
+        \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\" from :structure-one.
+        This is because those fields could be interpreted as part of the address indicated by :AddressLine.
+    (2) :info/lost is used on :two-data-to-structure-one.TaxID to signify that this information cannot be accommodated in :structure-one.
+    (3) A function 'extract' is presumed to exist; it's purpose is to extract information out of a text field that is presumed to contain such information.
+        For example, in :two-data-to-structure-one, (extract <address-line-data> :CompanyName) is used to extract a company name from :structure-two
+        because, were :structure-two data to provide company name information, :AddressLine is where it is likely to be found.
+    (4) Where the names of structures don't quite line up, but look similar, define a property :assumed-equivalence which, as shown above,
+        is a vector of two-element vectors, where the first element names a sub-structure in the target structure, and the second element is the
+        names a structure in the source data.
+    (5) Things that don't differ between the structures, like :City, and :State, don't need to appear in the solution.
+
+ Here is :structure-one and :structure-two:\n\n")
+
+(def example-1
+  {:structure-one {:Order
+                   {:OrderLine {:SellerParty {:Address {:AddressLine1 "<address-line1-data>"
+                                                        :AddressLine2 "<address-line2-data>"
+                                                        :Province "<province-data>"
+                                                        :Country "<country-data>"}}}}}
+   :structure-two {:Order
+                   {:OrderLine {:Seller {:Address {:CompanyName "<company-name-data>"
+                                                   :Building "<building-data>"
+                                                   :City "<city-data>"
+                                                   :State "<state-data>"
+                                                   :Country "<state-data>"}}}}}})
+
+(defn $semMatch
+  "Match terminology (of key fields) in two 'object shapes', producing two mappings,
+   one in each direction."
+  [s1 s2]
+  :NYI)
