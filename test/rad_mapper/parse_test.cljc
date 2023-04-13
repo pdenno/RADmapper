@@ -267,6 +267,7 @@
       (is (parse-ok? "$reduce([1..5], function($x,$y){$x + $y}, 100)"))
       (is (parse-ok? "$fn1($fn2($v).a.b)"))
       (is (parse-ok? "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"))
+      (is (parse-ok? "$lookup({}, 'a') or 'no match'")) ; Currently NOT okay! (JSONata returns true on execution of this, BTW.)
 
       (is (parse-ok? "( $x := 1; $f($x); $g($x) )")))))
 

@@ -188,8 +188,9 @@
   (let [fname (-> m :fn-name)]
     (if (builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
       (binding [*in-regex-fn?* (#{"$match" "$split" "$contains" "$replace"} fname)]
-        `(~(symbol "bi" fname) ~@(-> m :args rewrite)))
-      `(bi/fncall   {:func ~(symbol fname)      :args [~@(-> m :args rewrite)]}))))
+        `(~(symbol "bi" fname) ~@(binding [*inside-let?* false] (-> m :args rewrite))))
+      `(bi/fncall   {:func ~(symbol fname)
+                     :args [~@(binding [*inside-let?* false] (-> m :args rewrite))]}))))
 
 (defrewrite :RegExp [m]
     (if *in-regex-fn?*
@@ -399,65 +400,122 @@
              (map rewrite)
              wrap-non-path))))
 
-;;; (-> (ev/processRM :ptag/exp "( $a := 1; $b := 2; $f := function($x){$x+1}; $c := 3; $a )" {:rewrite? true}) du/nicer)
-;;; produces the following input to rewrite-nested-body:
-;;;#:r{:bindings [($a 1) ($b 2)],
-;;;    :body #:r{:bindings [($f {:typ :letfn, :vars [$x], :fn-body (bi/add $x 1)})],
-;;;              :body #:r{:bindings [($c 3)], :body $a}}}
-(defn rewrite-nested-body
+;;;   If the argument vector flat ends on a :JvarDecl, add a body that is the last variable bound.
+;;;   This is because, for example, '($x := 5)' (or '$x :=5' for that matter) should evaluate to 5,
+;;;   and to do that these should translate to (let [$x 5] $x)."
+
+(defn binding-maps2sexp
+  "Transform the {:r/bindings ... :r/body ...} objects to an s-expression.
+   For example rewriting ( $a := 1; $b := 2; $f := function($x){$x+1}; $c := 3 ) produces
+   the input to this function:
+    #:r{:bindings [($a 1) ($b 2)],
+        :body #:r{:bindings [($f {:typ :letfn, :vars [$x], :fn-body (bi/add $x 1)})],
+                  :body #:r{:bindings [($c 3)]}}}
+   which is translated to.
+  '(let [$a 1 $b 2]
+     (letfn [($f [$x] (bi/add $x 1))]
+       (let [$f (with-meta $f {:bi/params '[$x] :bi/type :bi/user-fn})]
+         (let [$c 3] $c))))
+    (Note the extra let to accommodate function metadata.)"
   [nested-body]
-  (letfn [(rnb [form] ; Rewrite nested-body
+  (letfn [(nbs [form]
             (cond (= :letfn (-> form :r/bindings first second :typ))
                   `(letfn [~@(map #(list (first %) (-> % second :vars) (-> % second :fn-body))
-                              (:r/bindings form))]
-                     ~(->> form :r/body rnb))
+                               (:r/bindings form))]
+                     (let [~@(mapcat #(list (first %)
+                                            `(with-meta ~(first %) {:bi/params '~(-> % second :vars) :bi/type :bi/user-fn}))
+                                  (:r/bindings form))]
+                       ~(->> form :r/body nbs)))
                   (:r/bindings form)
                   `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                     ~(->> form :r/body rnb))
-                  (vector? form)      (mapv rnb form),
-                  (seq? form)         (map rnb form),
-                  (map? form)         (reduce-kv (fn [m k v] (assoc m k (rnb v))) {} form),
+                     ~(->> form :r/body nbs))
+                  (vector? form)      (mapv nbs form),
+                  (seq? form)         (map nbs form),
+                  (map? form)         (reduce-kv (fn [m k v] (assoc m k (nbs v))) {} form),
                   :else               form))]
-    `(bi/primary
-      ~(cond (:r/bindings nested-body)              (rnb nested-body),
-             (== 1 (-> nested-body :r/body count))  (-> nested-body :r/body first rnb)
-             :else                                 `(do ~@(rnb (:r/body nested-body)))))))
+    (if (:r/bindings nested-body) ; ToDo: Does the 'else' ever happen anymore? (owing to separate :Primary)
+      (nbs nested-body)
+      `(do ~@(nbs (:r/body nested-body))))))
 
-;;; Where any of the :exps are JvarDecl, they need to wrap the things that follow in a let.
-;;; Essentially, this turns a sequence into a tree.
-;;; ToDo: Distinquish ":CodeBlock" from :Primary. All of the following is :CodeBlock!
+(defn nest-binding-maps
+  "Put each subsequent :r/binding or :r/body map in the :r/body of the previous one."
+  [flat]
+  (let [flat-stack (atom (rest flat))]
+    (letfn [(nest [obj]
+              (cond (empty? @flat-stack)     obj
+                    (-> obj :r/bindings not) (:r/body obj)
+                    :else                    (let [nxt (first @flat-stack)]
+                                               (swap! flat-stack rest)
+                                               (assoc obj :r/body (nest nxt)))))]
+      (-> flat first nest))))
+
+(defn add-last-body
+  "The final :r/bindings map may end without an :r/body. In that case, the expression
+   evaluates to the value of the last binding. To make this happen, we add an :r/body
+   if necessary."
+  [flat]
+  (conj (-> flat butlast vec)
+        (if (-> flat last (contains? :r/body))
+          (last flat)
+          (assoc (last flat)
+                 :r/body
+                 (-> flat last :r/bindings last first)))))
+
+(defn rewrite2binding-maps
+  "Argument is a vector of vectors of expressions (:ptag/exp) where each expressions of each sub-vector
+   are of the same type
+    (1) :JvarDecls binding non-function values,
+    (2) :JvarDecls binding functions,
+    (3) A final expression that is neither of these.
+   The result is a rewrite of these to maps with :r/bindings (and the last one with a :r/body).
+   Note that $x := val evaluates to value, so if there is no explicit final :r/body, the last binding is used.
+   For example, output for ( $a := 1; $b := 2; $f := function($x){$x+1}; $c := 3 ) is
+      [#:r{:bindings [($a 1) ($b 2)]}
+       #:r{:bindings [($f {:typ :letfn, :vars [$x], :fn-body (bi/add $x 1)})]}
+       #:r{:bindings [($c 3)], :body $c}]"
+  [segs]
+  (loop [segs segs
+         res []]
+    (if (empty? segs) res
+        (let [seg (first segs)
+              new-forms (if (= :JvarDecl (-> seg first :typ))
+                          (reduce (fn [r form] ; Doesn't make sense to have :body except last. (No side-effects!)
+                                    (if (= :JvarDecl (:typ form))
+                                      (update r :r/bindings conj (binding [*inside-let?* true] (rewrite form))),
+                                      (assoc  r :r/body (rewrite form)))) ; body is an expression.
+                                  {:r/bindings []}
+                                  seg)
+                          {:r/body (mapv rewrite seg)})]
+          (recur (rest segs) (conj res new-forms))))))
+
+;;; Argument is {:typ :CodeBlock :exps [<:ptag/exps>]}, but since those exps can be JvarDecl assignments,
+;;; which are translated to either let or letfn, they have to nest.
+;;; Note that this was split off from :Primary in the parser. :Primary is just one expression, whereas
+;;; these should be all JvarDecls, except optionally the last one, which is any :ptag/exp.
+(defrewrite :CodeBlock [m]
+  (letfn [(typ [x] (cond (and (= :JvarDecl (:typ x)) (= :FnDef (-> x :init-val :typ))) :letfn,
+                         (= :JvarDecl (:typ x))                                        :let,
+                         :else                                                         :ptag/exp))]
+    (let [segs (loop [exps (-> m :exps rest)
+                      ty (-> m :exps first typ)
+                      res [(-> m :exps first vector)]]
+                 (let [next-ty (-> exps first typ)]
+                   (if (empty? exps)
+                     res
+                     (recur
+                      (rest exps)
+                      next-ty
+                      (if (or (= ty next-ty) (= :ptag/exp next-ty))
+                        (update-in res [(-> res count dec)] conj (first exps))
+                        (conj res (-> exps first vector)))))))]
+      ;; This is a good place to comment out calls and see how rewriting is going.
+      (-> segs rewrite2binding-maps add-last-body nest-binding-maps binding-maps2sexp))))
+
 (defrewrite :Primary [m]
+  (when (> (-> m :exps count) 1)
+    (throw (ex-info "Primary with multiple expressions." {:exp m})))
   (binding [*inside-step?* true]
-    (let [segs (util/split-by (complement #(= :JvarDecl (:typ %))) (:exps m)) ; split a let, OR is new for letfn.
-          ;; Split some more to distinguish where the :JvarDecl is binding a function.
-          segs (mapcat (fn [x] (util/split-by (complement #(= :FnDef (-> % :init-val :typ))) x)) segs)
-          segs (mapcat (fn [x] (util/split-by #(= :FnDef (-> % :init-val :typ)) x)) segs)
-          ;; ( $a := 1; $b := 2; $f := function($x){$x+1}; $c := 3; $a ) ==> flat is the following:
-          ;; [#:r{:bindings [($a 1) ($b 2)]}
-          ;;  #:r{:bindings [($f {:typ :letfn, :vars [$x], :fn-body (bi/add $x 1)})]}
-          ;;  #:r{:bindings [($c 3)], :body $a}]
-          flat (loop [segs segs
-                      res []]
-                 (if (empty? segs) res
-                     (let [seg (first segs)
-                           new-forms (if (= :JvarDecl (-> seg first :typ))
-                                       (reduce (fn [r form] ; Doesn't make sense to have :body except last. (No side-effects!)
-                                                 (binding [*inside-let?* true]
-                                                   (if (= :JvarDecl (:typ form))
-                                                     (update r :r/bindings conj (rewrite form)),
-                                                     (assoc  r :r/body (rewrite form))))) ; body is an expression.
-                                               {:r/bindings []}
-                                               seg)
-                                       {:r/body (rewrite seg)})] ; This was mapv rewrite. Hmmm.
-                       (recur (rest segs) (conj res new-forms)))))
-          flat-stack (atom (rest flat))]
-      (letfn [(nest [obj]
-                (if (empty? @flat-stack) obj
-                    (let [nxt (first @flat-stack)]
-                      (swap! flat-stack #(-> % rest vec))
-                      (assoc obj :r/body (nest nxt)))))]
-        (let [res (-> flat first nest)]
-          (rewrite-nested-body res))))))
+    `(bi/primary  ~(-> m :exps first rewrite))))
 
 (defrewrite :ApplyFilter [m]
   (reset-dgensym!)

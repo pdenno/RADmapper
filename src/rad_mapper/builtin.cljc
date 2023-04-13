@@ -330,7 +330,7 @@
       (apply func args)
       (throw (ex-info (cl-format nil "A function of type ~A expected ~A args; it got ~A."
                                  (-> func meta :bi/fn-type) cnt (count args)) {})))
-    (apply func args)))
+        (apply func args)))
 
 ;;;--------------------------- JSONata built-in functions ------------------------------------
 
@@ -2232,7 +2232,7 @@
                                           k (keys obj)
                                           v (vals obj)]
                                       [k v i])))
-          :else (throw (ex-info "Second argument to $mapObject shoud be a function of 2 or 3 arguments."
+          :else (throw (ex-info "Second argument to $mapObject should be a function of 2 or 3 arguments."
                                 {:arg-cnt arg-cnt})))))
 
 ;;; $qIdent({'id' : [123, 456], 'aAttr' : {'val' : 'A-value'}}) ==> [[?e1 :id ?v1] [?e1 :aAttr ?e2] [?e2 :val ?v2]]
@@ -2286,9 +2286,10 @@
 
 ;;; ===== These were conceived for the Dataweave example; they might not survive.
 (defn $reduceKV
-  "Reduce INIT by calling FUN with each key/value pair of OBJ."
-  [coll fn init] ; I changed this to make it match $reduce !
-  (reduce-kv fn init coll))
+  "Reduce INIT by calling FUN with each key/value pair of OBJ.
+   Signature: $reduceKV (obj, function [, init])"
+  ([obj fn] ($reduceKV obj fn {}))
+  ([obj fn init] (reduce-kv fn init obj)))
 
 (defn $assoc
   [obj k v]

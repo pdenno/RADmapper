@@ -852,7 +852,11 @@
   [ps]
   (as-> ps ?ps
     (parse-list ?ps \( \) \; :ptag/exp)
-    (assoc ?ps :result {:typ :Primary :exps (:result ?ps)})))
+    (assoc ?ps :result
+           {:typ (if (some #(= :JvarDecl (:typ %)) (:result ?ps))
+                   :CodeBlock
+                   :Primary)
+            :exps (:result ?ps)})))
 
 ;;; <filter-exp> := '[' <exp> ']'
 (s/def ::ApplyFilter (s/keys :req-un [::body])) ; This accommodates aref expressions too.

@@ -290,7 +290,7 @@
                         "uom" "unit"}})))
       (testing " Testing User's Guide interop $reduceKV."
         (testing " Testing $reduceKV"
-          (run-test "$reduceKV(function($res, $k, $v){ $assoc($res, $uppercase($k), $v) }, {}, {'a' : 1, 'b' : 2})"
+          (run-test "$reduceKV({'a' : 1, 'b' : 2}, function($res, $k, $v){ $assoc($res, $uppercase($k), $v) })"
                     {"A" 1, "B" 2}))
         (testing " Testing User's Guide interop $reduceKV."
           (run "( $order := {'name'            : 'Example Customer',
