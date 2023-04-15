@@ -25,7 +25,7 @@
               [promesa.core         :as p]])
    [cemerick.url                      :as url]
    [clojure.spec.alpha                :as s]
-   [clojure.pprint                             :refer [cl-format]]
+   [clojure.pprint                             :refer [cl-format pprint]]
    [clojure.string                    :as str  :refer [index-of]]
    [clojure.walk                      :as walk :refer [keywordize-keys]]
    [rad-mapper.query              :as qu]
@@ -2326,82 +2326,184 @@
      :Process "<process-data>"},
     :ApplicationArea {:CreationDateTime "<creation-date-time-data>"}}})
 
-(def semantic-match-prompt
+;;; https://platform.openai.com/docs/guides/chat/introduction
+
+
+(def semantic-match-instructions
   "A prompt for an LLM to produce a solution for reconciling information in two EDN structures.
-   See 'Active Prompting with Chain-of-Thought for Large Language Models', Shizhe Diao et al.
-   http://arxiv.org/abs/2302.12246"
+   See (1) Wei et al. 'Chain-of-Thought Prompting Elicits Reasoning in Large Language Models'
+           https://arxiv.org/abs/2201.11903
+       (2) Shizhe Diao et al., 'Active Prompting with Chain-of-Thought for Large Language Models',
+           http://arxiv.org/abs/2302.12246"
 
-"Reconcile the two Clojure EDN data structures, identified below as :structure-one and :structure-two
- by producing a vector of two EDN maps named :one-data-to-structure-two and :two-data-to-structure-one, which respectively describe how
- the information abstracted out as \"<xxx-data>\" from :structure-one (:structure-two) can best be accommodated in :structure-two (:structure-one).
- For example, given :structure-one and :structure-two as below:
+  "Perform an information mapping task as described below.
+You are provided with two Clojure nested map structure, one structure has :name :source-structure, the other has :name :target-structure.
+You are to describe how the information in :source-structure can be accommodated in :target-structure.
+Provide your answer in the form of a Clojure nested map structure having the form of :target-structure but containing data from :source-structure.
+As shown in the examples below, you will be replacing :target-structure <replace-me> strings with <xxx-data>, where xxx
+is kabob-case version of the corresponding :target-structure camel-case key.
+For example, key :CompanyName corresponds to data <company-name-data>.
 
-   {:name :structure-one
+Because the mapping is not likely to be 1-1, you should use the following functions and features to make things work:
+  (1) The Clojure function 'str' can be used to represent that data from multiple :source-structure keys is being concatenated
+      as the vlaue of a key in :target-structure.
+      For example, if :source-structure has nested somewhere the keys :Company :Street and :BuildingName, but :target-structure
+      has only :AddressLine1, you can replace the <replace-me> in :AddressLine1 with
+      (str <company-data> <street-data> <building-name-data>)
+
+  (2) Conversely, if a key in :source-structure potentially provides multiple items of data used in :target-structure,
+      the pseudo-function 'extract' can be used to indicate that you believe that the needed data can be found in
+      the named :source-structure key. For example, if :target-structure has the key :Company and :source-structure
+      has only :AddressLine1, you can replace the <replace-me> in :Company with (extract <address-line1-data> :Company).
+
+  (3) If there is nothing in :source-structure that seems to match the needed information in :target-structure,
+      just leave the value <replace-me> in the target structure.
+
+  (4) If the names of keys don't quite match, but the substructure below it matches well enough to conclude that
+      the same information is probably intended, include a key in your answer :assumed-equivalent, which
+      is a vector of two-element subvectors. For example, if :source-structure has a key :Buyer,
+      and :target-structure does not have :Buyer, but has :BuyerParty and the substructure between :Buyer and
+      :Buyer party is somewhat similar, include in :assumed-equivalent [:Buyer, :BuyerParty].
+
+   (5) The answer is always a single Clojure map with two keys: :result and :assumed-eqivalent.")
+
+(def example-1-q
+"   {:name :source-structure
     :structure {:Invoice
                  {:InvoiceLine
-                    {:BuyerParty {:Location {:Address {:CompanyName \"<company-name-data>\"
-                                                       :Street \"<street-data>\"
-                                                       :BuildingNumber \"<building-number-data>\"
-                                                       :City \"<city-data>\"
-                                                       :State \"<state-data>\"
-                                                       :ZipCode \"<zip-code-data>\"}}
+                    {:Buyer {:Location {:Address {:CompanyName \"<company-name-data>\"
+                                                  :Street \"<street-data>\"
+                                                  :BuildingNumber \"<building-number-data>\"
+                                                  :City \"<city-data>\"
+                                                  :State \"<state-data>\"
+                                                  :ZipCode \"<zip-code-data>\"}}
                                    :TaxID \"<tax-id-data>\"}}}}}
 
-   {:name :structure-two
+   {:name :target-structure
     :structure {:Invoice
                  {:InvoiceLine
-                    {:BuyerParty {:Location {:Address {:AddressLine \"<address-line-data>\"
-                                                       :City \"<city-data>\"
-                                                       :State \"<state-data>\"
-                                                       :PostalCode \"<postal-code-data>\"}}}}}}}
+                    {:BuyerParty
+                       {:Location {:Address {:AddressLine1 \"<replace-me>\"
+                                             :City \"<replace-me>\"
+                                             :State \"<replace-me>\"
+                                             :PostalCode \"<replace-me>\"}}}}}}}")
 
-   the resulting :one-data-to-structure-two and :two-data-to-structure-one are:
+(def example-1-a
+  "{:assumed-equivalent [[:BuyerParty :Buyer], [:PostalCode :ZipCode]]
+    :result {:Invoice
+                {:InvoiceLine
+                  {:BuyerParty
+                    {:Location {:Address {:AddressLine1 (str \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\")
+                                          :City \"<city-data>\"
+                                          :State \"<state-data>\"
+                                          :PostalCode  \"<zip-code-data>\"}}}}}}}")
 
-   [{:name :one-data-to-structure-two
-     :reconciled {:Invoice
-                   {:InvoiceLine {:BuyerParty {:Location {:Address {:AddressLine (str \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\")
-                                                                    :PostalCode  \"<zip-code-data>\"}},
-                                  :TaxID :info/lost}}}}
-     :assumed-equivalence [[:BuyerParty :Buyer]]}
+(def example-1-chain-of-thought
+  "In the above,
+    (1) :AddressLine1 concatenates data from source keys :CompanyName :Street and :BuildingNumber.
+    (2) :City and :State are mapped identically in the source and target.
+    (3) :target-structure :PostalCode contains data from :source-structure :ZipCode because they are probably about the same thing.
+    (4) :target-structure :BuyerParty contains data from :source-structure :Buyer because they are probably about the same thing.")
 
-    {:name :two-data-to-structure-one
-     :reconciled {:Invoice
-                   {:InvoiceLine {:Buyer {:Location {:Address {:CompanyName     (extract \"<address-line-data>\" :CompanyName)
-                                                               :Street          (extract \"<address-line-data>\" :Street)
-                                                               :BuildingNumber  (extract \"<address-line-data>\" :BuildingNumber)
-                                                                :ZipCode  \"<postal-code-data>\"}}}}}}
-     :assumed-equivalence [[:Buyer :BuyerParty]]}
+(def example-2-q
+"   {:name :source-structure
+    :structure {:Invoice
+                 {:InvoiceLine
+                    {:BuyerParty
+                       {:Location {:Address {:AddressLine1 \"<address-line1-data>\"
+                                             :City \"<city-data>\"
+                                             :State \"<state-data>\"
+                                             :PostalCode \"<postal-code-data>\"}}}}}}}
 
-  Notice that:
-    (1) Clojure str is used on :one-data-to-two-structure to signify that AddressLine is concatenating
-        \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\" from :structure-one.
-        This is because those fields could be interpreted as part of the address indicated by :AddressLine.
-    (2) :info/lost is used on :two-data-to-structure-one.TaxID to signify that this information cannot be accommodated in :structure-one.
-    (3) A function 'extract' is presumed to exist; it's purpose is to extract information out of a text field that is presumed to contain such information.
-        For example, in :two-data-to-structure-one, (extract <address-line-data> :CompanyName) is used to extract a company name from :structure-two
-        because, were :structure-two data to provide company name information, :AddressLine is where it is likely to be found.
-    (4) Where the names of structures don't quite line up, but look similar, define a property :assumed-equivalence which, as shown above,
-        is a vector of two-element vectors, where the first element names a sub-structure in the target structure, and the second element is the
-        names a structure in the source data.
-    (5) Things that don't differ between the structures, like :City, and :State, don't need to appear in the solution.
 
- Here is :structure-one and :structure-two:\n\n")
+   {:name :target-structure
+    :structure {:Invoice
+                 {:InvoiceLine
+                    {:Buyer {:Location {:Address {:CompanyName \"<replace-me>\"
+                                                  :Street \"<replace-me>\"
+                                                  :BuildingNumber \"<replace-me>\"
+                                                  :City \"<replace-me>\"
+                                                  :State \"<replace-me>\"
+                                                  :ZipCode \"<replace-me>\"}}
+                             :TaxID \"<replace-me>\"}}}}}")
 
-(def example-1
-  {:structure-one {:Order
-                   {:OrderLine {:SellerParty {:Address {:AddressLine1 "<address-line1-data>"
-                                                        :AddressLine2 "<address-line2-data>"
-                                                        :Province "<province-data>"
-                                                        :Country "<country-data>"}}}}}
-   :structure-two {:Order
-                   {:OrderLine {:Seller {:Address {:CompanyName "<company-name-data>"
-                                                   :Building "<building-data>"
-                                                   :City "<city-data>"
-                                                   :State "<state-data>"
-                                                   :Country "<state-data>"}}}}}})
+(def example-2-a
+  "{:assumed-equivalent [[:Buyer :BuyerParty], [PostalCode, ZipCode]]
+    :result {:Invoice
+               {:InvoiceLine
+                  {:BuyerParty {:Location {:Address {:CompanyName     (extract \"<address-line1-data>\" :CompanyName)
+                                                     :Street          (extract \"<address-line1-data>\" :Street)
+                                                     :BuildingNumber  (extract \"<address-line1-data>\" :BuildingNumber)
+                                                     :City \"<city-data>\"
+                                                     :State \"<state-data>\"
+                                                     :ZipCode  \"<postal-code-data>\"}}}
+                            :TaxID \"<replace-me>\"}}}}")
+
+(def example-2-chain-of-thought
+  "   In the above:
+       (1) The pseudo-function extract is used to pull :CompanyName, :Street and :BuildingNumber from :source-structure <address-line1-data>.
+       (2) Nothing in :source-structure provide :TaxID, so that keys in the :result is left as <replace-me>.")
+
+;  Here are the :source-structure and :target-structure I would like you to process :\n\n")
+
+(def ask-1-source
+  {:name :source-structure
+   :structure {:Order
+               {:OrderLine {:SellerParty {:Address {:AddressLine1 "<address-line1-data>"
+                                                    :AddressLine2 "<address-line2-data>"
+                                                    :City "<city-data>"
+                                                    :Province "<province-data>"
+                                                    :Country "<country-data>"}}}}}})
+(def ask-1-target
+  {:name :target-structure
+   :structure {:Order
+               {:OrderLine {:Seller {:Address {:CompanyName "<replace-me>"
+                                               :Building "<replace-me>"
+                                               :City "<replace-me>"
+                                               :State "<replace-me>"
+                                               :Country "<replace-me>"}}}}}})
+
+;;;(def tryme-prompt
+;;;  (str semantic-match-prompt
+;;;       (with-out-str (pprint example-1-source) (println) (pprint example-1-target))))
+
+(def real-example (with-out-str (pprint ask-1-source) (println) (pprint ask-1-target)))
 
 (defn $semMatch
-  "Match terminology (of key fields) in two 'object shapes', producing two mappings,
-   one in each direction."
-  [s1 s2]
-  :NYI)
+  "Match terminology (of keys) in two 'object shapes', producing a mapping."
+  []
+  (when-not (System/getenv "OPENAI_API_KEY")
+    (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
+  (openai/create-chat-completion
+   {:model "gpt-3.5-turbo"
+    :messages [{:role "user" :content semantic-match-instructions}
+               {:role "user"      :content example-1-q}
+               {:role "assistant" :content example-1-a}
+               ;{:role "assistant" :content example-1-chain-of-thought}
+               {:role "user"      :content example-2-q}
+               {:role "assistant" :content example-2-a}
+               ;{:role "assistant" :content example-2-chain-of-thought}
+               {:role "user"      :content real-example}]}))
+
+(def tryme1-prompt
+  "The following is a Clojure EDN map structure.
+   What do you suppose the structure represents?
+   What do each of its key represent?
+
+  {:Address {:CompanyName \"<company-name-data>\"
+             :Building \"<building-data>\"
+             :City \"<city-data>\"
+             :State \"<state-data>\"
+             :Country \"<country-data>\"}}")
+
+
+(defn tryme1 []
+  (openai/create-chat-completion
+   {:model "gpt-3.5-turbo"
+    :messages [{:role "user" :content tryme1-prompt}]}))
+
+
+(defn tryme []
+  (openai/create-completion
+   {:model "text-davinci-003"
+    :prompt "Say this is a test"}))
