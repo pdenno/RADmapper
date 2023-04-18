@@ -5,6 +5,7 @@
    #?(:clj [clojure.java.io])
    [clojure.pprint             :refer [cl-format]]
    [clojure.spec.alpha         :as s]
+   [promesa.core               :as p]
    [rad-mapper.builtin         :as bi]
    [rad-mapper.builtin-macros  :as bim]
    [rad-mapper.query           :as qu]
@@ -69,7 +70,7 @@
 
 (defrewrite :StringLit [m] (:value m))
 
-;;; These are (<var> <init>) that are mapcat into a let.
+;;; These are (<var> <init>) that are mapcat into a let. Evaluates to <init>.
 (defrewrite :JvarDecl [m]
   (reset-dgensym!)
   (letfn [(name-exp-pair [x]
@@ -82,10 +83,10 @@
                     :else
                     `(~(->> x :var rewrite)
                       ~(-> x :init-val rewrite)))))]
-    (if *inside-let?* ; Not sure when this wouldn't be true!
+    (if *inside-let?* ; True except when no CodeBlock.
       (name-exp-pair m)
-      `(let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no primary.
-         ~(-> m :var rewrite)))))
+      `(deref (p/let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
+                ~(-> m :var rewrite))))))
 
 (defrewrite :Jvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
@@ -427,8 +428,8 @@
                                   (:r/bindings form))]
                        ~(->> form :r/body nbs)))
                   (:r/bindings form)
-                  `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                     ~(->> form :r/body nbs))
+                  `(deref (p/let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                            ~(->> form :r/body nbs)))
                   (vector? form)      (mapv nbs form),
                   (seq? form)         (map nbs form),
                   (map? form)         (reduce-kv (fn [m k v] (assoc m k (nbs v))) {} form),

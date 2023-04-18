@@ -20,14 +20,14 @@
        :cljs [[datascript.core              :as d]
               [datascript.pull-api  :as dp]
               ["nata-borrowed"      :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
-              [goog.crypt.base64    :as jsb64]
-              [goog.net.XhrIo]              ; trying to fix problem with ajax. <====================
-              [promesa.core         :as p]])
+              [goog.crypt.base64    :as jsb64]])
    [cemerick.url                      :as url]
+   [camel-snake-kebab.core            :as csk]
    [clojure.spec.alpha                :as s]
    [clojure.pprint                             :refer [cl-format pprint]]
    [clojure.string                    :as str  :refer [index-of]]
    [clojure.walk                      :as walk :refer [keywordize-keys]]
+   [promesa.core                      :as p]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util :refer [qvar? box unbox]]
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
@@ -171,6 +171,8 @@
       :bi/get-filter ; The special non-compositional one.
       (#{:bi/init-step :bi/filter-step :bi/get-step :bi/value-step :bi/primary :bi/map-step} step-one))))
 
+(def diag (atom nil))
+
 ;;; ------------------ Path implementation ---------------------------------
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
@@ -178,27 +180,30 @@
   ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
   ;;(log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (loop [steps steps
-           res   @$]
-      (if (empty? steps) res
-          (let [styp (step-type steps)
-                sfn  (first steps)
-                new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
-                          :bi/init-step    (-> (sfn @$) containerize?),
-                          :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
-                                                                :bi/attr (-> sfn meta :bi/arg)}),
-                          :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
-                          :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
-                          :bi/value-step   (if (vector? res)
-                                             (mapv #(binding [$ (atom %)] (sfn $)) res)
-                                             (sfn res)),
-                          :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
-                          :bi/map-step     (cmap sfn (containerize? res)), ; get-step is a function; this is a macro; it just executes its body.
-                          (throw (ex-info "Invalid step" {:sfn  sfn})))]
-            ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
-            ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-            (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
-                   (set-context! new-res)))))))
+    (deref
+     (p/loop [steps steps
+              res   @$]
+       (if (empty? steps) res
+           (let [styp (step-type steps)
+                 sfn  (first steps)
+                 new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
+                           :bi/init-step    (-> (sfn @$) containerize?),
+                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
+                                                                 :bi/attr (-> sfn meta :bi/arg)}),
+                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
+                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
+                           :bi/value-step   (if (vector? res)
+                                              (mapv #(binding [$ (atom %)] (sfn $)) res)
+                                              (sfn res)),
+                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
+                           :bi/map-step     (cmap sfn (containerize? res)), ; get-step is a function; this is a macro; it just executes its body.
+                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
+             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
+             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+             (p/recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+                      (set-context! (cond (and (p/promise? new-res) (p/done? new-res)) (p/extract new-res),
+                                          (p/promise? new-res)      (do (log/info "What to do?") (reset! diag new-res))
+                                          :else                     new-res)))))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
 ;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
@@ -1558,29 +1563,11 @@
            [_fname _opts]
            (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
-(def diag (atom nil))
 (def result-atm (atom nil))
 
 ;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
 ;;;  = (schema-db.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
 
-(defn $get
-  "Read a file of JSON or XML, creating a map."
-  ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
-  ([spec opts]
-   (cond (string? spec)    (read-local spec opts)
-         (vector? spec)
-         (let [[[k v] out-props] spec
-               ident-map {(keyword k) v} ; ident-map
-               outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
-                                (when-not (and ns nam)
-                                  (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
-                                (keyword ns nam))
-                             out-props)]
-           (reset! diag {:ident-map ident-map :outputs outputs})
-           #?(:clj (pathom-resolve ident-map outputs))))))
-
-;;; PPP
 #_(defn $get
   "Read a file of JSON or XML, creating a map."
   ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
@@ -1594,7 +1581,22 @@
                                   (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
                                 (keyword ns nam))
                              out-props)]
-           (reset! diag {:ident-map ident-map :outputs outputs})
+           #?(:clj (pathom-resolve ident-map outputs))))))
+
+;;; PPP
+(defn $get
+  "Read a file of JSON or XML, creating a map."
+  ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
+  ([spec opts]
+   (cond (string? spec)    (read-local spec opts)
+         (vector? spec)
+         (let [[[k v] out-props] spec
+               ident-map {(keyword k) v} ; ident-map
+               outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
+                                (when-not (and ns nam)
+                                  (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
+                                (keyword ns nam))
+                             out-props)]
            #?(:clj (pathom-resolve ident-map outputs)
               ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
               ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
@@ -2300,35 +2302,7 @@
   [m k f]
   (update m k f))
 
-(def shape1
-  {:ProcessInvoice
-   {:DataArea
-    {:Invoice
-     {:InvoiceLine
-      {:Item {:ManufacturingParty {:Name "<mfg-party-name-data>"}},
-       :BuyerParty {:Location {:Address {:AddressLine "<buyer-address-data>"}},
-                    :TaxIDSet {:ID "<tax-id-set-data>"}}}},
-     :Process "<process-data>"},
-    :ApplicationArea {:CreationDateTime "<creation-date-data>"}}})
-
-(def shape2
-  {:ProcessInvoice
-   {:DataArea
-    {:Invoice
-     {:InvoiceLine
-      {:Item {:ManufacturingParty {:Name "<mfg-party-name-data>"}},
-       :BuyerParty {:Location {:Address {:PostalCode "<postal-code-data>",
-                                         :StreetName "<street-name-data>",
-                                         :CountryCode "<country-code-data>",
-                                         :CityName "<city-name-data>",
-                                         :BuildingNumber "<building-number-data>"}},
-                    :TaxIDSet {:ID "<id-data>"}}}},
-     :Process "<process-data>"},
-    :ApplicationArea {:CreationDateTime "<creation-date-time-data>"}}})
-
 ;;; https://platform.openai.com/docs/guides/chat/introduction
-
-
 (def semantic-match-instructions
   "A prompt for an LLM to produce a solution for reconciling information in two EDN structures.
    See (1) Wei et al. 'Chain-of-Thought Prompting Elicits Reasoning in Large Language Models'
@@ -2336,174 +2310,147 @@
        (2) Shizhe Diao et al., 'Active Prompting with Chain-of-Thought for Large Language Models',
            http://arxiv.org/abs/2302.12246"
 
-  "Perform an information mapping task as described below.
-You are provided with two Clojure nested map structure, one structure has :name :source-structure, the other has :name :target-structure.
-You are to describe how the information in :source-structure can be accommodated in :target-structure.
-Provide your answer in the form of a Clojure nested map structure having the form of :target-structure but containing data from :source-structure.
-As shown in the examples below, you will be replacing :target-structure <replace-me> strings with <xxx-data>, where xxx
-is kabob-case version of the corresponding :target-structure camel-case key.
-For example, key :CompanyName corresponds to data <company-name-data>.
+;;; 1416 tokens! Careful about trailing blanks!
+  "Wherever you can replace each <replace-me> in the target_form with similar information from the source_form.
+Both source_form and target_form are Clojure maps.
+Because data in source_form does not match data in target_form perfectly, you should dothe following o make things work:
 
-Because the mapping is not likely to be 1-1, you should use the following functions and features to make things work:
-  (1) The Clojure function 'str' can be used to represent that data from multiple :source-structure keys is being concatenated
-      as the vlaue of a key in :target-structure.
-      For example, if :source-structure has nested somewhere the keys :Company :Street and :BuildingName, but :target-structure
-      has only :AddressLine1, you can replace the <replace-me> in :AddressLine1 with
-      (str <company-data> <street-data> <building-name-data>)
+(1) If target_form combines data from multiple target_form fields, use the Clojure str to concatenate them.
 
-  (2) Conversely, if a key in :source-structure potentially provides multiple items of data used in :target-structure,
-      the pseudo-function 'extract' can be used to indicate that you believe that the needed data can be found in
-      the named :source-structure key. For example, if :target-structure has the key :Company and :source-structure
-      has only :AddressLine1, you can replace the <replace-me> in :Company with (extract <address-line1-data> :Company).
+For example, if source_form has specific data fields for address and target_form has only has a general field :AddressLine1 that might
+accommodate that information:
+##
+source_fields:
+ :Company <company-data>
+ :Street  <street-data>
+ :BuildingName <building-name-data>
 
-  (3) If there is nothing in :source-structure that seems to match the needed information in :target-structure,
-      just leave the value <replace-me> in the target structure.
-
-  (4) If the names of keys don't quite match, but the substructure below it matches well enough to conclude that
-      the same information is probably intended, include a key in your answer :assumed-equivalent, which
-      is a vector of two-element subvectors. For example, if :source-structure has a key :Buyer,
-      and :target-structure does not have :Buyer, but has :BuyerParty and the substructure between :Buyer and
-      :Buyer party is somewhat similar, include in :assumed-equivalent [:Buyer, :BuyerParty].
-
-   (5) The answer is always a single Clojure map with two keys: :result and :assumed-eqivalent.")
-
-(def example-1-q
-"   {:name :source-structure
-    :structure {:Invoice
-                 {:InvoiceLine
-                    {:Buyer {:Location {:Address {:CompanyName \"<company-name-data>\"
-                                                  :Street \"<street-data>\"
-                                                  :BuildingNumber \"<building-number-data>\"
-                                                  :City \"<city-data>\"
-                                                  :State \"<state-data>\"
-                                                  :ZipCode \"<zip-code-data>\"}}
-                                   :TaxID \"<tax-id-data>\"}}}}}
-
-   {:name :target-structure
-    :structure {:Invoice
-                 {:InvoiceLine
-                    {:BuyerParty
-                       {:Location {:Address {:AddressLine1 \"<replace-me>\"
-                                             :City \"<replace-me>\"
-                                             :State \"<replace-me>\"
-                                             :PostalCode \"<replace-me>\"}}}}}}}")
-
-(def example-1-a
-  "{:assumed-equivalent [[:BuyerParty :Buyer], [:PostalCode :ZipCode]]
-    :result {:Invoice
-                {:InvoiceLine
-                  {:BuyerParty
-                    {:Location {:Address {:AddressLine1 (str \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\")
-                                          :City \"<city-data>\"
-                                          :State \"<state-data>\"
-                                          :PostalCode  \"<zip-code-data>\"}}}}}}}")
-
-(def example-1-chain-of-thought
-  "In the above,
-    (1) :AddressLine1 concatenates data from source keys :CompanyName :Street and :BuildingNumber.
-    (2) :City and :State are mapped identically in the source and target.
-    (3) :target-structure :PostalCode contains data from :source-structure :ZipCode because they are probably about the same thing.
-    (4) :target-structure :BuyerParty contains data from :source-structure :Buyer because they are probably about the same thing.")
-
-(def example-2-q
-"   {:name :source-structure
-    :structure {:Invoice
-                 {:InvoiceLine
-                    {:BuyerParty
-                       {:Location {:Address {:AddressLine1 \"<address-line1-data>\"
-                                             :City \"<city-data>\"
-                                             :State \"<state-data>\"
-                                             :PostalCode \"<postal-code-data>\"}}}}}}}
+answer:
+ :AddressLine1 (str <company-data> <street-data> <building-name-data>).
+##
+(2) Conversely, if source_form has a general field that might contain information for more specific target_form fields:
 
 
-   {:name :target-structure
-    :structure {:Invoice
-                 {:InvoiceLine
-                    {:Buyer {:Location {:Address {:CompanyName \"<replace-me>\"
-                                                  :Street \"<replace-me>\"
-                                                  :BuildingNumber \"<replace-me>\"
-                                                  :City \"<replace-me>\"
-                                                  :State \"<replace-me>\"
-                                                  :ZipCode \"<replace-me>\"}}
-                             :TaxID \"<replace-me>\"}}}}}")
+##
+source_field:
+ :AddressLine1 <address-line-1-data>
 
-(def example-2-a
-  "{:assumed-equivalent [[:Buyer :BuyerParty], [PostalCode, ZipCode]]
-    :result {:Invoice
-               {:InvoiceLine
-                  {:BuyerParty {:Location {:Address {:CompanyName     (extract \"<address-line1-data>\" :CompanyName)
-                                                     :Street          (extract \"<address-line1-data>\" :Street)
-                                                     :BuildingNumber  (extract \"<address-line1-data>\" :BuildingNumber)
-                                                     :City \"<city-data>\"
-                                                     :State \"<state-data>\"
-                                                     :ZipCode  \"<postal-code-data>\"}}}
-                            :TaxID \"<replace-me>\"}}}}")
+answer:
+ :Company (extract <address-line-1-data> :Company)
+ :Street (extract <address-line-1-data> :Street)
+ :BuildingName (extract <address-line-1-data> :Building Name)
+##
+(3) If there is nothing in source_form that seems to match the needed information in target_form,
+just leave the value <replace-me> in target_form.
 
-(def example-2-chain-of-thought
-  "   In the above:
-       (1) The pseudo-function extract is used to pull :CompanyName, :Street and :BuildingNumber from :source-structure <address-line1-data>.
-       (2) Nothing in :source-structure provide :TaxID, so that keys in the :result is left as <replace-me>.")
+source_form 1:
+{:Invoice
+ {:InvoiceLine
+  {:Buyer
+   {:Location
+    {:Address
+     {:CompanyName \"<company-name-data>\"
+      :Street \"<street-data>\"
+      :BuildingNumber \"<building-number-data>\"
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :ZipCode \"<zip-code-data>\"}}
+    :TaxID \"<tax-id-data>\"}}}}
 
-;  Here are the :source-structure and :target-structure I would like you to process :\n\n")
+target_form 1:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:AddressLine1 \"<replace-me>\"
+      :City \"<replace-me>\"
+      :State \"<replace-me>\"
+      :PostalCode \"<replace-me>\"}}}}}}
 
-(def ask-1-source
-  {:name :source-structure
-   :structure {:Order
-               {:OrderLine {:SellerParty {:Address {:AddressLine1 "<address-line1-data>"
-                                                    :AddressLine2 "<address-line2-data>"
-                                                    :City "<city-data>"
-                                                    :Province "<province-data>"
-                                                    :Country "<country-data>"}}}}}})
-(def ask-1-target
-  {:name :target-structure
-   :structure {:Order
-               {:OrderLine {:Seller {:Address {:CompanyName "<replace-me>"
-                                               :Building "<replace-me>"
-                                               :City "<replace-me>"
-                                               :State "<replace-me>"
-                                               :Country "<replace-me>"}}}}}})
+answer 1:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:AddressLine1 (str \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\")
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :PostalCode  \"<zip-code-data>\"}}}}}}
+###
+source_form 2:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:AddressLine1 \"<address-line-1-data>\"
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :PostalCode \"<postal-code-data>\"}}}}}}
 
-;;;(def tryme-prompt
-;;;  (str semantic-match-prompt
-;;;       (with-out-str (pprint example-1-source) (println) (pprint example-1-target))))
+target_form 2:
+{:Invoice
+ {:InvoiceLine
+  {:Buyer
+   {:Location
+    {:Address
+     {:CompanyName \"<replace-me>\"
+      :Street \"<replace-me>\"
+      :BuildingNumber \"<replace-me>\"
+      :City \"<replace-me>\"
+      :State \"<replace-me>\"
+      :ZipCode \"<replace-me>\"}}
+    :TaxID \"<replace-me>\"}}}}
 
-(def real-example (with-out-str (pprint ask-1-source) (println) (pprint ask-1-target)))
+answer 2:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:CompanyName (extract \"<address-line-1-data>\" :CompanyName)
+      :Street (extract \"<address-line-1-data>\" :Street)
+      :BuildingNumber (extract \"<address-line-1-data>\" :BuildingNumber)
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :ZipCode  \"<postal-code-data>\"}}
+    :TaxID \"<replace-me>\"}}}}
+###")
+
+;;; ToDo: Make keys go back two steps.
+(defn sem-match-pre
+  "Create a Clojure map like used in the $semMatch prompt from the string thing
+   typically created, it has the string '<data>' for values.
+   '<data>' is replaced with '<replace-me>' if :replace-me?
+   otherwise the kebab-case version of the key inside '<...-data>'."
+  [obj replace-me?]
+  (letfn [(smp [obj]
+            (cond (map? obj)     (reduce-kv
+                                  (fn [m k v] (assoc m (keyword k) (if (string? v)
+                                                                     (if replace-me?
+                                                                       "<replace-me>"
+                                                                       (str "<" (csk/->kebab-case-string k) "-data>"))
+                                                                     (smp v))))
+                                  {} obj)
+                  (vector? obj)  (mapv smp obj)
+                  :else          obj))]
+    (smp obj)))
 
 (defn $semMatch
   "Match terminology (of keys) in two 'object shapes', producing a mapping."
-  []
+  [src tar]
   (when-not (System/getenv "OPENAI_API_KEY")
     (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
-  (openai/create-chat-completion
-   {:model "gpt-3.5-turbo"
-    :messages [{:role "user" :content semantic-match-instructions}
-               {:role "user"      :content example-1-q}
-               {:role "assistant" :content example-1-a}
-               ;{:role "assistant" :content example-1-chain-of-thought}
-               {:role "user"      :content example-2-q}
-               {:role "assistant" :content example-2-a}
-               ;{:role "assistant" :content example-2-chain-of-thought}
-               {:role "user"      :content real-example}]}))
-
-(def tryme1-prompt
-  "The following is a Clojure EDN map structure.
-   What do you suppose the structure represents?
-   What do each of its key represent?
-
-  {:Address {:CompanyName \"<company-name-data>\"
-             :Building \"<building-data>\"
-             :City \"<city-data>\"
-             :State \"<state-data>\"
-             :Country \"<country-data>\"}}")
-
-
-(defn tryme1 []
-  (openai/create-chat-completion
-   {:model "gpt-3.5-turbo"
-    :messages [{:role "user" :content tryme1-prompt}]}))
-
-
-(defn tryme []
-  (openai/create-completion
-   {:model "text-davinci-003"
-    :prompt "Say this is a test"}))
+  (let [src3 (with-out-str (-> src (sem-match-pre false) pprint))
+        tar3 (with-out-str (-> tar (sem-match-pre true)  pprint))
+        q-str (str semantic-match-instructions "\n\n"
+                   "source_form 3:\n" src3 "\n\n"
+                   "target_form 3:\n" tar3 "\n\n"
+                   "answer 3:\n")]
+    (reset! diag q-str)
+    (-> (openai/create-chat-completion
+         {:model "gpt-3.5-turbo"
+          :messages [{:role "user" :content q-str}]})
+        :choices first :message :content)))

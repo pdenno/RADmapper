@@ -19,6 +19,7 @@
                  "bi"                        "bi"
                  "rad-mapper.builtin-macros" "bim"
                  "bim"                       "bim"
+                 "promesa.core"              "p"
                  "java.lang.Math"     "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
     (letfn [(ni [form]
               (let [m (meta form)]

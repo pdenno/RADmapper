@@ -439,7 +439,7 @@
 
   // This function calls itself recursively to build the schema shape, starting from the root.
   $shape := function($p, $spc) { $reduce($children($spc, $p),
-                                         function($tree, $c)
+                                         function($tree, $c) // Update the tree.
                                              { $update($tree,
                                                        $p,
                                                        function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<data>')}) },
@@ -450,7 +450,13 @@
   $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
   $schema2Roots := $rootQuery($schema2);
 
-  {'shape1' : $shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
-   'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
+  //{'shape1' : $shape($schema1Roots.?name[0], $schema1PC),
+  // 'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
+
+   $semMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
+             $shape($schema2Roots.?name[0], $schema2PC))
 
 )"))
+
+(defn tryme2 []
+    (run "$schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']])"))
