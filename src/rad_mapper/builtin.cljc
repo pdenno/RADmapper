@@ -7,7 +7,7 @@
 
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:require
-;;;   #?@(:cljs [[ajax.core :refer [GET]]
+;;;   #?@(:cljs [[ajax.core :refer [GET POST]]
 ;;;              [ajax.xhrio]
 ;;;              [ajax.xml-http-request]]) ; Cannot find module 'xmlhttprequest'
 
@@ -16,7 +16,8 @@
               [dk.ative.docjure.spreadsheet :as ss]
               [datahike.api                 :as d]
               [datahike.pull-api            :as dp]
-              [schema-db.resolvers          :as path :refer [pathom-resolve]]]
+              [schema-db.resolvers          :as path :refer [pathom-resolve]]
+              [wkok.openai-clojure.api      :as openai]]
        :cljs [[datascript.core              :as d]
               [datascript.pull-api  :as dp]
               ["nata-borrowed"      :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
@@ -33,8 +34,7 @@
    [taoensso.timbre               :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
-            jflatten containerize containerize? container? flatten-except-json]]
-   [wkok.openai-clojure.api :as openai])
+            jflatten containerize containerize? container? flatten-except-json]])
   #?(:cljs (:require-macros [rad-mapper.builtin-macros]))
    #?(:clj
       (:import java.text.DecimalFormat
@@ -1563,27 +1563,8 @@
            [_fname _opts]
            (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
-(def result-atm (atom nil))
-
 ;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
 ;;;  = (schema-db.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
-
-#_(defn $get
-  "Read a file of JSON or XML, creating a map."
-  ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
-  ([spec opts]
-   (cond (string? spec)    (read-local spec opts)
-         (vector? spec)
-         (let [[[k v] out-props] spec
-               ident-map {(keyword k) v} ; ident-map
-               outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
-                                (when-not (and ns nam)
-                                  (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
-                                (keyword ns nam))
-                             out-props)]
-           #?(:clj (pathom-resolve ident-map outputs))))))
-
-;;; PPP
 (defn $get
   "Read a file of JSON or XML, creating a map."
   ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
@@ -1600,25 +1581,18 @@
            #?(:clj (pathom-resolve ident-map outputs)
               ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
               ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
-              :cljs (let [p (:promise opts)] ; ToDo: This should be passed in.
+              :cljs (p/do
                       (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
-                      (p/do
-                        (GET "/api/graph-query" ; ToDo: Use https://github.com/oliyh/martian
-                             {:params {:ident-type k
-                                       :ident-val v
-                                       :request-objs (cl-format nil "~{~A~^|~}" (map name out-props))}
-                              :handler (fn [resp]
-                                         (log/info (str "CLJS-AJAX returns resp =" resp))
-                                         (reset! result-atm resp)
-                                         (p/resolve! p resp)) ; This isn't 'returned'!
-                              :error-handler (fn [{:keys [status status-text]}]
-                                               (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
-                                               (reset! result-atm :failure!)
-                                               (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                                     {:status status :status-text status-text})))
-                              :timeout 3000})
-                        p ; await resolution in one of the handers above.
-                        @result-atm))))))) ; ToDo: Why isn't p/extract found in promesa.core?
+                      (GET "/api/graph-query" ; ToDo: Use https://github.com/oliyh/martian
+                           {:params {:ident-type k
+                                     :ident-val v
+                                     :request-objs (cl-format nil "~{~A~^|~}" (map name out-props))}
+                            :handler (fn [resp] (log/info (str "$get CLJS-AJAX returns resp =" resp)) (p/promise resp))
+                            :error-handler (fn [{:keys [status status-text]}]
+                                             (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
+                                             (p/rejected (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                                  {:status status :status-text status-text})))
+                            :timeout 5000})))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -2441,16 +2415,28 @@ answer 2:
 (defn $semMatch
   "Match terminology (of keys) in two 'object shapes', producing a mapping."
   [src tar]
-  (when-not (System/getenv "OPENAI_API_KEY")
-    (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
   (let [src3 (with-out-str (-> src (sem-match-pre false) pprint))
         tar3 (with-out-str (-> tar (sem-match-pre true)  pprint))
         q-str (str semantic-match-instructions "\n\n"
                    "source_form 3:\n" src3 "\n\n"
                    "target_form 3:\n" tar3 "\n\n"
                    "answer 3:\n")]
-    (reset! diag q-str)
-    (-> (openai/create-chat-completion
-         {:model "gpt-3.5-turbo"
-          :messages [{:role "user" :content q-str}]})
-        :choices first :message :content)))
+    #?(:clj
+       (if (System/getenv "OPENAI_API_KEY")
+         (-> (openai/create-chat-completion
+              {:model "gpt-3.5-turbo"
+               :messages [{:role "user" :content q-str}]})
+             :choices first :message :content)
+         (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
+       :cljs
+       (p/do
+         (log/info "Call to $semMatch")
+         (POST "/api/sem-match" ; ToDo: Use https://github.com/oliyh/martian
+                {:body q-str
+                 :response-format :json
+                 :timeout 30000
+                 :handler (fn [resp] (log/info (str "$semMatch CLJS-AJAX returns resp =" resp)) (p/promise resp))
+                 :error-handler (fn [{:keys [status status-text]}]
+                                  (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
+                                  (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})))))
+
