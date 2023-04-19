@@ -85,8 +85,11 @@
                       ~(-> x :init-val rewrite)))))]
     (if *inside-let?* ; True except when no CodeBlock.
       (name-exp-pair m)
-      `(deref (p/let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
-                ~(-> m :var rewrite))))))
+      `(let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
+         ~(-> m :var rewrite)))))
+;;; HEY (above)
+;;;      `(deref (p/let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
+;;;                ~(-> m :var rewrite)))
 
 (defrewrite :Jvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
@@ -428,8 +431,11 @@
                                   (:r/bindings form))]
                        ~(->> form :r/body nbs)))
                   (:r/bindings form)
-                  `(deref (p/let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                            ~(->> form :r/body nbs)))
+                  `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                     ~(->> form :r/body nbs))
+;;; HEY
+;;;                  `(deref (p/let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+;;;                            ~(->> form :r/body nbs)))
                   (vector? form)      (mapv nbs form),
                   (seq? form)         (map nbs form),
                   (map? form)         (reduce-kv (fn [m k v] (assoc m k (nbs v))) {} form),
