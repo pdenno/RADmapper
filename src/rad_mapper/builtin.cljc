@@ -7,10 +7,6 @@
 
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:require
-;;;   #?@(:cljs [[ajax.core :refer [GET POST]]
-;;;              [ajax.xhrio]
-;;;              [ajax.xml-http-request]]) ; Cannot find module 'xmlhttprequest'
-
    #?@(:clj  [[clojure.data.json            :as json]
               [clojure.data.codec.base64    :as b64]
               [dk.ative.docjure.spreadsheet :as ss]
@@ -18,7 +14,8 @@
               [datahike.pull-api            :as dp]
               [schema-db.resolvers          :as path :refer [pathom-resolve]]
               [wkok.openai-clojure.api      :as openai]]
-       :cljs [[datascript.core              :as d]
+       :cljs [[ajax.core :refer [GET POST]]
+              [datascript.core              :as d]
               [datascript.pull-api  :as dp]
               ["nata-borrowed"      :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
               [goog.crypt.base64    :as jsb64]])
@@ -29,9 +26,9 @@
    [clojure.string                    :as str  :refer [index-of]]
    [clojure.walk                      :as walk :refer [keywordize-keys]]
    [promesa.core                      :as p]
-   [rad-mapper.query              :as qu]
-   [rad-mapper.util               :as util :refer [qvar? box unbox]]
-   [taoensso.timbre               :as log :refer-macros[error debug info log!]]
+   [rad-mapper.query                  :as qu]
+   [rad-mapper.util                   :as util :refer [qvar? box unbox]]
+   [taoensso.timbre                   :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
             jflatten containerize containerize? container? flatten-except-json]])
