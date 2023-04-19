@@ -53,6 +53,7 @@
 ;;;  - Clojure uses earmuffs as a clue to whether a var is dynamic. Should I use *$*?
 
 (declare aref)
+(defn hello [] :hello)
 
 (s/def ::number number?)
 (s/def ::pos-number (s/and number? pos?))
@@ -198,7 +199,6 @@
              ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
              (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
                     (set-context! new-res)))))))
-
 
 #_(defn run-steps
   "Run or map over each path step function, passing the result to the next step."
@@ -1607,18 +1607,19 @@
            #?(:clj (pathom-resolve ident-map outputs)
               ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
               ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
-              :cljs (p/do
-                      (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
-                      (GET "/api/graph-query" ; ToDo: Use https://github.com/oliyh/martian
-                           {:params {:ident-type k
-                                     :ident-val v
-                                     :request-objs (cl-format nil "~{~A~^|~}" (map name out-props))}
-                            :handler (fn [resp] (log/info (str "$get CLJS-AJAX returns resp =" resp)) (p/promise resp))
-                            :error-handler (fn [{:keys [status status-text]}]
-                                             (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
-                                             (p/rejected (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                                  {:status status :status-text status-text})))
-                            :timeout 5000})))))))
+              ;;;:cljs
+              #_(p/do
+                (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
+                (GET "/api/graph-query" ; ToDo: Use https://github.com/oliyh/martian
+                     {:params {:ident-type k
+                               :ident-val v
+                               :request-objs (cl-format nil "~{~A~^|~}" (map name out-props))}
+                      :handler (fn [resp] (log/info (str "$get CLJS-AJAX returns resp =" resp)) (p/promise resp))
+                      :error-handler (fn [{:keys [status status-text]}]
+                                       (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
+                                       (p/rejected (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                            {:status status :status-text status-text})))
+                      :timeout 5000})))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -2454,8 +2455,8 @@ answer 2:
                :messages [{:role "user" :content q-str}]})
              :choices first :message :content)
          (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
-       :cljs
-       (p/do
+;;;       :cljs
+       #_(p/do
          (log/info "Call to $semMatch")
          (POST "/api/sem-match" ; ToDo: Use https://github.com/oliyh/martian
                 {:body q-str

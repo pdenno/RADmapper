@@ -6,6 +6,7 @@
     [clojure.spec.alpha           :as s :refer [check-asserts]]
     [clojure.string               :as str]
     [mount.core                   :refer [defstate]]
+    [promesa.core                 :as p]
     [rad-mapper.builtin           :as bi]
     [rad-mapper.builtin-macros    :as bm]
     [rad-mapper.parse-macros      :as pm]
