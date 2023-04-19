@@ -177,6 +177,35 @@
   ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
   ;;(log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
+    (loop [steps steps
+              res   @$]
+       (if (empty? steps) res
+           (let [styp (step-type steps)
+                 sfn  (first steps)
+                 new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
+                           :bi/init-step    (-> (sfn @$) containerize?),
+                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
+                                                                 :bi/attr (-> sfn meta :bi/arg)}),
+                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
+                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
+                           :bi/value-step   (if (vector? res)
+                                              (mapv #(binding [$ (atom %)] (sfn $)) res)
+                                              (sfn res)),
+                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
+                           :bi/map-step     (cmap sfn (containerize? res)), ; get-step is a function; this is a macro; it just executes its body.
+                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
+             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
+             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+             (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+                    (set-context! new-res)))))))
+
+
+#_(defn run-steps
+  "Run or map over each path step function, passing the result to the next step."
+  [& steps]
+  ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
+  ;;(log/info "--- run-steps ---")
+  (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (deref
      (p/loop [steps steps
               res   @$]
@@ -198,9 +227,9 @@
              ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
              ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
              (p/recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
-                      (set-context! (cond (and (p/promise? new-res) (p/done? new-res)) (p/extract new-res),
-                                          (p/promise? new-res)      (do (log/info "What to do?") (reset! diag new-res))
-                                          :else                     new-res)))))))))
+                       (set-context! (cond (and (p/promise? new-res) (p/done? new-res)) (p/extract new-res),
+                                           (p/promise? new-res)      (do (log/info "What to do?") (reset! diag new-res))
+                                           :else                     new-res)))))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
 ;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
@@ -2436,4 +2465,3 @@ answer 2:
                  :error-handler (fn [{:keys [status status-text]}]
                                   (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
                                   (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})))))
-

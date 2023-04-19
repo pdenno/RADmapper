@@ -7,7 +7,7 @@
    [promesa.core :as p]
    [rad-mapper.builtin   :as bi]
    [rad-mapper.evaluate  :as ev :refer [processRM]]
-   [schema-db.schema-util :as su :refer [get-schema]]
+   #?(:clj [schema-db.schema-util :as su :refer [get-schema]])
    [taoensso.timbre :as log :refer-macros [info debug log]]
    #?(:clj [dev.dutil-macros :refer [run-test]]))
   #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
