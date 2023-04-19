@@ -25,7 +25,7 @@
    [clojure.pprint                             :refer [cl-format pprint]]
    [clojure.string                    :as str  :refer [index-of]]
    [clojure.walk                      :as walk :refer [keywordize-keys]]
-   [promesa.core                      :as p]
+   ;[promesa.core                      :as p]
    [rad-mapper.query                  :as qu]
    [rad-mapper.util                   :as util :refer [qvar? box unbox]]
    [taoensso.timbre                   :as log :refer-macros[error debug info log!]]
