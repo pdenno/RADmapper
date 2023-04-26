@@ -113,6 +113,8 @@
          (assoc :output-fn #'custom-output-fn)
          (assoc :min-level [[#{"datahike.*"} :error]
                             [#{"datascript.*"} :error]
+                            [#{"io.methvin.*"} :error] ; watcher from kit?
+                            [#{"org.apache.http.*"} :error]
                             [#{"*"} min-level]])))
     (log/error "Invalid timbre reporting level:" min-level)))
 

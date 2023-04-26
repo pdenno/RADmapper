@@ -5,7 +5,7 @@
    [dev.dutil-util :refer [run]]
    [clojure.test        :refer  [deftest is testing]]
    [promesa.core :as p]
-   [rad-mapper.builtin   :as bi]
+   ;[rad-mapper.builtin   :as bi]
    [rad-mapper.evaluate  :as ev :refer [processRM]]
    #?(:clj [schema-db.schema-util :as su :refer [get-schema]])
    [taoensso.timbre :as log :refer-macros [info debug log]]
@@ -453,10 +453,34 @@
   //{'shape1' : $shape($schema1Roots.?name[0], $schema1PC),
   // 'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 
-   $semMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
-             $shape($schema2Roots.?name[0], $schema2PC))
+   $semMatch($shape($schema2Roots.?name[0], $schema2PC), // [0] here is cheating a bit; there could be multiple roots.
+             $shape($schema1Roots.?name[0], $schema1PC))
 
 )"))
 
 (defn tryme2 []
     (run "$schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']])"))
+
+
+#_(defn tryme3 []
+  (p/do
+    (rad-mapper.builtin/reset-env)
+    (rad-mapper.builtin/again?
+     (p/let
+         [$schema1
+          (rad-mapper.builtin/$get
+           (cljs.core/with-meta
+             [(cljs.core/with-meta ["schema/name" "urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1"] #:bi{:json-array? true})
+              (cljs.core/with-meta ["schema/content"] #:bi{:json-array? true})]
+             #:bi{:json-array? true}))]
+       $schema1))))
+
+
+
+;;; http://localhost:3000/api/graph-query?ident-type=schema%2Fname&ident-val=urn%3Aoagis-10.8.4%3ANouns%3AInvoice&request-objs=schema%2Fcontent
+(defn health []
+  (GET "http://localhost:3000/api/health"
+       {:handler (fn [resp] (println  "/api/health returns resp =" resp))
+        :error-handler (fn [{:keys [status status-text]}]
+                         (println "CLJS-AJAX error: status = " status " status-text= " status-text))
+        :timeout 2000}))

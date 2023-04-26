@@ -3,15 +3,16 @@
    processRM is a top-level function for this."
   (:require
    #?(:clj [clojure.java.io])
-   [clojure.pprint             :refer [cl-format]]
-   [clojure.spec.alpha         :as s]
-   [promesa.core               :as p]
-   [rad-mapper.builtin         :as bi]
-   [rad-mapper.builtin-macros  :as bim]
-   [rad-mapper.query           :as qu]
-   [rad-mapper.util            :as util :refer [dgensym! reset-dgensym! rewrite-meth qvar? unquote-qvars quote-qvars]]
-   [rad-mapper.parse           :as par  :refer [builtin-fns]]
-   #?(:clj  [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]]))
+   [clojure.pprint                       :refer [cl-format]]
+   [clojure.spec.alpha          :as s]
+   [promesa.core                :as p]
+   [rad-mapper.builtin          :as bi]
+   [rad-mapper.builtin-macros   :as bim]
+   [rad-mapper.query            :as qu]
+   [rad-mapper.util             :as util :refer [dgensym! reset-dgensym! rewrite-meth qvar? unquote-qvars quote-qvars]]
+   [rad-mapper.parse            :as par  :refer [builtin-fns]]
+;   #?(:cljs [sci.configs.funcool.promesa :as scip])
+   #?(:clj  [rad-mapper.rewrite-macros   :refer [defrewrite *debugging?*]]))
   #?(:cljs (:require-macros [rad-mapper.rewrite-macros :refer [defrewrite *debugging?*]])))
 
 ;;; ToDo: A real problem with *inside-step?* is that it is true inside any primary!
@@ -85,11 +86,10 @@
                       ~(-> x :init-val rewrite)))))]
     (if *inside-let?* ; True except when no CodeBlock.
       (name-exp-pair m)
-      `(let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
-         ~(-> m :var rewrite)))))
-;;; HEY (above)
-;;;      `(deref (p/let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
-;;;                ~(-> m :var rewrite)))
+      #?(:clj `(deref (p/let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
+                        ~(-> m :var rewrite)))
+         :cljs `(p/let [~@(name-exp-pair m)] ; In case the entire exp is like $var := <whatever>; no CodeBlock.
+                  ~(-> m :var rewrite))))))
 
 (defrewrite :Jvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
@@ -431,11 +431,10 @@
                                   (:r/bindings form))]
                        ~(->> form :r/body nbs)))
                   (:r/bindings form)
-                  `(let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-                     ~(->> form :r/body nbs))
-;;; HEY
-;;;                  `(deref (p/let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
-;;;                            ~(->> form :r/body nbs)))
+                  #?(:clj  `(deref (p/let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                                     ~(->> form :r/body nbs)))
+                     :cljs `(p/let [~@(mapcat #(list (first %) (second %)) (:r/bindings form))]
+                              ~(->> form :r/body nbs)))
                   (vector? form)      (mapv nbs form),
                   (seq? form)         (map nbs form),
                   (map? form)         (reduce-kv (fn [m k v] (assoc m k (nbs v))) {} form),

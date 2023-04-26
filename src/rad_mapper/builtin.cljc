@@ -25,14 +25,18 @@
    [clojure.pprint                             :refer [cl-format pprint]]
    [clojure.string                    :as str  :refer [index-of]]
    [clojure.walk                      :as walk :refer [keywordize-keys]]
-   ;[promesa.core                      :as p]
+   [promesa.core                      :as p    #_#_:refer [extract]]
+   [promesa.exec                      :as pe]
+   [promesa.protocols                 :as pt]
+;;;  #?(:cljs [sci.configs.funcool.promesa :as scip])
+;;;  #?(:cljs [rad-mapper.promesa-config :as scip])       ; This doesn't have any macros in it. It is the SCI equivalents.
    [rad-mapper.query                  :as qu]
    [rad-mapper.util                   :as util :refer [qvar? box unbox]]
    [taoensso.timbre                   :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
             jflatten containerize containerize? container? flatten-except-json]])
-  #?(:cljs (:require-macros [rad-mapper.builtin-macros]))
+  #?(:cljs (:require-macros [rad-mapper.builtin-macros] [promesa.core]))
    #?(:clj
       (:import java.text.DecimalFormat
                java.text.DecimalFormatSymbols
@@ -48,12 +52,85 @@
 
 #?(:clj (alias 'bi 'rad-mapper.builtin))
 
+(defn hello [] :hello)
+
 ;;; ToDo:
 ;;;  - Make sure meta isn't used where a closure would work.
 ;;;  - Clojure uses earmuffs as a clue to whether a var is dynamic. Should I use *$*?
+(declare p-do!)
+
+(defn ^:macro p-let
+ [_ _ bindings & body]
+  "A `let` alternative that always returns promise and waits for all the
+  promises on the bindings."
+  (if (seq bindings)
+    `(pt/-mcat
+      (pt/-promise nil)
+      (fn [_#] (p/let* ~bindings ~@body)))
+    `(p-do! ~@body)))
+
+(defn ^:macro p-loop
+  [_ _ bindings & body]
+  (let [binds (partition 2 2 bindings)
+          names (map first binds)
+          fvals (map second binds)
+          tsym  (gensym "loop-fn-")
+          res-s (gensym "res-")
+          err-s (gensym "err-")
+          rej-s (gensym "reject-fn-")
+          rsv-s (gensym "resolve-fn-")]
+    `(p/create
+      (fn [~rsv-s ~rej-s]
+        (let [~tsym (fn ~tsym [~@names]
+                        (->> (p-let [~@(mapcat (fn [nsym] [nsym nsym]) names)] ~@body)
+                               (p/fnly
+                                (fn [~res-s ~err-s]
+                                  ;; (prn "result" res# err#)
+                                  (if (some? ~err-s)
+                                    (~rej-s ~err-s)
+                                    (if (recur? ~res-s)
+                                      (do
+                                        (pe/run!
+                                         :vthread
+                                         (pe/wrap-bindings
+                                          ~(if (seq names)
+                                             `(fn [] (apply ~tsym (:bindings ~res-s)))
+                                           tsym)))
+                                      nil)
+                                      (~rsv-s ~res-s)))))))]
+          (pe/run!
+           :vthread
+           (pe/wrap-bindings
+            ~(if (seq names)
+               `(fn [] (~tsym ~@fvals))
+               tsym))))))))
+
+(defn ^:macro p-recur
+  [_ _ & args]
+  `(p/->Recur [~@args]))
+
+;;; The SCI one.
+(defn ^:macro p-do!
+  "Execute potentially side effectful code and return a promise resolved
+  to the last expression. Always awaiting the result of each
+  expression."
+  [_ _ & exprs]
+   `(pt/-bind
+     (pt/-promise nil)
+     (fn [_#]
+       ~(condp = (count exprs)
+          0 `(pt/-promise nil)
+          1 `(pt/-promise ~(first exprs))
+          (reduce (fn [acc e]
+                    `(pt/-bind (pt/-promise ~e) (fn [_#] ~acc)))
+                  `(pt/-promise ~(last exprs))
+                  (reverse (butlast exprs)))))))
+
+;;;====================================================================================
 
 (declare aref)
-(defn hello [] :hello)
+
+(def diag (atom nil))
 
 (s/def ::number number?)
 (s/def ::pos-number (s/and number? pos?))
@@ -169,17 +246,15 @@
       :bi/get-filter ; The special non-compositional one.
       (#{:bi/init-step :bi/filter-step :bi/get-step :bi/value-step :bi/primary :bi/map-step} step-one))))
 
-(def diag (atom nil))
-
 ;;; ------------------ Path implementation ---------------------------------
-(defn run-steps
+#_(defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
   ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
   ;;(log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (loop [steps steps
-              res   @$]
+           res   @$]
        (if (empty? steps) res
            (let [styp (step-type steps)
                  sfn  (first steps)
@@ -200,36 +275,36 @@
              (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
                     (set-context! new-res)))))))
 
-#_(defn run-steps
+(defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
   ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
   ;;(log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
     (deref
-     (p/loop [steps steps
-              res   @$]
-       (if (empty? steps) res
-           (let [styp (step-type steps)
-                 sfn  (first steps)
-                 new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
-                           :bi/init-step    (-> (sfn @$) containerize?),
-                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
-                                                                 :bi/attr (-> sfn meta :bi/arg)}),
-                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
-                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
-                           :bi/value-step   (if (vector? res)
-                                              (mapv #(binding [$ (atom %)] (sfn $)) res)
-                                              (sfn res)),
-                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
-                           :bi/map-step     (cmap sfn (containerize? res)), ; get-step is a function; this is a macro; it just executes its body.
-                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
-             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
-             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-             (p/recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
-                       (set-context! (cond (and (p/promise? new-res) (p/done? new-res)) (p/extract new-res),
-                                           (p/promise? new-res)      (do (log/info "What to do?") (reset! diag new-res))
-                                           :else                     new-res)))))))))
+     (p/loop ; #?(:clj p/loop :cljs p-loop)
+      [steps steps
+       res   @$]
+      (if (empty? steps) res
+          (let [styp (step-type steps)
+                sfn  (first steps)
+                new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
+                          :bi/init-step    (-> (sfn @$) containerize?),
+                          :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
+                                                                :bi/attr (-> sfn meta :bi/arg)}),
+                          :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
+                          :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
+                          :bi/value-step   (if (vector? res)
+                                             (mapv #(binding [$ (atom %)] (sfn $)) res)
+                                             (sfn res)),
+                          :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
+                          :bi/map-step     (cmap sfn (containerize? res)), ; get-step is a function; this is a macro; it just executes its body.
+                          (throw (ex-info "Invalid step" {:sfn  sfn})))]
+            ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
+            ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
+            (#?(:clj p/recur :cljs p-recur)
+             (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+             (set-context! new-res))))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
 ;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
@@ -1595,31 +1670,36 @@
   "Read a file of JSON or XML, creating a map."
   ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]
+   (reset! diag {:spec spec})
    (cond (string? spec)    (read-local spec opts)
          (vector? spec)
-         (let [[[k v] out-props] spec
+         (let [[[k v] out-props] spec ; [k v] is an ident in Fulcro parlance.
                ident-map {(keyword k) v} ; ident-map
-               outputs (mapv #(let [[bad? ns nam] (re-matches #"(.+)\/(.+)" %)]
-                                (when-not (and ns nam)
-                                  (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
-                                (keyword ns nam))
-                             out-props)]
+               outputs   (mapv #(let [[bad? ns nam] (re-matches #"(.+)/(.+)" %)]
+                                  (when-not (and ns nam)
+                                    (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
+                                  (keyword ns nam))
+                               out-props)]
+           (reset! diag {:out-props out-props})
            #?(:clj (pathom-resolve ident-map outputs)
               ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
               ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
-              ;;;:cljs
-              #_(p/do
-                (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
-                (GET "/api/graph-query" ; ToDo: Use https://github.com/oliyh/martian
-                     {:params {:ident-type k
-                               :ident-val v
-                               :request-objs (cl-format nil "~{~A~^|~}" (map name out-props))}
-                      :handler (fn [resp] (log/info (str "$get CLJS-AJAX returns resp =" resp)) (p/promise resp))
-                      :error-handler (fn [{:keys [status status-text]}]
-                                       (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
-                                       (p/rejected (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                            {:status status :status-text status-text})))
-                      :timeout 5000})))))))
+              :cljs
+              (let [req-data {:params {:ident-type k
+                                       :ident-val v
+                                       :request-objs (cl-format nil "~{~A~^|~}" out-props)}
+                              :handler (fn [resp] (log/info (str "$get CLJS-AJAX returns resp =" resp)) (p/promise resp))
+                              :error-handler (fn [{:keys [status status-text]}]
+                                               (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
+                                               (p/rejected (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                                    {:status status :status-text status-text})))
+                              :timeout 5000}]
+                (swap! diag #(merge % {:req-data req-data}))
+              (p/do!
+               (println "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
+               (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
+               ;; ToDo: Use https://github.com/oliyh/martian
+               (GET "http://localhost:3000/api/graph-query" req-data))))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -2314,9 +2394,9 @@
 ;;; 1416 tokens! Careful about trailing blanks!
   "Wherever you can replace each <replace-me> in the target_form with similar information from the source_form.
 Both source_form and target_form are Clojure maps.
-Because data in source_form does not match data in target_form perfectly, you should dothe following o make things work:
+Because data in source_form does not match data in target_form perfectly, you should do the following to make things work:
 
-(1) If target_form combines data from multiple target_form fields, use the Clojure str to concatenate them.
+(1) If target_form combines data from multiple source_form fields, use the Clojure str to concatenate them.
 
 For example, if source_form has specific data fields for address and target_form has only has a general field :AddressLine1 that might
 accommodate that information:
@@ -2455,8 +2535,8 @@ answer 2:
                :messages [{:role "user" :content q-str}]})
              :choices first :message :content)
          (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
-;;;       :cljs
-       #_(p/do
+       :cljs
+       (p-do!
          (log/info "Call to $semMatch")
          (POST "/api/sem-match" ; ToDo: Use https://github.com/oliyh/martian
                 {:body q-str

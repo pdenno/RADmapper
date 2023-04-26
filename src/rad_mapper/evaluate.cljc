@@ -6,7 +6,7 @@
     [clojure.spec.alpha           :as s :refer [check-asserts]]
     [clojure.string               :as str]
     [mount.core                   :refer [defstate]]
-    ;[promesa.core                 :as p]
+    [promesa.core                 :as p]
     [rad-mapper.builtin           :as bi]
     [rad-mapper.builtin-macros    :as bm]
     [rad-mapper.parse-macros      :as pm]
@@ -15,6 +15,7 @@
     [rad-mapper.rewrite-macros    :as rewm]
     [rad-mapper.util              :as util :refer [nspaces]]
     [sci.core                     :as sci]
+    #?(:cljs [sci.configs.funcool.promesa  :as scip])
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
 (defn start
@@ -91,13 +92,14 @@
                         #_#_'info      (sci/copy-var* #'taoensso.timbre/info tns)  ; a macro
                         #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
                         '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
-                        '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}]
+                        '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}
+        nspaces        {'rad-mapper.builtin               builtin-ns,
+                        'rad-mapper.builtin-macros        builtin-m-ns,
+                        'taoensso.timbre                  timbre-ns,
+                        #_#_'clojure-pprint               pprint-ns}]
     (sci/init
-     {:namespaces {'rad-mapper.builtin               builtin-ns,
-                   'rad-mapper.builtin-macros        builtin-m-ns,
-                   'taoensso.timbre                  timbre-ns,
-                   #_#_'clojure-pprint                   pprint-ns}
-      ; ToDo: SCI doesn't seem to want namespaced entries for macros.
+     {:namespaces #?(:clj nspaces :cljs (merge nspaces scip/namespaces))  ; for promesa.core and promesa.protocols.
+      ; ToDo: SCI doesn't seem to want namespaced entries for macros. <=== See https://github.com/babashka/sci.configs/blob/main/src/sci/configs/funcool/promesa.cljs
       :bindings  {'init-step  rad-mapper.builtin/init-step
                   'map-step   rad-mapper.builtin/map-step
                   'value-step rad-mapper.builtin/value-step
@@ -158,6 +160,8 @@
 
 (declare pprint-obj)
 
+(defn hello [] :hello)
+
 (defn processRM
   "A top-level function for all phases of translation.
    parse-string, rewrite, and execute, but with controls to quit before doing all of these, debugging etc.
@@ -166,7 +170,7 @@
   ([tag str opts]
    (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval?
                        :debug-parse? :debug-rewrite? :pprint?} %)
-                     (keys opts)))
+                   (keys opts)))
    (let [str         (if-let [udata (-> opts :user-data not-empty)]
                        (combine-code-and-data str udata)
                        str)
