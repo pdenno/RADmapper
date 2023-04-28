@@ -22,11 +22,16 @@ target
 .clj-kondo/com.fulcrologic
 .clj-kondo/com.wsscode
 .clj-kondo/funcool
+.clj-kondo/lilactown
+.clj-kondo/metosin
 .clj-kondo/rewrite-clj
 .clj-kondo/taoensso
 .lsp/.cache
 data/OAGIS
+data/testing/elena
 resources/databases
+resources/js
+public/js
 
 node_modules/
 .shadow-cljs/
