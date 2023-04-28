@@ -15,7 +15,8 @@
     [rad-mapper.rewrite-macros    :as rewm]
     [rad-mapper.util              :as util :refer [nspaces]]
     [sci.core                     :as sci]
-    #?(:cljs [sci.configs.funcool.promesa  :as scip])
+    ;;;#?(:cljs [sci.configs.funcool.promesa  :as scip])
+    #?(:cljs [rad-mapper.promesa-config :as scip])
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
 (defn start
@@ -76,7 +77,7 @@
                                                                            (->> form name (symbol nsa))
                                                                            form)),
                     :else form))]
-      `(do (rad-mapper.builtin/reset-env) (rad-mapper.builtin/again? ~(ni form))))))
+      `(do (rad-mapper.builtin/reset-env) (rad-mapper.builtin/finalize ~(ni form))))))
 
 (def ctx
   (let [publics        (ns-publics 'rad-mapper.builtin)

@@ -1,9 +1,9 @@
 (ns rad-mapper.server.web.controllers.health
   (:require
-   [clojure.tools.logging :as log]
-    [ring.util.http-response :as http-response])
+   [taoensso.timbre :as log]
+   [ring.util.http-response :as http-response])
   (:import
-    [java.util Date]))
+   [java.util Date]))
 
 (defn healthcheck!
   [_req]

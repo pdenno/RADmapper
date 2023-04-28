@@ -2,7 +2,9 @@
   "Tools for repl-based exploration of RADmapper code"
   (:require
    [clojure.test :refer [is testing]]
-   [dev.dutil-util :refer [run]]))
+   [dev.dutil-util :refer [run]]
+   [promesa.core :as p]
+   [rad-mapper.util :as util]))
 
 (defn vec2set
   "Use this so that = testing on data works."
@@ -24,12 +26,28 @@
                   :else obj))]
     (unq form)))
 
+(def test-results
+  "A map indexed by the RM text run and valued with maps containing :expect and :actual.
+      :form is a string which (hopefully!) identifies the test."
+  (atom {}))
+
+(def ^:dynamic *run-tests-as-cljs* nil)
+(def run-tests-as-cljs? (atom nil))
+
+;;; BTW you can't effectively wrap a macro in #?.
 (defmacro run-test
   "Print the test form using testing, run the test."
   [form-string expect & {:keys [rewrite? keep-meta? sets?]}]
-  `(testing ~(str "\n(run \"" form-string "\")")
-     (is (= ~expect
-            (cond-> (run ~form-string
-                      :rewrite? ~rewrite?
-                      :keep-meta? ~keep-meta?)
-              #_#_~sets? vec2set))))) ; ToDo: problem with shadow; can't find vec2set
+  (if true ; *run-tests-as-cljs* @run-tests-as-cljs? ... whatever they don't work!
+    `(try
+       (swap! test-results conj {~form-string {:expect ~expect}})
+       (-> (run ~form-string :rewrite? ~rewrite? :keep-meta? ~keep-meta?)
+           (p/then  (fn [res#] (swap! test-results (fn [tr#] (assoc-in tr# [~form-string :actual] res#)))))
+           (p/catch (fn [res#] (swap! test-results (fn [tr#] (assoc-in tr# [~form-string :failed] res#))))))
+       (catch :default e# (swap! test-results (fn [tr#] (assoc-in tr# [~form-string :error] e#)))))
+    `(testing ~(str "\n(run \"" form-string "\")")
+       (is (= ~expect
+              (cond-> (run ~form-string
+                        :rewrite?x ~rewrite?
+                        :keep-meta? ~keep-meta?)
+                ~sets? vec2set))))))

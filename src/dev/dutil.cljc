@@ -6,7 +6,7 @@
       :cljs  [datascript.pull-api    :as dp])
    [rad-mapper.evaluate              :as ev]
    [taoensso.timbre                  :as log]
-   [dev.dutil-util                   :as dm :refer [diag remove-meta clean-form nicer-sym run]]
+   [dev.dutil-util                   :as duu :refer [diag remove-meta clean-form nicer-sym run]]
    #?(:clj [dev.dutil-macros         :refer [run-test]]))
 #?(:cljs (:require-macros [dev.dutil-macros])))
 
@@ -52,20 +52,20 @@
   "Show macroexpand-1 pretty-printed form sans package names.
    Argument is a quoted form"
   [form & {:keys [pprint?] :or {pprint? true}}]
-        (cond-> (-> form dm/clean-form) #_(-> form macroexpand-1 clean-form) ; ToDo: problem with macroexpand-1 in cljs?
+        (cond-> (-> form duu/clean-form) #_(-> form macroexpand-1 clean-form) ; ToDo: problem with macroexpand-1 in cljs?
           pprint? pprint))
 
 (defn nicer-
   "Show pretty-printed form sans package names.
    Argument is a quoted form"
   [form & {:keys [pprint?] :or {pprint? true}}]
-        (cond-> (-> form dm/clean-form)
+        (cond-> (-> form duu/clean-form)
           pprint? pprint))
 
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) dm/remove-meta dm/nicer-sym))
+  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) duu/remove-meta duu/nicer-sym))
 
 (defn examine [exp]
   (-> (ev/processRM :ptag/exp exp {:rewrite? true})

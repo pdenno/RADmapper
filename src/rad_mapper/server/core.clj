@@ -1,6 +1,6 @@
 (ns rad-mapper.server.core
   (:require
-    [clojure.tools.logging :as log]
+    [taoensso.timbre :as log]
     [integrant.core :as ig]
     [rad-mapper.server.config :as config]
     [rad-mapper.server.env :refer [defaults]]

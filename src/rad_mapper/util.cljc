@@ -111,11 +111,17 @@
     (log/set-config!
      (-> log/*config*
          (assoc :output-fn #'custom-output-fn)
-         (assoc :min-level [[#{"datahike.*"} :error]
+         (assoc :min-level [[#{"rad-mapper.*"} min-level]
+                            [#{"datahike.*"} :error]
                             [#{"datascript.*"} :error]
-                            [#{"io.methvin.*"} :error] ; watcher from kit?
+                            ;; Nothing here helps!
+                            [#{"kaocha.cljs2.shadow-runner"} :error]
+                            [#{"lambdaisland.funnel-client"} :error]
+                            [#{"goog.net.WebSocket*"} :error]
+                            [#{"io.methvin.*"} :error]    ; watcher from kit?
                             [#{"org.apache.http.*"} :error]
-                            [#{"*"} min-level]])))
+                            [#{"kaocha.cljs2.*"} :error]
+                            [#{"*"} :error]])))
     (log/error "Invalid timbre reporting level:" min-level)))
 
 (defn default-min-log-level

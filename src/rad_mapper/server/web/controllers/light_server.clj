@@ -1,7 +1,7 @@
 (ns rad-mapper.server.web.controllers.light-server
   (:require
    [clojure.string        :refer [split]]
-   [clojure.tools.logging :as log]
+   [taoensso.timbre       :as log]
    [clojure.walk          :as walk :refer [keywordize-keys]]
    [rad-mapper.evaluate   :as ev]
    [schema-db.resolvers   :refer [pathom-resolve]]
@@ -46,7 +46,7 @@
             :query-params
             keywordize-keys
             (update :ident-type keyword))]
-    (log/info "****/api/graph-query: " req)
+    (log/info "****  /api/graph-query: " req)
     (if (and ident-type ident-val request-objs)
       (let [request-objs (->> (split request-objs #"\|") (mapv keyword))
             zippy (swap! diag #(merge % {:ident-type ident-type :ident-val ident-val :request-objs request-objs}))

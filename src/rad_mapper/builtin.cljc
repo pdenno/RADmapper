@@ -6,7 +6,10 @@
    respectively for navigation to a property and concatenation).
 
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
+  (:refer-clojure :exclude [loop])
   (:require
+   [clojure.core :as c]
+   [ajax.core :refer [GET POST]]
    #?@(:clj  [[clojure.data.json            :as json]
               [clojure.data.codec.base64    :as b64]
               [dk.ative.docjure.spreadsheet :as ss]
@@ -19,24 +22,26 @@
               [datascript.pull-api  :as dp]
               ["nata-borrowed"      :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
               [goog.crypt.base64    :as jsb64]])
-   [cemerick.url                      :as url]
-   [camel-snake-kebab.core            :as csk]
-   [clojure.spec.alpha                :as s]
+   [cemerick.url                    :as url]
+   [camel-snake-kebab.core          :as csk]
+   [clojure.spec.alpha              :as s]
    [clojure.pprint                             :refer [cl-format pprint]]
-   [clojure.string                    :as str  :refer [index-of]]
-   [clojure.walk                      :as walk :refer [keywordize-keys]]
-   [promesa.core                      :as p    #_#_:refer [extract]]
-   [promesa.exec                      :as pe]
-   [promesa.protocols                 :as pt]
+   [clojure.string                  :as str  :refer [index-of]]
+   [clojure.walk                    :as walk :refer [keywordize-keys]]
+   [promesa.core                    :as p]
+   #?(:cljs [rad-mapper.promesa-config :as pm])
 ;;;  #?(:cljs [sci.configs.funcool.promesa :as scip])
 ;;;  #?(:cljs [rad-mapper.promesa-config :as scip])       ; This doesn't have any macros in it. It is the SCI equivalents.
+   #_[promesa.exec                      :as pe]
+   #_[promesa.protocols                 :as pt]
    [rad-mapper.query                  :as qu]
    [rad-mapper.util                   :as util :refer [qvar? box unbox]]
    [taoensso.timbre                   :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
             jflatten containerize containerize? container? flatten-except-json]])
-  #?(:cljs (:require-macros [rad-mapper.builtin-macros] [promesa.core]))
+  #?(:cljs (:require-macros [rad-mapper.builtin-macros]
+                            [promesa.core :refer [loop]])) ; ToDo: probably not necessary.
    #?(:clj
       (:import java.text.DecimalFormat
                java.text.DecimalFormatSymbols
@@ -50,83 +55,7 @@
                java.time.ZoneId
                java.time.ZoneOffset)))
 
-#?(:clj (alias 'bi 'rad-mapper.builtin))
-
-(defn hello [] :hello)
-
-;;; ToDo:
-;;;  - Make sure meta isn't used where a closure would work.
-;;;  - Clojure uses earmuffs as a clue to whether a var is dynamic. Should I use *$*?
-(declare p-do!)
-
-(defn ^:macro p-let
- [_ _ bindings & body]
-  "A `let` alternative that always returns promise and waits for all the
-  promises on the bindings."
-  (if (seq bindings)
-    `(pt/-mcat
-      (pt/-promise nil)
-      (fn [_#] (p/let* ~bindings ~@body)))
-    `(p-do! ~@body)))
-
-(defn ^:macro p-loop
-  [_ _ bindings & body]
-  (let [binds (partition 2 2 bindings)
-          names (map first binds)
-          fvals (map second binds)
-          tsym  (gensym "loop-fn-")
-          res-s (gensym "res-")
-          err-s (gensym "err-")
-          rej-s (gensym "reject-fn-")
-          rsv-s (gensym "resolve-fn-")]
-    `(p/create
-      (fn [~rsv-s ~rej-s]
-        (let [~tsym (fn ~tsym [~@names]
-                        (->> (p-let [~@(mapcat (fn [nsym] [nsym nsym]) names)] ~@body)
-                               (p/fnly
-                                (fn [~res-s ~err-s]
-                                  ;; (prn "result" res# err#)
-                                  (if (some? ~err-s)
-                                    (~rej-s ~err-s)
-                                    (if (recur? ~res-s)
-                                      (do
-                                        (pe/run!
-                                         :vthread
-                                         (pe/wrap-bindings
-                                          ~(if (seq names)
-                                             `(fn [] (apply ~tsym (:bindings ~res-s)))
-                                           tsym)))
-                                      nil)
-                                      (~rsv-s ~res-s)))))))]
-          (pe/run!
-           :vthread
-           (pe/wrap-bindings
-            ~(if (seq names)
-               `(fn [] (~tsym ~@fvals))
-               tsym))))))))
-
-(defn ^:macro p-recur
-  [_ _ & args]
-  `(p/->Recur [~@args]))
-
-;;; The SCI one.
-(defn ^:macro p-do!
-  "Execute potentially side effectful code and return a promise resolved
-  to the last expression. Always awaiting the result of each
-  expression."
-  [_ _ & exprs]
-   `(pt/-bind
-     (pt/-promise nil)
-     (fn [_#]
-       ~(condp = (count exprs)
-          0 `(pt/-promise nil)
-          1 `(pt/-promise ~(first exprs))
-          (reduce (fn [acc e]
-                    `(pt/-bind (pt/-promise ~e) (fn [_#] ~acc)))
-                  `(pt/-promise ~(last exprs))
-                  (reverse (butlast exprs)))))))
-
-;;;====================================================================================
+;;; #?(:clj (alias 'bi 'rad-mapper.builtin))
 
 (declare aref)
 
@@ -187,16 +116,12 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-(defn again? ; ToDo: Use the rewriter to eliminate this.
-  "Primary does double duty:
-      (1) wrapping a whole body like ($foo), and
-      (2) function for mapping like $x.($y + 1).
-   The former is top-level, but returning a function is not what is intended.
-   All top-level expressions from rewrite  are wrapped in this to ensure that
-   the top-level, when a :bi/primary, evaluates it before returning."
-   [res]
-  (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
-    (jflatten (res))
+;;; This was again? back in the day that
+(defn finalize
+  "Flatten/singlize lists, if appropriate."
+  [res]
+  (if (p/promise? res)
+    (-> res (p/then #(jflatten %)))
     (jflatten res)))
 
 (defn deref$
@@ -208,7 +133,11 @@
    (set-context! (containerize? val))))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn* add      "plus"   [x y]   (+ x y))
+(defn* add      "plus"   [x y]
+  (p/plet [x x
+           y y]
+    (fn [[x y]] (+ x y))))
+
 (defn* subtract "minus"  [x y]   (- x y))
 (defn* multiply "times"  [x y]   (* x y))
 (defn* div      "divide" [x y]   (s/assert ::non-zero y) (double (/ x y))) ; cljs.core/divide
@@ -247,42 +176,13 @@
       (#{:bi/init-step :bi/filter-step :bi/get-step :bi/value-step :bi/primary :bi/map-step} step-one))))
 
 ;;; ------------------ Path implementation ---------------------------------
-#_(defn run-steps
-  "Run or map over each path step function, passing the result to the next step."
-  [& steps]
-  ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
-  ;;(log/info "--- run-steps ---")
-  (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (loop [steps steps
-           res   @$]
-       (if (empty? steps) res
-           (let [styp (step-type steps)
-                 sfn  (first steps)
-                 new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
-                           :bi/init-step    (-> (sfn @$) containerize?),
-                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
-                                                                 :bi/attr (-> sfn meta :bi/arg)}),
-                           :bi/filter-step  (sfn res nil), ; containerizes arg; will do (-> (cmap aref) jflatten) | filterv
-                           :bi/get-step     (sfn res nil), ; containerizes arg if not map; will do cmap or map get.
-                           :bi/value-step   (if (vector? res)
-                                              (mapv #(binding [$ (atom %)] (sfn $)) res)
-                                              (sfn res)),
-                           :bi/primary      (if (vector? res) (cmap sfn (containerize? res)) (sfn res)),
-                           :bi/map-step     (cmap sfn (containerize? res)), ; get-step is a function; this is a macro; it just executes its body.
-                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
-             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
-             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-             (recur (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
-                    (set-context! new-res)))))))
-
 (defn run-steps
   "Run or map over each path step function, passing the result to the next step."
   [& steps]
   ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
   ;;(log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-    (deref
-     (p/loop ; #?(:clj p/loop :cljs p-loop)
+     (p/loop
       [steps steps
        res   @$]
       (if (empty? steps) res
@@ -302,9 +202,9 @@
                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-            (#?(:clj p/recur :cljs p-recur)
-             (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
-             (set-context! new-res))))))))
+             (p/recur
+              (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+              (set-context! new-res)))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
 ;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
@@ -598,7 +498,7 @@
              (if (namespace s) (str (namespace s) "/" (name s)) (name s))
              s)
          matcher (re-matcher pattern s)
-         result (loop [res []
+         result (c/loop [res []
                        adv 0
                        lim limit]
                   (let [m (re-find matcher)
@@ -1156,7 +1056,7 @@
   "Returns an array containing all the values from the array parameter, but shuffled into random order."
   [arr]
   (s/assert ::vector arr)
-  (loop [res []
+  (c/loop [res []
          size (count arr)
          rem arr]
     (if (empty? rem) res
@@ -1191,7 +1091,7 @@
   [& arrays]
   (s/assert ::vectors arrays)
   (let [size (->> arrays (map count) (apply min))]
-    (loop [res []
+    (c/loop [res []
            ix 0]
       (if (>= ix size) res
           (recur (conj res
@@ -1396,7 +1296,7 @@
   (let [loop-cnt (atom 0)
         parts
         (->>
-         (loop [str pic
+         (c/loop [str pic
                 res []]
            (cond (> @loop-cnt 10) :stuck!
                  (empty? str) res
@@ -1506,19 +1406,19 @@
   (let [nvars (-> func meta :bi/params count)]
     (cond
       (== nvars 3)
-                (loop [c coll_, i 0, r []]
+                (c/loop [c coll_, i 0, r []]
                   (if (empty? c)
                     r
                     (let [val (when (func (first c) i coll_) (first c))]
                       (recur (rest c), (inc i), (if val (conj r val) r)))))
                 (== nvars 2)
-                (loop [c coll_, i 0, r []]
+                (c/loop [c coll_, i 0, r []]
                   (if (empty? c)
                     r
                     (let [val (when (func (first c) i) (first c))]
                       (recur (rest c), (inc i) (conj (if val (conj r val) r))))))
                 (== nvars 1)
-                (loop [c coll_, r []]
+                (c/loop [c coll_, r []]
                   (if (empty? c)
                     r
                     (let [val (when (func (first c)) (first c))]
@@ -1544,17 +1444,17 @@
   (let [nvars  (-> func meta :bi/params count)]
     (cond
       (== nvars 3)
-      (loop [c coll, i 0, r []]
+      (c/loop [c coll, i 0, r []]
         (if (empty? c)
             r
             (recur (rest c) (inc i) (conj r (func (first c) i coll)))))
       (== nvars 2)
-      (loop [c coll, i 0, r []]
+      (c/loop [c coll, i 0, r []]
         (if (empty? c)
           r
           (recur (rest c) (inc i) (conj r (func (first c) i)))))
       (== nvars 1)
-      (loop [c coll, r []]
+      (c/loop [c coll, r []]
         (if (empty? c)
           r
           (recur (rest c) (conj r (func (first c))))))
@@ -1602,7 +1502,7 @@
   "This is for $reduce with JSONata semantics."
   [coll func]
   (let [num-params (-> func meta :bi/params count)]
-    (loop [c (rest coll),
+    (c/loop [c (rest coll),
            r (first coll)
            i 0]
       (if (empty? c)
@@ -1633,17 +1533,17 @@
   (let [nvars  (-> func meta :bi/params count)]
     (cond
       (== nvars 3)
-      (loop [c coll, i 0, r false]
+      (c/loop [c coll, i 0, r false]
         (cond r r
               (empty? c) false
               :else (recur (rest c) (inc i) (func (first c) i coll))))
       (== nvars 2)
-      (loop [c coll, i 0, r false]
+      (c/loop [c coll, i 0, r false]
         (cond r r
               (empty? c) false
               :else (recur (rest c) (inc i) (func (first c) i))))
       (== nvars 1)
-      (loop [c coll, r false]
+      (c/loop [c coll, r false]
         (cond r r
               (empty? c) false
               :else (recur (rest c) (func (first c))))),
@@ -1670,36 +1570,28 @@
   "Read a file of JSON or XML, creating a map."
   ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]
-   (reset! diag {:spec spec})
    (cond (string? spec)    (read-local spec opts)
          (vector? spec)
-         (let [[[k v] out-props] spec ; [k v] is an ident in Fulcro parlance.
-               ident-map {(keyword k) v} ; ident-map
-               outputs   (mapv #(let [[bad? ns nam] (re-matches #"(.+)/(.+)" %)]
-                                  (when-not (and ns nam)
-                                    (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
-                                  (keyword ns nam))
-                               out-props)]
-           (reset! diag {:out-props out-props})
-           #?(:clj (pathom-resolve ident-map outputs)
-              ;; Of course, this assumes there is a running server, such as the RM exerciser with schema-db.
-              ;; Currently this can't be tested in stand-alone RM; http://localhost:3000/api/graph-query etc. doesn't work.
+         (let [[[k v] out-props] spec] ; [k v] is an ident in Fulcro parlance.
+           #?(:clj (let [ident-map {(keyword k) v} ; ident-map
+                         outputs   (mapv #(let [[bad? ns nam] (re-matches #"(.+)/(.+)" %)]
+                                            (when-not (and ns nam)
+                                              (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
+                                            (keyword ns nam))
+                                         out-props)]
+                     (pathom-resolve ident-map outputs))
               :cljs
-              (let [req-data {:params {:ident-type k
+              (let [prom (p/deferred)
+                    req-data {:params {:ident-type k
                                        :ident-val v
                                        :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                              :handler (fn [resp] (log/info (str "$get CLJS-AJAX returns resp =" resp)) (p/promise resp))
+                              :handler (fn [resp] (p/resolve! prom resp))
                               :error-handler (fn [{:keys [status status-text]}]
-                                               (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
-                                               (p/rejected (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                                    {:status status :status-text status-text})))
+                                               (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                                        {:status status :status-text status-text})))
                               :timeout 5000}]
-                (swap! diag #(merge % {:req-data req-data}))
-              (p/do!
-               (println "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
-               (log/info "Call to $get(graph-query): k =" k " v = " v " out-props = " out-props)
-               ;; ToDo: Use https://github.com/oliyh/martian
-               (GET "http://localhost:3000/api/graph-query" req-data))))))))
+                (GET "http://localhost:3000/api/graph-query" req-data) ; ToDo: use Martian.
+                prom))))))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
@@ -1741,7 +1633,7 @@
   ([filename sheet-name invert?]
    (reset! $$ (when-let [sheet (->> (ss/load-workbook filename) (ss/select-sheet sheet-name))]
                (let [row1 (mapv ss/read-cell (-> sheet ss/row-seq first ss/cell-seq ss/into-seq))
-                     len  (loop [n (dec (-> sheet ss/row-seq first .getLastCellNum))]
+                     len  (c/loop [n (dec (-> sheet ss/row-seq first .getLastCellNum))]
                             (cond (= n 0) 0,
                                   (not (nth row1 n)) (recur (dec n)),
                                   :else (inc n)))
@@ -1916,7 +1808,7 @@
                                  #:redex{:obj [#:redex{:aData--?name|aData [:redex/express-key ?name "aData"], :user-key "aData", :val ?aData}
                                                #:redex{:bData--?name|bData [:redex/express-key ?name "bData"], :user-key "bData", :val ?bData}
                                                #:redex{:id--?name|id [:redex/express-key ?name "id"], :user-key "id", :val ?id}]}}]}]
-    (swap! diag #(assoc % :reduce-body sub-body))
+      ;;(swap! diag #(assoc % :reduce-body sub-body))
     (assoc res :reduce-body sub-body)))
 
 ;;; ToDo: It may be possible to push the reduce deeper, so it is in evaluate-express-body, but I'm not sure that's an improvement.
@@ -2042,7 +1934,7 @@
      - The ones without :redex/more or :redex/obj are maps of just one key that isn't an express-key nor qvar-in-key-position.
    Further, there can be a redex-toplevel-merge when the express form leads off with a qvar." ; ToDo: Is this the only time this kind of work is needed?
   [data reduce-body]
-  (swap! diag #(assoc % :redex-data data))
+  ;(swap! diag #(assoc % :redex-data data))
   (letfn [(add-ek-val? [making src] (if-let [ekv (:redex/ek-val src)] (assoc making :redex/ek-val ekv) making)) ; maintain :ek-val for sorting.
           (rkv [obj]
             (cond  (map? obj)     (cond (contains? obj :redex/more) ; :redex/more : continue 'this object'.
@@ -2236,7 +2128,7 @@
           {:redex/user-key #:box{:string-val "abc"}, :db/id [:redex/abc--abc "abc"], :redex/vals {:box/number-val 3}}]
 
          db-schema   (qu/schema-for-db full-schema (if (util/cljs?) :datascript :datahike))
-         zippy       (reset! diag {:schema      full-schema
+         #_#_zippy       (reset! diag {:schema      full-schema
                                    :efn         efn
                                    :lookup-refs lookup-refs
                                    :reduce-body (-> efn meta :bi/reduce-body)
@@ -2536,7 +2428,7 @@ answer 2:
              :choices first :message :content)
          (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
        :cljs
-       (p-do!
+       (p/do!
          (log/info "Call to $semMatch")
          (POST "/api/sem-match" ; ToDo: Use https://github.com/oliyh/martian
                 {:body q-str

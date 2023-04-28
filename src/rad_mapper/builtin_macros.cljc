@@ -1,6 +1,8 @@
 (ns rad-mapper.builtin-macros
   (:require
-   [clojure.string :as str]))
+   [clojure.string  :as str]
+   [promesa.core    :as p]
+   [taoensso.timbre :as log :refer-macros[error debug info log!]]))
 
 (def ^:dynamic $  "JSONata context variable" (atom :orig-val))
 (def $$ "JSONata root context." (atom :bi/unset))
@@ -91,6 +93,16 @@
           :else obj)))
 
 
+#_(defmacro defn*
+  "Convenience macro for numerical operators. They can be passed functions."
+  [fn-name doc-string [& args] & body]
+  `(def ~fn-name
+     ~doc-string
+     (fn [~@args]
+       (p/plet [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jflatten)) args)]
+         ;;~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
+               (fn [~(vec args)] ~@body)))))
+
 (defmacro defn*
   "Convenience macro for numerical operators. They can be passed functions."
   [fn-name doc-string [& args] & body]
@@ -98,7 +110,7 @@
      ~doc-string
      (fn [~@args]
        (let [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jflatten)) args)]
-         ~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
+         ;~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
          ~@body))))
 
 (defmacro defn$
@@ -138,7 +150,9 @@
 
 (defmacro primary-m [body]
   `(-> (fn [& ignore#]
-         ~body)
+         (let [res#  ~body]
+           (log/info "in primary-m: " res#)
+           res#))
        (with-meta {:bi/step-type :bi/primary})))
 
 (defmacro init-step-m [body]

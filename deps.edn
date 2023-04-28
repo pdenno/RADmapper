@@ -14,12 +14,12 @@
            net.clojars.wkok/openai-clojure     {:mvn/version "0.5.1"}
            nrepl/nrepl                         {:mvn/version "1.0.0"}
            org.babashka/sci                    {:mvn/version "0.7.39"}
-           org.babashka/sci.configs            {:git/url "https://github.com/babashka/sci.configs" ; <========== Probably better to just copy that one file.
+           #_#_org.babashka/sci.configs            {:git/url "https://github.com/babashka/sci.configs" ; used in evaluate.clj but compare with macros in builtin.cljc.
                                                 :git/sha "e83f9b45ef53b72e9ee3bc630d8476c4348a07cf"}
            ;; Including the next two removes the message seen in shadow execution. (See notes 2022-10-07.)
            ;; (Found these at https://github.com/funcool/log4j2-clojure) is not helpful.
-           org.apache.logging.log4j/log4j-api  {:mvn/version "2.20.0"}
-           org.apache.logging.log4j/log4j-core {:mvn/version "2.20.0"}
+           ;org.apache.logging.log4j/log4j-api  {:mvn/version "2.20.0"}
+           ;org.apache.logging.log4j/log4j-core {:mvn/version "2.20.0"}
            org.clojure/clojure                 {:mvn/version "1.11.1"}
            org.clojure/clojurescript           {:mvn/version "1.11.60"}
            org.clojure/data.codec              {:mvn/version "0.1.1"}
@@ -70,21 +70,12 @@
                        :exec-fn        kaocha.runner/exec-fn
                        :exec-args      {}}
 
+           ;; This for shadow target kaocha-test
            :test-cljs {:extra-paths    ["test" "src/dev"]
                        :extra-deps     {thheller/shadow-cljs      {:mvn/version "2.22.10"}
                                         lambdaisland/kaocha       {:mvn/version "1.82.1306"}
                                         lambdaisland/kaocha-cljs2 {:mvn/version "0.1.58"}
-                                        com.lambdaisland/glogi    {:mvn/version "1.3.169"}
-
-                                        ;; These for test/server (light-client)
-                                        luminus-transit/luminus-transit {:mvn/version "0.1.6" :exclusions [com.cognitect/transit-clj]}
-                                        metosin/muuntaja           {:mvn/version "0.6.8"}
-                                        metosin/reitit             {:mvn/version "0.6.0"}
-                                        metosin/ring-http-response {:mvn/version "0.9.3"}
-                                        ring/ring-jetty-adapter    {:mvn/version "1.10.0"}
-                                        ring/ring-core             {:mvn/version "1.10.0"}
-                                        ring/ring-defaults         {:mvn/version "0.3.4"}
-                                        lilactown/helix            {:mvn/version "0.1.10"}}}
+                                        com.lambdaisland/glogi    {:mvn/version "1.3.169"}}}
 
            :deploy    {:replace-deps   {slipset/deps-deploy {:mvn/version "0.2.1"}}
                        :exec-fn        deps-deploy.deps-deploy/deploy

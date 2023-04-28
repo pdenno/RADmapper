@@ -5,12 +5,19 @@
    [dev.dutil-util :refer [run]]
    [clojure.test        :refer  [deftest is testing]]
    [promesa.core :as p]
-   ;[rad-mapper.builtin   :as bi]
+   [rad-mapper.builtin   :as bi] ; for use in REPL.
    [rad-mapper.evaluate  :as ev :refer [processRM]]
    #?(:clj [schema-db.schema-util :as su :refer [get-schema]])
    [taoensso.timbre :as log :refer-macros [info debug log]]
-   #?(:clj [dev.dutil-macros :refer [run-test]]))
+   [dev.dutil :refer [nicer]] ; for use in REPL.
+   [dev.dutil-macros :as dm :refer [run-test test-results]])
   #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+
+;;; Note: To run these tests from the REPL, be aware of the value of dm/run-cljs?.
+;;; It selects the macro-expansion of run-test.
+
+#?(:clj  (reset! dm/run-tests-as-cljs? false)
+   :cljs (reset! dm/run-tests-as-cljs? true))
 
 (deftest today
   (run-test "-5"-5)
@@ -343,74 +350,11 @@
                                "key-2" ["a-much-much-much-longer" "b"]} :width 40 :depth 4))
     8 (println (ev/pprint-obj {"key-1" 1
                                "key-2" ["a-much-much-much-longer" "b"]} :width 50 :depth 4))))
-
-
-(def test-obj
-   {:ident-type "schema/name"
-    :ident-val "urn:oagis-10.8.4:Nouns:Invoice"
-    :request-objs "schema-object"})
-
-(def result-atm (atom nil))
-
-#_(defn tryme [] ; Modern promesa with p/do, The winner!
-  (let [p (p/deferred)]
-    (p/do
-      (log/info "Do this first")
-      (p/do
-        (log/info "Do this next")
-        (GET "/api/graph-query" ; ToDo: Need localhost:3000 (exerciser) here?
-             {:params test-obj
-              :handler (fn [resp]
-                         (log/info (str "CLJS-AJAX returns ok."))
-                         (reset! result-atm resp)
-                         (p/resolve! p resp)) ; This isn't 'returned'!
-              :error-handler (fn [{:keys [status status-text]}]
-                               (log/info (str "CLJS-AJAX error: status = " status " status-text= " status-text))
-                               (reset! result-atm :failure!)
-                               (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                     {:status status :status-text status-text})))
-              :timeout 3000})
-        p ; It waits? here
-        (log/info "'***$get(graph-query)' returns " (-> @result-atm str (subs 0 100) (str "...")))
-        (log/info "Do this penultimately."))
-      (log/info "Do this last"))))
-
-(def sdata
-  [{:parent "ProcessInvoice", :child "ApplicationArea"},
-   {:parent "Address", :child "BuildingNumber"},
-   {:parent "Address", :child "PostalCode"},
-   {:parent "BuyerParty", :child "Location"},
-   {:parent "Location", :child "Address"},
-   {:parent "BuyerParty", :child "TaxIDSet"},
-   {:parent "Address", :child "CountryCode"},
-   {:parent "Address", :child "CityName"},
-   {:parent "ManufacturingParty", :child "Name"},
-   {:parent "DataArea", :child "Invoice"},
-   {:parent "ProcessInvoice", :child "DataArea"},
-   {:parent "TaxIDSet", :child "ID"},
-   {:parent "Invoice", :child "InvoiceLine"},
-   {:parent "InvoiceLine", :child "BuyerParty"},
-   {:parent "ApplicationArea", :child "CreationDateTime"},
-   {:parent "Item", :child "ManufacturingParty"},
-   {:parent "Address", :child "StreetName"},
-   {:parent "DataArea", :child "Process"},
-   {:parent "InvoiceLine", :child "Item"}])
-
-(def answer
-  {"ProcessInvoice"
-   {"ApplicationArea" {"CreationDateTime" {}}
-    "DataArea" {"Process" {}
-                "Invoice" {"InvoiceLine"
-                           {"Item" {"ManufacturingParty" {"Name" {}}}
-                            "BuyerParty" {"TaxIDSet" {"ID" {}}
-                                          "Location" {"Address" {"CountryCode" {}
-                                                                 "PostalCode" {}
-                                                                 "CityName" {}
-                                                                 "StreetName" {}
-                                                                 "BuildingNumber" {}}}}}}}}})
 ;;; We have $reduce, but do we have $update and $assoc?
 ;;; Also need to get-step on qvars:  $.`?parent`.
-(defn example-shape []
+#_(defn example-shape
+    "This is just to give me an idea what the equivalent RM would look like."
+    []
   (letfn [(children [p] (->> sdata (filter #(= (:parent %) p)) (map :child)))
           (shape [parent]
             (reduce (fn [pmap c]
@@ -419,7 +363,7 @@
                     (children parent)))]
     (shape "ProcessInvoice")))
 
-(defn tryme []
+(defn elena-test []
   (run "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
   $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
@@ -458,29 +402,63 @@
 
 )"))
 
-(defn tryme2 []
-    (run "$schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']])"))
-
-
-#_(defn tryme3 []
-  (p/do
-    (rad-mapper.builtin/reset-env)
-    (rad-mapper.builtin/again?
-     (p/let
-         [$schema1
-          (rad-mapper.builtin/$get
-           (cljs.core/with-meta
-             [(cljs.core/with-meta ["schema/name" "urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1"] #:bi{:json-array? true})
-              (cljs.core/with-meta ["schema/content"] #:bi{:json-array? true})]
-             #:bi{:json-array? true}))]
-       $schema1))))
-
-
+(def errors-on-async "A vector of maps describing errors." (atom []))
 
 ;;; http://localhost:3000/api/graph-query?ident-type=schema%2Fname&ident-val=urn%3Aoagis-10.8.4%3ANouns%3AInvoice&request-objs=schema%2Fcontent
-(defn health []
-  (GET "http://localhost:3000/api/health"
-       {:handler (fn [resp] (println  "/api/health returns resp =" resp))
-        :error-handler (fn [{:keys [status status-text]}]
-                         (println "CLJS-AJAX error: status = " status " status-text= " status-text))
-        :timeout 2000}))
+(defn health-test []
+  (let [prom (p/deferred)]
+    (GET "http://localhost:3000/api/health"
+         {:handler (fn [resp] (p/resolve! prom resp))
+          :error-handler (fn [{:keys [status status-text]}]
+                           (p/reject! prom (ex-info "CLJS-AJAX error on /api/health"
+                                                    {:status status :status-text status-text})))
+          :timeout 2000})
+    (-> prom
+        (p/then #(when-not (every? #{:time :up-since :app} (keys %))
+                  (log/info "Failed health-test")
+                  (swap! errors-on-async conj {:on "health-test" :reason "Wrong keys." :val (keys %)}))))))
+
+(defn $get-test-1 []
+  (-> (run "$get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']])")
+      (p/then #(when-not (contains? % :schema/content)
+                 (log/info "Failed $get-test-1")
+                 (swap! errors-on-async conj {:on "$get-test-1" :reason "No schema found" :val %})))))
+
+(defn $get-test-2 []
+  (-> (run "( $schema := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+           $schema )")
+      (p/then #(when-not (contains? % :schema/content)
+                 (log/info "Failed $get-test-2")
+                 (swap! errors-on-async conj {:on "$get-test-2" :reason "No schema found" :val %})))))
+
+(def diag (atom nil))
+
+(health-test)
+($get-test-1)
+($get-test-2)
+
+(deftest async-code
+  (testing "async code"
+    (is (empty? @errors-on-async))))
+
+(deftest async-run-tests
+  (testing "Checking that the :expected and :actual are equal for everything on dm/test-results"
+    (let [cnt (atom 0)]
+      (doseq [[form result] (seq @test-results)]
+        (swap! cnt inc)
+        (testing form
+          (is (= (:expect result) (:actual result)))))
+      (log/info "Ran " @cnt " checks."))))
+
+(reset! test-results {})
+(async-run-tests)
+
+(defn whats-wrong?
+  "Return test text of tests that went wrong."
+  []
+  (reduce-kv (fn [r k v]
+               (if (not= (:expect v) (:actual v))
+                 (conj r k)
+                 r))
+             []
+             @test-results))

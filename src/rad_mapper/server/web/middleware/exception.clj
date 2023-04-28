@@ -1,6 +1,6 @@
 (ns rad-mapper.server.web.middleware.exception
   (:require
-    [clojure.tools.logging :as log]
+    [taoensso.timbre :as log]
     [reitit.ring.middleware.exception :as exception]))
 
 (defn handler [message status exception request]
