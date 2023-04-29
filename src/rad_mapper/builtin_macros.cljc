@@ -92,26 +92,15 @@
                                 :else obj))
           :else obj)))
 
-
-#_(defmacro defn*
-  "Convenience macro for numerical operators. They can be passed functions."
-  [fn-name doc-string [& args] & body]
-  `(def ~fn-name
-     ~doc-string
-     (fn [~@args]
-       (p/plet [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jflatten)) args)]
-         ;;~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
-               (fn [~(vec args)] ~@body)))))
-
 (defmacro defn*
-  "Convenience macro for numerical operators. They can be passed functions."
+  "Convenience macro for numerical operators. They can be passed functions." ; <==== or promises?
   [fn-name doc-string [& args] & body]
   `(def ~fn-name
-     ~doc-string
+         ~doc-string
      (fn [~@args]
-       (let [~@(mapcat #(list % `(-> (if (fn? ~%) (~%) ~%) jflatten)) args)]
-         ;~@(map #(list 'clojure.spec.alpha/assert ::number %) args)
-         ~@body))))
+       (if (some p/promise? [~@args])
+         (-> (p/all [~@args]) (p/then (fn [[~@args]] ~@body)))
+         (do ~@body)))))
 
 (defmacro defn$
   "Define two function arities using the body:
@@ -149,10 +138,7 @@
        (with-meta {:bi/step-type :bi/value-step :body '~body})))
 
 (defmacro primary-m [body]
-  `(-> (fn [& ignore#]
-         (let [res#  ~body]
-           (log/info "in primary-m: " res#)
-           res#))
+  `(-> (fn [& ignore#] ~body)
        (with-meta {:bi/step-type :bi/primary})))
 
 (defmacro init-step-m [body]

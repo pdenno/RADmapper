@@ -87,11 +87,11 @@
 
 (defn string-keys
   "Walk the object replacing its keys with strings. Where the original key
-   is namespaced, the string used is <namespace>.<name>; roughly what JSON would be."
+   is namespaced, the string used is <namespace>.<name>; roughly what JSON would be." ; ToDo: Really? "."
   [obj]
   (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (string-keys k) (string-keys v))) {} obj)
         (vector? obj)    (mapv string-keys obj)
-        (keyword? obj)   (if-let [ns (namespace obj)] (str ns "." (name obj)) (name obj))
+        (keyword? obj)   (if-let [ns (namespace obj)] (str ns "_" (name obj)) (name obj))
         :else            obj))
 
 ;;; ToDo: The problem with output to log/debug might have to do with *err* not defined in cljs.

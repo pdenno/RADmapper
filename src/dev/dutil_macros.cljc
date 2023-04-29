@@ -38,7 +38,7 @@
 (defmacro run-test
   "Print the test form using testing, run the test."
   [form-string expect & {:keys [rewrite? keep-meta? sets?]}]
-  (if true ; *run-tests-as-cljs* @run-tests-as-cljs? ... whatever they don't work!
+  (if false ; *run-tests-as-cljs* @run-tests-as-cljs? ... whatever they don't work!
     `(try
        (swap! test-results conj {~form-string {:expect ~expect}})
        (-> (run ~form-string :rewrite? ~rewrite? :keep-meta? ~keep-meta?)

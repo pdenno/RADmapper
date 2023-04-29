@@ -5,13 +5,13 @@
    [rad-mapper.evaluate :as ev]
    [rad-mapper.rewrite  :as rew]
    [dev.dutil-util :refer [run remove-meta]]
-   #?(:clj [dev.dutil-macros :as dutilm :refer [run-test unquote-body]]))
-  #?(:cljs (:require-macros [dev.dutil-macros :as dutilm :refer [run-test unquote-body]])))
+  #?(:clj [dev.dutil-macros :as dm :refer [run-test unquote-body]]))
+  #?(:cljs (:require-macros [dev.dutil-macros :as dm :refer [run-test unquote-body]])))
 
 (defn run-rew
   "run-test for rewrite sets :rewrite? true."
   [exp expect & {:keys [keep-meta?]}]
-  (dutilm/run-test exp expect :rewrite? true :keep-meta? keep-meta?))
+  (dm/run-test exp expect :rewrite? true :keep-meta? keep-meta?))
 
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[1] translate correctly."

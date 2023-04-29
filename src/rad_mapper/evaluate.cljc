@@ -77,7 +77,9 @@
                                                                            (->> form name (symbol nsa))
                                                                            form)),
                     :else form))]
-      `(do (rad-mapper.builtin/reset-env) (rad-mapper.builtin/finalize ~(ni form))))))
+      `(do
+         (rad-mapper.builtin/reset-env)
+         (rad-mapper.builtin/finalize ~(ni form))))))
 
 (def ctx
   (let [publics        (ns-publics 'rad-mapper.builtin)

@@ -116,13 +116,22 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-;;; This was again? back in the day that
+
+(def ^:dynamic *await-finalize* 15000)
+
+(defn unwind-promises
+  "Recursively execute itself until a "
+  [])
+
 (defn finalize
-  "Flatten/singlize lists, if appropriate."
-  [res]
-  (if (p/promise? res)
-    (-> res (p/then #(jflatten %)))
-    (jflatten res)))
+  [obj]
+  (letfn [(fin [obj]
+            (cond (map? obj)              (let [m (meta obj)]
+                                            (-> (reduce-kv (fn [m k v] (assoc m (fin k) (fin v))) {} obj) (with-meta m)))
+                  (vector? obj)           (let [m (meta obj)] (-> (mapv fin obj) (with-meta m)))
+                  (p/promise? obj)        (-> obj #?(:clj (p/await *await-finalize*)) fin) ; ToDo: JS isn't .resolve!
+                  :else                   obj))]
+    (-> obj fin jflatten)))
 
 (defn deref$
   "Dereference the $ atom.
@@ -133,28 +142,16 @@
    (set-context! (containerize? val))))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn* add      "plus"   [x y]
-  (p/plet [x x
-           y y]
-    (fn [[x y]] (+ x y))))
-
-(defn* subtract "minus"  [x y]   (- x y))
-(defn* multiply "times"  [x y]   (* x y))
-(defn* div      "divide" [x y]   (s/assert ::non-zero y) (double (/ x y))) ; cljs.core/divide
+(defn* add      "plus"   [x y] (+ x y))
+(defn* subtract "minus"  [x y] (- x y))
+(defn* multiply "times"  [x y] (* x y))
+(defn* div      "divide" [x y] (s/assert ::non-zero y) (double (/ x y)))  ; cljs.core/divide
 (defn* gt       "greater-than"          [x y] (>  x y))
 (defn* lt       "less-than "            [x y] (<  x y))
 (defn* gteq     "greater-than-or-equal" [x y] (>= x y))
 (defn* lteq     "less-than-or-equal"    [x y] (<= x y))
-
-(defn eq
-  "equal, need not be numbers"
-  [x y]
-  (= (jflatten x) (jflatten y)))
-
-(defn !=
-  "not equal, need not be numbers"
-  [x y]
-  (= (jflatten x) (jflatten y)))
+(defn* eq       "equal, need not be numbers"     [x y] (= (jflatten x) (jflatten y)))
+(defn* !=       "not equal, need not be numbers" [x y] (not= (jflatten x) (jflatten y)))
 
 (def thread ^:sci/macro
   (fn [_&form _&env x y]
@@ -182,7 +179,7 @@
   ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
   ;;(log/info "--- run-steps ---")
   (binding [$ (atom @$)] ; Make a new temporary context that can be reset in the steps.
-     (p/loop
+    (c/loop
       [steps steps
        res   @$]
       (if (empty? steps) res
@@ -202,7 +199,7 @@
                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-             (p/recur
+             (recur
               (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
               (set-context! new-res)))))))
 
@@ -211,6 +208,39 @@
 ;;; rather than the first author from all of the books. http://docs.jsonata.org/processing
 
 ;;; ToDo: You can specify multiple conditions (a disjunction)  in filtering http://docs.jsonata.org/processing
+;;; ToDo: There is likely to be more to do here owing to promises.
+#_(defn filter-step
+  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
+    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
+        then it is treated as a predicate.
+    (2) See aref below.
+    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
+        If the array contains objects, and the location path selects fields within these objects, then each object within the array
+        will be queried for selection. [This rule has nothing to do with filtering!]"
+  [pred|ix-fn]
+  (-> (fn filter-step [obj prior-step]
+        (letfn [(fbody [prix]
+                  (let [ob (if (= :bi/get-step (:bi/prior-step-type prior-step))
+                             (let [k (:bi/attr prior-step)] ; non-compositional semantics
+                               (if (vector? obj)
+                                 (cmap #(get % k) (containerize obj))
+                                 (get obj k)))
+                             obj)]
+                    (if (number? prix)   ; Array behavior. Caller will map over it.
+                      (let [ix (-> prix Math/floor int) ; Really! I checked!
+                            m (meta obj)]
+                        (if (or (:bi/json-array? m) (:bi/b-set? m))
+                          (aref ob ix)
+                          (-> (cmap #(aref % ix) ob) jflatten)))
+                      (as-> ob ?o          ; Filter behavior.
+                        (singlize ?o)
+                        (-> (filterv #(binding [$ (atom %)] (pred|ix-fn %)) ?o) containerize?)))))]
+        (let [prix (pred|ix-fn @$)] ; If it returns a number, it is indexing.
+          (cond (number? prix)     (fbody prix)
+                (p/promise? prix)  (-> prix (p/then #(fbody %)) (p/catch #(do % (fbody nil))))
+                :else              (fbody prix))))) ; Not sure this one happens!
+      (with-meta {:bi/step-type :bi/filter-step})))
+
 (defn filter-step
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
     (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
@@ -497,6 +527,7 @@
    (let [s (if (keyword? s) ; query-roles are allowed.
              (if (namespace s) (str (namespace s) "/" (name s)) (name s))
              s)
+         zippy (reset! diag {:pattern pattern :s s})
          matcher (re-matcher pattern s)
          result (c/loop [res []
                        adv 0
@@ -958,13 +989,16 @@
       :cljs
       (nb/round num precision))))
 
-;;; $sum
 (defn $sum
   "Take one number of a vector of numbers; return the sum."
   [nums]
-  (let [v (singlize nums)]
-    (s/assert ::numbers v)
-     (apply + v)))
+  (letfn [(sum [nums]
+            (let [v (singlize nums)]
+              (s/assert ::numbers v)
+              (apply + v)))]
+    (if (p/promise? nums) ; ToDo: THIS, everywhere! (a macro for it, I suppose)
+      (-> nums (p/then sum))
+      (sum nums))))
 
 ;;; $sqrt
 (defn $sqrt
@@ -1579,7 +1613,7 @@
                                               (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
                                             (keyword ns nam))
                                          out-props)]
-                     (pathom-resolve ident-map outputs))
+                     (-> (pathom-resolve ident-map outputs) util/string-keys))
               :cljs
               (let [prom (p/deferred)
                     req-data {:params {:ident-type k

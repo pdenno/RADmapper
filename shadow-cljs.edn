@@ -29,8 +29,8 @@
                 :compiler-options {:externs ["datascript/externs.js"]}
                 :devtools         {:http-port 1818
                                    :http-root "target/kaocha-test"
-                                   :after-load dev.dutil/reload ; I'm guessing.
-                                   :preloads [lambdaisland.chui.remote]}}
+                                   :after-load dev.kaocha/reload ; dev.kaocha/reload is an attempt to suppress useless log output.
+                                   :preloads [lambdaisland.chui.remote #_dev.kaocha/reload]}}
 
   :script   {:target :node-script
              :source-map true                          ; Default anyway?

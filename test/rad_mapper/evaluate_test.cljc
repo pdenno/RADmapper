@@ -2,6 +2,7 @@
   "Test evaluation (and parsing and rewriting) of RADmapper code."
   (:require
    [ajax.core :refer [GET]]
+   [clojure.pprint  :refer [cl-format pprint]]
    [dev.dutil-util :refer [run]]
    [clojure.test        :refer  [deftest is testing]]
    [promesa.core :as p]
@@ -15,9 +16,6 @@
 
 ;;; Note: To run these tests from the REPL, be aware of the value of dm/run-cljs?.
 ;;; It selects the macro-expansion of run-test.
-
-#?(:clj  (reset! dm/run-tests-as-cljs? false)
-   :cljs (reset! dm/run-tests-as-cljs? true))
 
 (deftest today
   (run-test "-5"-5)
@@ -368,15 +366,15 @@
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
   $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
 
-  $pcQuery := query{[?x     :element/name        ?parent] // pc = 'parent/child'
-                    [?x     :element/complexType ?cplx1]
-                    [?cplx1 :model/sequence      ?def]
-                    [?def   :model/elementDef    ?cplx2]
-                    [?cplx2 :element/name        ?child]};
+  $pcQuery := query{[?x     :element_name        ?parent] // pc = 'parent/child'
+                    [?x     :element_complexType ?cplx1]
+                    [?cplx1 :model_sequence      ?def]
+                    [?def   :model_elementDef    ?cplx2]
+                    [?cplx2 :element_name        ?child]};
 
-  $rootQuery := query{[?c :schema/content   ?e]
-                      [?e :model/elementDef ?d]
-                      [?d :element/name     ?name]};
+  $rootQuery := query{[?c :schema_content   ?e]
+                      [?e :model_elementDef ?d]
+                      [?d :element_name     ?name]};
 
   // This function just gets the children for a parent.
   $children := function($spc, $p) { $spc[?parent = $p].?child };
