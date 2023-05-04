@@ -1,81 +1,77 @@
 {:paths   ["src" "test"]
  :deps    {applied-science/js-interop          {:mvn/version "0.4.2"}
-           camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
-           com.github.pdenno/schema-db         {:mvn/version "1.0.17"}
-           cljs-ajax/cljs-ajax                 {:mvn/version "0.8.4"}
-           com.cemerick/url                    {:mvn/version "0.1.1"}
-           com.taoensso/timbre                 {:mvn/version "6.1.0"}
+           camel-snake-kebab/camel-snake-kebab {:mvn/version "RELEASE"}
+           com.github.pdenno/schema-db         {:mvn/version "RELEASE"}
+           cljs-ajax/cljs-ajax                 {:mvn/version "RELEASE"}
+           com.cemerick/url                    {:mvn/version "RELEASE"}
+           com.taoensso/timbre                 {:mvn/version "RELEASE"}
            com.wsscode/pathom3                 {:mvn/version "2023.01.31-alpha"}
-           dk.ative/docjure                    {:mvn/version "1.19.0"}  ; spreadsheets
-           datascript/datascript               {:mvn/version "1.4.2"}
-           funcool/promesa                     {:mvn/version "10.0.594"} ; AJAX for bi/$get, and $semMatch, at least.
-           io.replikativ/datahike              {:mvn/version "0.6.1538"} ; Remember to rebuild databases on update.
-           mount/mount                         {:mvn/version "0.1.17"}
-           net.clojars.wkok/openai-clojure     {:mvn/version "0.5.1"}
-           nrepl/nrepl                         {:mvn/version "1.0.0"}
-           org.babashka/sci                    {:mvn/version "0.7.39"}
-           #_#_org.babashka/sci.configs            {:git/url "https://github.com/babashka/sci.configs" ; used in evaluate.clj but compare with macros in builtin.cljc.
-                                                :git/sha "e83f9b45ef53b72e9ee3bc630d8476c4348a07cf"}
-           ;; Including the next two removes the message seen in shadow execution. (See notes 2022-10-07.)
-           ;; (Found these at https://github.com/funcool/log4j2-clojure) is not helpful.
-           ;org.apache.logging.log4j/log4j-api  {:mvn/version "2.20.0"}
-           ;org.apache.logging.log4j/log4j-core {:mvn/version "2.20.0"}
-           org.clojure/clojure                 {:mvn/version "1.11.1"}
-           org.clojure/clojurescript           {:mvn/version "1.11.60"}
-           org.clojure/data.codec              {:mvn/version "0.1.1"}
-           org.clojure/data.json               {:mvn/version "2.4.0"}
-           org.clojure/data.xml                {:mvn/version "0.2.0-alpha8"}
-           org.clojure/data.zip                {:mvn/version "1.0.0"}}
+           dk.ative/docjure                    {:mvn/version "RELEASE"}
+           datascript/datascript               {:mvn/version "RELEASE"}
+           funcool/promesa                     {:mvn/version "10.0.663"} ; My build.
+           io.replikativ/datahike              {:mvn/version "0.6.1538"}
+           mount/mount                         {:mvn/version "RELEASE"}
+           net.clojars.wkok/openai-clojure     {:mvn/version "RELEASE"}
+           nrepl/nrepl                         {:mvn/version "RELEASE"}
+           org.babashka/sci                    {:mvn/version "RELEASE"}
+           org.slf4j/slf4j-nop                 {:mvn/version "RELEASE"} ; Stop spurious logging!
+           org.clojure/data.codec              {:mvn/version "RELEASE"}
+           org.clojure/data.json               {:mvn/version "RELEASE"}
+           org.clojure/data.xml                {:mvn/version "RELEASE"}
+           org.clojure/data.zip                {:mvn/version "RELEASE"}}
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
- :aliases {:dev-hold       {:extra-paths    ["dev" "src/dev" "test"]
+ :aliases {:dev-hold  {:extra-paths    ["dev" "src/dev" "test"]
                        :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
-                       :extra-deps     {cider/cider-nrepl           {:mvn/version "0.30.0"}
-                                        lilactown/helix             {:mvn/version "0.1.10"}
-                                        org.clojure/java.classpath  {:mvn/version "1.0.0"}
-                                        org.clojure/tools.namespace {:mvn/version "1.4.4"}}}
+                       :extra-deps     {cider/cider-nrepl           {:mvn/version "RELEASE"}
+                                        lilactown/helix             {:mvn/version "RELEASE"}
+                                        org.clojure/java.classpath  {:mvn/version "RELEASE"}
+                                        org.clojure/tools.namespace {:mvn/version "RELEASE"}}}
 
            :dev          {:extra-paths    ["dev" "src/dev" "test" "src/rad_mapper/server" "env/dev" "resources"]
                           :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
-                          :extra-deps     {cider/cider-nrepl               {:mvn/version "0.30.0"}
-                                           com.lambdaisland/classpath      {:mvn/version "0.4.44"}
-                                           criterium/criterium             {:mvn/version "0.4.6"}
-                                           expound/expound                 {:mvn/version "0.9.0"}
-                                           integrant/repl                  {:mvn/version "0.3.2"}
-                                           pjstadig/humane-test-output     {:mvn/version "0.11.0"}
-                                           org.clojure/java.classpath      {:mvn/version "1.0.0"}
-                                           org.clojure/tools.namespace     {:mvn/version "1.4.4"}
-                                           metosin/muuntaja                {:mvn/version "0.6.8"}
-                                           metosin/reitit                  {:mvn/version "0.6.0"}
-                                           metosin/ring-http-response      {:mvn/version "0.9.3"}
-                                           ring/ring-defaults              {:mvn/version "0.3.4"}
-                                           ring/ring-jetty-adapter         {:mvn/version "1.10.0"}
-                                           ring/ring-core                  {:mvn/version "1.10.0"}
-                                           ring/ring-devel                 {:mvn/version "1.10.0"}
-                                           ring/ring-mock                  {:mvn/version "0.4.0"}
-                                           ring-cors/ring-cors             {:mvn/version "0.1.13"} ; I am experimenting with this.
+                          :extra-deps     {cider/cider-nrepl               {:mvn/version "RELEASE"}
+                                           com.lambdaisland/classpath      {:mvn/version "RELEASE"}
+                                           criterium/criterium             {:mvn/version "RELEASE"}
+                                           expound/expound                 {:mvn/version "RELEASE"}
+                                           integrant/repl                  {:mvn/version "RELEASE"}
+                                           pjstadig/humane-test-output     {:mvn/version "RELEASE"}
+                                           org.clojure/java.classpath      {:mvn/version "RELEASE"}
+                                           org.clojure/tools.namespace     {:mvn/version "RELEASE"}
+                                           metosin/muuntaja                {:mvn/version "RELEASE"}
+                                           metosin/reitit                  {:mvn/version "RELEASE"}
+                                           metosin/ring-http-response      {:mvn/version "RELEASE"}
+                                           ring/ring-defaults              {:mvn/version "RELEASE"}
+                                           ring/ring-jetty-adapter         {:mvn/version "RELEASE"}
+                                           ring/ring-core                  {:mvn/version "RELEASE"}
+                                           ring/ring-devel                 {:mvn/version "RELEASE"}
+                                           ring/ring-mock                  {:mvn/version "RELEASE"}
+                                           ring-cors/ring-cors             {:mvn/version "RELEASE"}
                                            selmer/selmer                   {:mvn/version "1.12.58"}
-                                           io.github.kit-clj/kit-core      {:mvn/version "1.0.3"}
-                                           io.github.kit-clj/kit-undertow  {:mvn/version "1.0.4"}
-                                           io.github.kit-clj/kit-generator {:mvn/version "0.1.8"}
-                                           luminus/ring-ttl-session        {:mvn/version "0.3.3"}
-                                           luminus-transit/luminus-transit {:mvn/version "0.1.6"
+                                           io.github.kit-clj/kit-core      {:mvn/version "RELEASE"}
+                                           io.github.kit-clj/kit-undertow  {:mvn/version "RELEASE"}
+                                           io.github.kit-clj/kit-generator {:mvn/version "RELEASE"}
+                                           luminus/ring-ttl-session        {:mvn/version "RELEASE"}
+                                           luminus-transit/luminus-transit {:mvn/version "RELEASE"
                                                                             :exclusions [com.cognitect/transit-clj]}}}
 
            :lib-dev   {:extra-paths    ["test" "src/dev"] ; Not needed?
-                       :extra-deps     {thheller/shadow-cljs {:mvn/version "2.23.3"}}}
+                       :extra-deps     {thheller/shadow-cljs {:mvn/version "RELEASE"}}}
 
-           :test      {:extra-paths    ["test" "src/dev"]
-                       :extra-deps     {lambdaisland/kaocha {:mvn/version "1.82.1306"}}
-                       :exec-fn        kaocha.runner/exec-fn
-                       :exec-args      {}}
+           :test      {:extra-paths    ["test" "src/dev"] ; clojure -X:dev:test
+                       :extra-deps
+                       {io.github.cognitect-labs/test-runner
+                        {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+                       ;; :main-opts ["-m" "cognitect.test-runner"]
+                       :exec-fn cognitect.test-runner.api/test
+                       :exec-args {:patterns [".*-test.*"]}}
 
            ;; This for shadow target kaocha-test
            :test-cljs {:extra-paths    ["test" "src/dev"]
-                       :extra-deps     {thheller/shadow-cljs      {:mvn/version "2.23.3"}
-                                        lambdaisland/kaocha       {:mvn/version "1.82.1306"}
-                                        lambdaisland/kaocha-cljs2 {:mvn/version "0.1.58"}
-                                        com.lambdaisland/glogi    {:mvn/version "1.3.169"}}}
+                       :extra-deps     {thheller/shadow-cljs      {:mvn/version "RELEASE"}
+                                        lambdaisland/kaocha       {:mvn/version "RELEASE"}
+                                        lambdaisland/kaocha-cljs2 {:mvn/version "RELEASE"}
+                                        com.lambdaisland/glogi    {:mvn/version "RELEASE"}}}
 
            :deploy    {:replace-deps   {slipset/deps-deploy {:mvn/version "0.2.1"}}
                        :exec-fn        deps-deploy.deps-deploy/deploy

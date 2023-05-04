@@ -418,14 +418,14 @@
 
 (defn $get-test-1 []
   (-> (run "$get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']])")
-      (p/then #(when-not (contains? % :schema/content)
+      (p/then #(when-not (contains? % "schema_content")
                  (log/info "Failed $get-test-1")
                  (swap! errors-on-async conj {:on "$get-test-1" :reason "No schema found" :val %})))))
 
 (defn $get-test-2 []
   (-> (run "( $schema := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
            $schema )")
-      (p/then #(when-not (contains? % :schema/content)
+      (p/then #(when-not (contains? % "schema_content")
                  (log/info "Failed $get-test-2")
                  (swap! errors-on-async conj {:on "$get-test-2" :reason "No schema found" :val %})))))
 
@@ -452,7 +452,7 @@
 (async-run-tests)
 
 (defn whats-wrong?
-  "Return test text of tests that went wrong."
+  "Return test form string of tests that failed."
   []
   (reduce-kv (fn [r k v]
                (if (not= (:expect v) (:actual v))

@@ -19,8 +19,9 @@
     [rad-mapper.util :as util]
     [schema-db.core]))
 
-;; uncomment to enable hot loading for deps
-(watch-deps/start! {:aliases [:dev :test]})
+;; uncomment to enable hot loading for deps.
+;; This does not work for my "RELEASE" version of deps.edn
+;(watch-deps/start! {:aliases [:dev :test]})
 
 (alter-var-root #'s/*explain-out* (constantly expound/printer))
 
@@ -54,6 +55,7 @@
 
 ;;; Use start and not go, which will miss starting schema-db
 (defn start []
+  (log/info "===== This start ======")
   (util/config-log :info)
   (mount/start)
   (go))

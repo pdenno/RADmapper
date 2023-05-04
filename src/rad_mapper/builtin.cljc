@@ -116,7 +116,6 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-
 (def ^:dynamic *await-finalize* 15000)
 
 (defn unwind-promises
@@ -126,10 +125,11 @@
 (defn finalize
   [obj]
   (letfn [(fin [obj]
+            (log/info "obj = " obj)
             (cond (map? obj)              (let [m (meta obj)]
                                             (-> (reduce-kv (fn [m k v] (assoc m (fin k) (fin v))) {} obj) (with-meta m)))
                   (vector? obj)           (let [m (meta obj)] (-> (mapv fin obj) (with-meta m)))
-                  (p/promise? obj)        (-> obj #?(:clj (p/await *await-finalize*)) fin) ; ToDo: JS isn't .resolve!
+                  (p/promise? obj)        #?(:clj (p/await *await-finalize* obj) :cljs obj)
                   :else                   obj))]
     (-> obj fin jflatten)))
 

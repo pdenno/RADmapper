@@ -1,5 +1,5 @@
 (ns rad-mapper.promesa-config
-  (:refer-clojure :exclude [delay spread promise
+  (:refer-clojure :exclude [delay do spread promise
                             await map mapcat run!
                             future let loop recur -> ->>
                             with-redefs
@@ -13,33 +13,52 @@
 (def pns (sci/create-ns 'promesa.core nil))
 (def ptns (sci/create-ns 'promesa.protocols nil))
 
-(defn ^:macro do!
+(defn ^:macro do*
+  "An exception unsafe do-like macro. Supposes that we are already
+  wrapped in promise context so avoids defensive wrapping."
+  [_ _ & exprs]
+  (condp = (count exprs)
+    0 `(impl/resolved nil)
+    1 `(pt/-promise ~(first exprs))
+    (reduce (fn [acc e]
+              `(pt/-mcat (pt/-promise ~e) (fn [_#] ~acc)))
+            `(pt/-promise ~(last exprs))
+            (reverse (butlast exprs)))))
+
+(defn ^:macro do
   "Execute potentially side effectful code and return a promise resolved
-  to the last expression. Always awaiting the result of each
+  to the last expression after awaiting the result of each
   expression."
   [_ _ & exprs]
-  `(pt/-bind
+  `(pt/-mcat
     (pt/-promise nil)
     (fn [_#]
-      ~(condp = (count exprs)
-         0 `(pt/-promise nil)
-         1 `(pt/-promise ~(first exprs))
-         (reduce (fn [acc e]
-                   `(pt/-bind (pt/-promise ~e) (fn [_#] ~acc)))
-                 `(pt/-promise ~(last exprs))
-                 (reverse (butlast exprs)))))))
+      (p/do* ~@exprs))))
+
+(defn ^:macro do!
+  "A convenience alias for `do` macro."
+  [_ _ & exprs]
+  `(p/do ~@exprs))
+
+(defn ^:macro let*
+  "An exception unsafe let-like macro. Supposes that we are already
+  wrapped in promise context so avoids defensive wrapping."
+  [_ _ bindings & body]
+  (assert (even? (count bindings)) (str "Uneven binding vector: " bindings))
+  (c/->> (reverse (partition 2 bindings))
+         (reduce (fn [acc [l r]]
+                   `(pt/-mcat (pt/-promise ~r) (fn [~l] ~acc)))
+                 `(p/do* ~@body))))
 
 (defn ^:macro let
   "A `let` alternative that always returns promise and waits for all the
   promises on the bindings."
   [_ _ bindings & body]
-  `(pt/-bind
-    (pt/-promise nil)
-    (fn [_#]
-      ~(c/->> (reverse (partition 2 bindings))
-              (reduce (fn [acc [l r]]
-                        `(pt/-bind (pt/-promise ~r) (fn [~l] ~acc)))
-                      `(promesa.core/do! ~@body))))))
+  (if (seq bindings)
+    `(pt/-mcat
+      (pt/-promise nil)
+      (fn [_#] (promesa.core/let* ~bindings ~@body)))
+    `(p/do ~@body)))
 
 (defn ^:macro ->
   "Like the clojure.core/->, but it will handle promises in values
@@ -147,43 +166,8 @@
 
 ;;; "Fresh" from https://github.com/funcool/promesa/blob/master/src/promesa/core.cljc#L674
 (defn ^:macro recur
-  [_ _ & args]  
-  `(->Recur [~@args]))
-
-#_(defn ^:macro loop
-  [_ _ bindings & body]
-  (c/let [bindings (partition 2 2 bindings)
-          names (mapv first bindings)
-          fvals (mapv second bindings)
-          tsym (gensym "loop")
-          dsym (gensym "deferred")
-          rsym (gensym "run")]
-    `(c/let [~rsym promesa.core/*loop-run-fn*
-             ~dsym (promesa.core/deferred)
-             ~tsym (fn ~tsym [params#]
-                     (c/-> (promesa.core/all params#)
-                           (promesa.core/then (fn [[~@names]]
-                                                ;; (prn "exec" ~@names)
-                                                (promesa.core/do! ~@body)))
-                           (promesa.core/handle
-                            (fn [res# err#]
-                              ;; (prn "result" res# err#)
-                              (cond
-                                (not (nil? err#))
-                                (promesa.core/reject! ~dsym err#)
-
-                                (and (map? res#) (= (:type res#) :promesa.core/recur))
-                                (do (~rsym (fn [] (~tsym (:args res#))))
-                                    nil)
-
-                                :else
-                                (promesa.core/resolve! ~dsym res#))))))]
-       (~rsym (fn [] (~tsym ~fvals)))
-       ~dsym)))
-
-#_(defn ^:macro recur
   [_ _ & args]
-  `(array-map :type :promesa.core/recur :args [~@args]))
+  `(->Recur [~@args]))
 
 (defn ^:macro doseq
   "Simplified version of `doseq` which takes one binding and a seq, and
@@ -202,7 +186,7 @@
   `(p/thread-call :default (^:once fn [] ~@body)))
 
 (def promesa-namespace
-  {'*loop-run-fn* loop-run-fn
+  {;'*loop-run-fn* loop-run-fn
    '->            (sci/copy-var -> pns)
    '->>           (sci/copy-var ->> pns)
    'all           (sci/copy-var p/all pns)
@@ -213,13 +197,15 @@
    'deferred      (sci/copy-var p/deferred pns)
    'delay         (sci/copy-var p/delay pns)
    'do            (sci/copy-var do! pns)
+   'do*           (sci/copy-var do* pns) ; my 10.0.663, then commented
    'do!           (sci/copy-var do! pns)
-   'error         (sci/copy-var p/error pns)
+;   'error         (sci/copy-var p/error pns) ; Not in my 10.0.663 ?
    'finally       (sci/copy-var p/finally pns)
    'future        (sci/copy-var future pns)
    'thread-call   (sci/copy-var p/thread-call pns)
    'handle        (sci/copy-var p/handle pns)
    'let           (sci/copy-var let pns)
+   'let*          (sci/copy-var let* pns)   ; My 10.0.663
    'loop          (sci/copy-var loop pns)
    'map           (sci/copy-var p/map pns)
    'mapcat        (sci/copy-var p/mapcat pns)
@@ -239,7 +225,8 @@
    'doseq         (sci/copy-var doseq pns)})
 
 (def promesa-protocols-namespace
-  {'-bind (sci/copy-var pt/-bind ptns)
+  {; '-bind (sci/copy-var pt/-bind ptns) ; Not in my 10.0.633
+   '-mcat (sci/copy-var pt/-mcat ptns)  ; I'm guessing
    '-promise (sci/copy-var pt/-promise ptns)})
 
 (def namespaces {'promesa.core promesa-namespace

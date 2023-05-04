@@ -15,7 +15,6 @@
     [rad-mapper.rewrite-macros    :as rewm]
     [rad-mapper.util              :as util :refer [nspaces]]
     [sci.core                     :as sci]
-    ;;;#?(:cljs [sci.configs.funcool.promesa  :as scip])
     #?(:cljs [rad-mapper.promesa-config :as scip])
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
