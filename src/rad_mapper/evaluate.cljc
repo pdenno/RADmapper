@@ -357,7 +357,8 @@
   [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
   (let [strg (atom "")]
     (letfn [(pp [obj]
-              (cond (map? obj)     (swap! strg #(str % (pprint-map obj indent width)))
+              (cond (p/promise? obj) obj
+                    (map? obj)     (swap! strg #(str % (pprint-map obj indent width)))
                     (vector? obj)  (swap! strg #(str % (pprint-vec obj indent width)))
                     (string? obj)  (swap! strg #(str %  "'" obj "'"))
                     (keyword? obj) (if-let [ns (namespace obj)]
