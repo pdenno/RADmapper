@@ -1,7 +1,7 @@
 (ns rad-mapper.server.web.middleware.exception
   (:require
-    [taoensso.timbre :as log]
-    [reitit.ring.middleware.exception :as exception]))
+   [reitit.ring.middleware.exception :as exception]
+   [taoensso.timbre :as log]))
 
 (defn handler [message status exception request]
   (when (>= status 500)

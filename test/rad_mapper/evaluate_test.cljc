@@ -8,7 +8,7 @@
    [promesa.core :as p]
    [rad-mapper.builtin   :as bi] ; for use in REPL.
    [rad-mapper.evaluate  :as ev :refer [processRM]]
-   #?(:clj [schema-db.schema-util :as su :refer [get-schema]])
+   #?(:clj [rad-mapper.resolvers :refer [get-schema]])
    [taoensso.timbre :as log :refer-macros [info debug log]]
    [dev.dutil :refer [nicer]] ; for use in REPL.
    [dev.dutil-macros :as dm :refer [run-test test-results]])

@@ -1,5 +1,6 @@
 (ns rad-mapper.evaluate
-  "Evaluate a rewritten form."
+  "Evaluate a rewritten form. This file serves like 'core' in the sense that it toplevel,
+   and loads components such as db."
   (:require
     #?(:clj [clojure.java.io])
     [clojure.pprint               :refer [cl-format pprint]]
@@ -14,6 +15,7 @@
     [rad-mapper.rewrite           :as rew]
     [rad-mapper.rewrite-macros    :as rewm]
     [rad-mapper.util              :as util :refer [nspaces]]
+    #?(:clj [rad-mapper.resolvers         :refer [schema-db-atm]]) ; for mount
     [sci.core                     :as sci]
     #?(:cljs [rad-mapper.promesa-config :as scip])
     [taoensso.timbre              :as log :refer-macros [info debug log]]))

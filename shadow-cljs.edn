@@ -1,7 +1,6 @@
-;;; Only :light-client and :kaocha-test have been used much.
-{:deps {:aliases [:test-cljs]}
+;;; Only :kaocha-test has been used much.
+{:deps {:aliases [#_:light-client :kaochaRM]} ; If this works, then it contradicts what I said in the exerciser about :deps not being merged.
  :nrepl {:port 7004} ; exerciser uses 7002.
- #_#_:dev-http {8000 "resources/public"}
  :builds
  {:lib-dev {:target :browser
             :output-dir "resources/public/js"
@@ -14,15 +13,14 @@
             :exports-vars rad-mapper.rewrite/processRad
             :compiler-options {:externs ["datascript/externs.js"]}}
 
-  :light-client {:target :browser
-                 :output-dir "resources/public/js"
-                 :asset-path "/js"
-                 :compiler-options {:externs ["datascript/externs.js"]}
-                 :modules  {:app {:entries [rad-mapper.app.core] ; creates app.js owing to key :app.
-                                  :init-fn rad-mapper.app.core/mount-root}}
-                 :devtools {:after-load rad-mapper.app.core/mount-root}}
+  #_#_:light-client {:target :browser-test ; This is WIP
+                 :test-dir         "target/light-test"
+                 :output-dir       "resources/public/js"
+                 :asset-path       "/js"
+                 :runner-ns       shadow.test.browser ; That's the default
+                 :compiler-options {:externs ["datascript/externs.js"]}}
 
-  :kaocha-test {:target           :browser-test
+  :kaochaRM    {:target           :browser-test
                 :test-dir         "target/kaocha-test"
                 :runner-ns        kaocha.cljs2.shadow-runner
                 :ns-regexp        ".*-test$"

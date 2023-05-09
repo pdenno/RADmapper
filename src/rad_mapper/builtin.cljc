@@ -15,7 +15,6 @@
               [dk.ative.docjure.spreadsheet :as ss]
               [datahike.api                 :as d]
               [datahike.pull-api            :as dp]
-              [schema-db.resolvers          :as path :refer [pathom-resolve]]
               [wkok.openai-clojure.api      :as openai]]
        :cljs [[ajax.core :refer [GET POST]]
               [datascript.core              :as d]
@@ -30,11 +29,8 @@
    [clojure.walk                    :as walk :refer [keywordize-keys]]
    [promesa.core                    :as p]
    #?(:cljs [rad-mapper.promesa-config :as pm])
-;;;  #?(:cljs [sci.configs.funcool.promesa :as scip])
-;;;  #?(:cljs [rad-mapper.promesa-config :as scip])       ; This doesn't have any macros in it. It is the SCI equivalents.
-   #_[promesa.exec                      :as pe]
-   #_[promesa.protocols                 :as pt]
    [rad-mapper.query                  :as qu]
+   #?(:clj [rad-mapper.resolvers              :refer [pathom-resolve]])
    [rad-mapper.util                   :as util :refer [qvar? box unbox]]
    [taoensso.timbre                   :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
@@ -77,7 +73,7 @@
 (s/def ::radix (s/and number? #(<= 2 % 36)))
 (s/def ::fn fn?)
 
-#?(:cljs (def svr-prefix "http://localhost:3000"))
+#?(:cljs (def svr-prefix "http://localhost:3001"))
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -125,7 +121,6 @@
 (defn finalize
   [obj]
   (letfn [(fin [obj]
-            (log/info "obj = " obj)
             (cond (map? obj)              (let [m (meta obj)]
                                             (-> (reduce-kv (fn [m k v] (assoc m (fin k) (fin v))) {} obj) (with-meta m)))
                   (vector? obj)           (let [m (meta obj)] (-> (mapv fin obj) (with-meta m)))
@@ -1599,7 +1594,7 @@
            (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
 ;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
-;;;  = (schema-db.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
+;;;  = (rad-mapper.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
 (defn $get
   "Read a file of JSON or XML, creating a map."
   ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
@@ -1624,7 +1619,7 @@
                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
                                                                         {:status status :status-text status-text})))
                               :timeout 5000}]
-                (GET "http://localhost:3000/api/graph-query" req-data) ; ToDo: use Martian.
+                (GET "http://localhost:3001/api/graph-query" req-data) ; ToDo: use Martian.
                 prom))))))
 
 (defn rewrite-sheet-for-mapper

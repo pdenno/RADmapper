@@ -1,19 +1,18 @@
 (ns rad-mapper.server.web.middleware.core
   (:require
-    [rad-mapper.server.env :as env]
-    [ring.middleware.defaults :as defaults]
-    [ring.middleware.cors :refer [wrap-cors]] ; experimental
-    [ring.middleware.session.cookie :as cookie] ))
+   [ring.middleware.defaults :as defaults]
+   [ring.middleware.cors :refer [wrap-cors]]
+   [ring.middleware.session.cookie :as cookie]))
 
+;;; (:middleware env/defaults) is just: (defn wrap-dev [handler opts] (-> handler ))
+;;; Compare to ~/Documents/git/clojure/kit-example/guestbook/src/clj/kit/guestbook/web/middleware/core.clj
+;;; (If you don't have such a thing, you can built it; it is just the 'getting started' demo for kit-clj.)
 (defn wrap-base
-  [{:keys [metrics site-defaults-config cookie-secret] :as opts}]
-  (let [cookie-store (cookie/cookie-store {:key (.getBytes ^String cookie-secret)})]
+  [{:keys [site-defaults-config cookie-secret]}]
+  (let [s ^String cookie-secret
+        cookie-store (cookie/cookie-store {:key (.getBytes s)})]
     (fn [handler]
-      (cond-> ((:middleware env/defaults) handler opts)
-              true (defaults/wrap-defaults
-                    (assoc-in site-defaults-config [:session :store] cookie-store))
-              ;; This one to avoid being blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present.
-              ;; 1818 is Kaocha test, so ToDo: Using cond-> true here is probably not ideal.
-              true (wrap-cors :access-control-allow-origin [#"http://localhost:1818"]
-                              :access-control-allow-methods [:get :put :post :delete])
-              ))))
+      (-> (defaults/wrap-defaults handler
+                                  (assoc-in site-defaults-config [:session :store] cookie-store))
+          (wrap-cors :access-control-allow-origin [#"http://localhost:1818"]
+                     :access-control-allow-methods [:get :put :post :delete])))))

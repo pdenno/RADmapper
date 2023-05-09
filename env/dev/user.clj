@@ -1,65 +1,56 @@
 (ns user
-  "This is only used for light-server.
-   It contains userspace functions you can run by default in your local REPL."
+  "For REPL-based start/stop of the server.
+   This file isn't used in cljs and is a problem for shadow-cljs without the
+   :clj compiler directives."
   (:require
     [clojure.pprint]
     [clojure.spec.alpha :as s]
-    [clojure.tools.logging :as log]
-    [clojure.tools.namespace.repl :as repl]
-    [criterium.core :as c]                                  ;; benchmarking
+    [clojure.tools.namespace.repl :as tools-ns :refer [disable-reload! refresh clear set-refresh-dirs]]
     [expound.alpha :as expound]
-    [integrant.core :as ig]
-    [integrant.repl :refer [clear go halt prep init reset reset-all]]
-    [integrant.repl.state :as state]
-    [kit.api :as kit]
-    [lambdaisland.classpath.watch-deps :as watch-deps]      ;; hot loading for deps
     [mount.core :as mount]
-    [rad-mapper.server.core :refer [start-app]]
     [rad-mapper.evaluate]
-    [rad-mapper.util :as util]
-    [schema-db.core]))
+    [lambdaisland.classpath.watch-deps :as watch-deps]      ;; hot loading for deps
+    [rad-mapper.resolvers   :refer [schema-db-atm]] ; for mount
+    [rad-mapper.server.core :refer [server]] ; for mount
+    [rad-mapper.server.web.handler]  ; for mount, defines rm.server.config/config, and router stuff.
+    [taoensso.timbre :as log]))
 
-;; uncomment to enable hot loading for deps.
-;; This does not work for my "RELEASE" version of deps.edn
-;(watch-deps/start! {:aliases [:dev :test]})
+;;; If you get stuck do: (clojure.tools.namespace.repl/refresh)
+
+;; uncomment to enable hot loading for deps
+(watch-deps/start! {:aliases [:dev :test]})
 
 (alter-var-root #'s/*explain-out* (constantly expound/printer))
-
 (add-tap (bound-fn* clojure.pprint/pprint))
+(set-refresh-dirs "src/rm_exerciser/server")  ; put as many as you need here
 
-(defn dev-prep!
+(defn start
+  "Start the web server"
   []
-  (integrant.repl/set-prep! (fn []
-                              (-> (rad-mapper.server.config/system-config {:profile :dev})
-                                  (ig/prep)))))
+  (mount/start))
 
-(defn test-prep!
+(defn stop
+  "Stop the web server"
   []
-  (integrant.repl/set-prep! (fn []
-                              (-> (rad-mapper.server.config/system-config {:profile :test})
-                                  (ig/prep)))))
+  (mount/stop))
 
-;; Can change this to test-prep! if want to run tests as the test profile in your repl.
-;; You can run tests in the dev profile, too, but there are some differences between the two profiles.
-(dev-prep!)
+(defn restart
+  "Stop, reload code, and restart the server. If there is a compile error, use:
 
-(repl/set-refresh-dirs "src/clj")
+  ```
+  (tools-ns/refresh)
+  ```
 
-(def refresh repl/refresh)
+  to recompile, and then use `start` once things are good."
+  []
+  (stop)
+  (tools-ns/refresh :after 'user/start))
 
-;;; POD added
-(defn my-reset []
-  (log/info "===== Exerciser reset ======")
-  (mount/start) ; Start the schema-db too. See schema-db.core.
-  (reset))
+;;; Useful for diagnosis.
+(defn try-start []
+  (mount/start #'rad-mapper.server.core/server)
+  (mount/start #'rad-mapper.server.web.routes.api/api-routes))
 
-;;; Use start and not go, which will miss starting schema-db
-(defn start []
-  (log/info "===== This start ======")
-  (util/config-log :info)
-  (mount/start)
-  (go))
-
-(comment
-  (go)
-  (reset))
+(defn try-stop []
+  (mount/stop #'rad-mapper.server.web.routes.api/api-routes)
+  (mount/stop #'rad-mapper.server.core/server))
