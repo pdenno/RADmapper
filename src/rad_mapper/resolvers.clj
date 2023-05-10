@@ -39,7 +39,7 @@
 
 ;;; (pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
 ;;; RM: $get(["schema/name" : "urn:oagis-10.8.4:Nouns:Invoice"], ["sdb/schema-object"]);
-(pco/defresolver sdb-schema-id->sdb-schema-obj [env {:sdb/keys [schema-id]}]
+(pco/defresolver sdb-schema-id->sdb-schema-obj [_env {:sdb/keys [schema-id]}]
   {:sdb/schema-object (resolve-db-id {:db/id schema-id} (connect-atm) #{:db/id})})
 
 ;;; COMPOUND: schema/name -> sdb/schema-object  -> :schema/content
@@ -48,12 +48,10 @@
 (pco/defresolver sdb-schema-object->schema-content [_env {:sdb/keys [schema-object]}]
   {:schema/content (:schema/content schema-object)})
 
-;;; (pathom-resolve [{:ccts/message-schema [:list/id  {:list/schemas [:sdb/schema-id :schema/name]}]}]) ; RIGHT!
-;;; (pathom-resolve [{[:list/id :ccts/message-schema] {:list/schemas [:sdb/schema-id :schema/name]}}])  ; WRONG! WHY?
-;;; (pathom-resolve {:list/id :ccts/message-schema} [:schema/name])
-(pco/defresolver list-id->schema-list [env {:list/keys [id]}] ; e.g :list/id = :ccts/message-schema
+;;; (pathom-resolve {:list/id :ccts/message-schema} [:schema/name]
+(pco/defresolver list-id->schema-list [_env {:list/keys [id]}] ; e.g :list/id = :ccts/message-schema
   {::pco/output [{:list/id [:sdb/schema-id :schema/name]}]}
-  (when (= id "ccts/message-schema")
+  (when (= id :ccts/message-schema)
     (when-let [schema-maps (->>
                             (d/q `[:find ?ent ?name ?topic
                                    :keys sdb/schema-id schema/name schema/topic

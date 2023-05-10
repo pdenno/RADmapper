@@ -1,5 +1,6 @@
 (ns rad-mapper.server.web.controllers.rad-mapper
   (:require
+   [clojure.string        :refer [split]]
    [clojure.walk          :as walk :refer [keywordize-keys]]
    [rad-mapper.evaluate   :as ev]
    [rad-mapper.builtin    :as bi]
@@ -43,8 +44,8 @@
   [request]
   (log/info "Call to graph-query")
   (let [{:keys [ident-type ident-val request-objs]} (-> request :query-params keywordize-keys)
-        request-objs (if (coll? request-objs) (vec request-objs) [request-objs])]
-    (if (and ident-type ident-val request-objs)
+        request-objs (split request-objs #"\|")]
+     (if (and ident-type ident-val request-objs)
       (let [res (bi/$get [[ident-type ident-val] request-objs])]
         (http-response/ok res))
       (http-response/ok {:failure "Missing query args."}))))

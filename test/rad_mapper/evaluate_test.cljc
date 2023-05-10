@@ -361,7 +361,7 @@
                     (children parent)))]
     (shape "ProcessInvoice")))
 
-(defn elena-test []
+(defn match-test []
   (run "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
   $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
@@ -384,16 +384,13 @@
                                          function($tree, $c) // Update the tree.
                                              { $update($tree,
                                                        $p,
-                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<data>')}) },
+                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<replace-me>')}) },
                                          {})};
 
   $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.
   $schema2PC    := $pcQuery($schema2);     // The first two return binding sets for {?parent x ?child y}
   $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
   $schema2Roots := $rootQuery($schema2);
-
-  //{'shape1' : $shape($schema1Roots.?name[0], $schema1PC),
-  // 'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 
    $semMatch($shape($schema2Roots.?name[0], $schema2PC), // [0] here is cheating a bit; there could be multiple roots.
              $shape($schema1Roots.?name[0], $schema1PC))
