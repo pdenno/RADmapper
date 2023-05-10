@@ -11,6 +11,8 @@
    [reitit.ring.middleware.parameters :as parameters]
    [reitit.swagger :as swagger]))
 
+(def diag (atom nil))
+
 ;; Routes. See https://cljdoc.org/d/metosin/reitit/0.5.5/doc/ring/swagger-support
 (defn api-routes-vec
   "Define API routes (as opposed to page routes defined elsewhere).
@@ -21,20 +23,32 @@
     {:get {:no-doc  true
            :swagger {:info {:title "rad-mapper.server API"}}
            :handler (swagger/create-swagger-handler)}}]
+
    ["/health"
     {:get {:handler health/healthcheck!}}]
+
    ["/process-rm"
     {:get {:summary "Run RADmapper code (and optionally data) provided as query parameters."
            :parameters {:query {:code string?
                                 :data string?}} ; ToDo: Learn how to express optional query parameters.
            :handler rm/process-rm}}]
+
    ["/graph-query"
     {:get {:summary "Make a graph query."
            :parameters {:query {:ident-type string?
                                 :ident-val  string?
                                 :request-objs string?}}
            :responses {200 {:graph-query-response map?}}
-           :handler rm/graph-query}}]])
+           :handler rm/graph-query}}]
+
+   ["/sem-match"
+    {:post {:summary "Reconcile two structure shapes using field names."
+            ;; malli like https://github.com/metosin/reitit/blob/master/examples/ring-malli-swagger/src/example/server.clj
+            #_#_:parameters {:body [:map [:src map?] [:tar map?]]}
+            ;:parameters {:body map?}
+            :responses {200 {:sem-match string?}}
+            ;; https://stackoverflow.com/questions/37397531/ring-read-body-of-a-http-request-as-string
+            :handler rm/sem-match}}]])
 
 (defn route-data
   [opts]
@@ -43,13 +57,7 @@
     {:coercion   malli/coercion
      :muuntaja   formats/instance
      :swagger    {:id ::api}
-     :middleware #_[;; query-params & form-params
-                  parameters/parameters-middleware
-                  ;; encoding response body
-                  ;muuntaja/format-response-middleware
-                  ;; exception handling
-                  exception/wrap-exception]
-                 [;; query-params & form-params
+     :middleware [;; query-params & form-params
                   parameters/parameters-middleware
                   ;; content-negotiation
                   muuntaja/format-negotiate-middleware

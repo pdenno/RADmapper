@@ -4,7 +4,7 @@
    [mount.core :as mount :refer [defstate]]
    [rad-mapper.server.web.middleware.core :as middleware]
    [rad-mapper.server.web.routes.api   :refer [api-routes]]
-   [reitit.ring :as ring]
+   [reitit.ring :as reitit]
    [reitit.swagger-ui :as swagger-ui]))
 
 (defn fix-routes
@@ -15,12 +15,12 @@
 (defn handler-map-init [& {:keys [profile] :or {profile :dev}}]
   (let [base-config (-> "system.edn" io/resource slurp read-string profile)
         all-routes [(fix-routes api-routes)]]
-    {:handler/ring (ring/ring-handler
-                    (ring/router all-routes)
-                    (ring/routes
-                     (ring/create-resource-handler {:path "/"})
+    {:handler/ring (reitit/ring-handler
+                    (reitit/router all-routes) ; Creates a reitit.core/Router from raw route data, optiona middleware
+                    (reitit/routes
+                     (reitit/create-resource-handler {:path "/"})
                      (swagger-ui/create-swagger-ui-handler {:path "/api" :url "/api/swagger.json"}) ; ToDo: make base-config in edn so you can get these.
-                     (ring/create-default-handler
+                     (reitit/create-default-handler
                       {:not-found
                        (constantly {:status 404, :body "Page not found"})
                        :method-not-allowed
@@ -30,7 +30,7 @@
                     {:middleware [(middleware/wrap-base (:handler/ring base-config))]})
      :router/routes all-routes
      ;; This need not be stored; it isn't used; but might be useful later.
-     :router/core (ring/router all-routes)}))
+     :router/core (reitit/router all-routes)}))
 
 (defstate handler-map
   :start (handler-map-init))

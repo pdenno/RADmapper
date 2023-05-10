@@ -22,7 +22,7 @@
 
 (alter-var-root #'s/*explain-out* (constantly expound/printer))
 (add-tap (bound-fn* clojure.pprint/pprint))
-(set-refresh-dirs "src/rm_exerciser/server")  ; put as many as you need here
+(set-refresh-dirs "src/rad_mapper/server")  ; put as many as you need here
 
 (defn start
   "Start the web server"

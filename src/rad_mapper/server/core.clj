@@ -3,7 +3,8 @@
   (:require
    [clojure.java.io :as io]
    [mount.core :as mount :refer [defstate]]
-   [ring.adapter.undertow :refer [run-undertow]]
+   [ring.adapter.undertow :refer [run-undertow]] ; either...
+   [ring.adapter.jetty :as jetty]                ; ...or
    [rad-mapper.server.web.handler :refer [handler-map]]
    [taoensso.timbre :as log])
   (:gen-class))
@@ -25,13 +26,11 @@
   (when (= profile :prod) (shutdown-agents)))
 
 (defn start [handler {:keys [port] :as opts}]
-  ;(log/info "In start: handler = " (:handler/ring handler-map))
+  (log/info "In start: handler = "(:handler/ring handler-map))
   ;(log/info "In start: here is what undertow gets: " opts)
   (try
-    (let [server (run-undertow handler opts)]
-      ;(log/info "server started on port" port)
-      ;(log/info "In start: handler = " handler)
-      ;(log/info "In start: server = " server)
+    (let [server #_(run-undertow handler opts)
+          (jetty/run-jetty handler {:port 3001, :join? false})]
       server)
     (catch Throwable t
       (log/error t (str "server failed to start on port: " port)))))

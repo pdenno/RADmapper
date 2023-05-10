@@ -51,8 +51,6 @@
                java.time.ZoneId
                java.time.ZoneOffset)))
 
-;;; #?(:clj (alias 'bi 'rad-mapper.builtin))
-
 (declare aref)
 
 (def diag (atom nil))
@@ -73,7 +71,7 @@
 (s/def ::radix (s/and number? #(<= 2 % 36)))
 (s/def ::fn fn?)
 
-#?(:cljs (def svr-prefix "http://localhost:3001"))
+(def svr-prefix "http://localhost:3001")
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -1619,7 +1617,7 @@
                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
                                                                         {:status status :status-text status-text})))
                               :timeout 5000}]
-                (GET "http://localhost:3001/api/graph-query" req-data) ; ToDo: use Martian.
+                (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
                 prom))))))
 
 (defn rewrite-sheet-for-mapper
@@ -2440,6 +2438,8 @@ answer 2:
                   :else          obj))]
     (smp obj)))
 
+(def diag1 (atom nil))
+
 (defn $semMatch
   "Match terminology (of keys) in two 'object shapes', producing a mapping."
   [src tar]
@@ -2451,11 +2451,15 @@ answer 2:
                    "answer 3:\n")]
     #?(:clj
        (if (System/getenv "OPENAI_API_KEY")
-         (-> (openai/create-chat-completion
-              {:model "gpt-3.5-turbo"
-               :messages [{:role "user" :content q-str}]})
-             :choices first :message :content)
-         (throw (ex-info "OPENAI_API_KEY environment variable value not found.")))
+         (try (-> (openai/create-chat-completion {:model "gpt-3.5-turbo"
+                                                  :messages [{:role "user" :content q-str}]})
+                  :choices first :message :content)
+              (catch Throwable e
+                (reset! diag e)
+                (throw (ex-info "OpenAI API call failed."
+                                {:message (.getMessage e)
+                                 :details (-> e .getData :body json/read-str)}))))
+         (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))
        :cljs
        (p/do!
          (log/info "Call to $semMatch")
@@ -2467,3 +2471,41 @@ answer 2:
                  :error-handler (fn [{:keys [status status-text]}]
                                   (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
                                   (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})))))
+
+(def shape-1
+  {"ProcessInvoice"
+    {"DataArea"
+     {"Invoice"
+      {"InvoiceLine"
+       {"Item" {"ManufacturingParty" {"Name" "<data>"}},
+        "BuyerParty"
+        {"Location"
+         {"Address"
+          {"PostalCode" "<data>",
+           "StreetName" "<data>",
+           "CountryCode" "<data>",
+           "CityName" "<data>",
+           "BuildingNumber" "<data>"}},
+         "TaxIDSet" {"ID" "<data>"}}}},
+      "Process" "<data>"},
+     "ApplicationArea" {"CreationDateTime" "<data>"}}})
+
+(def shape-2
+   {"ProcessInvoice"
+    {"DataArea"
+     {"Invoice"
+      {"InvoiceLine"
+       {"Item" {"ManufacturingParty" {"Name" "<data>"}},
+        "BuyerParty" {"Location" {"Address" {"AddressLine" "<data>"}}, "TaxIDSet" {"ID" "<data>"}}}},
+      "Process" "<data>"},
+     "ApplicationArea" {"CreationDateTime" "<data>"}}})
+
+(defn tryme []
+  (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
+        {:body (json/write-str {:src shape-1 :tar shape-2})
+         :response-format :json
+         :timeout 1000 #_30000
+         :handler (fn [resp] (log/info "$semMatch CLJS-AJAX returns resp =" resp) resp #_(p/promise resp))
+         :error-handler (fn [{:keys [status status-text]}]
+                          (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
+                          (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))}))

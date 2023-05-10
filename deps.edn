@@ -44,7 +44,7 @@
                                            ;; kit influenced
                                            luminus-transit/luminus-transit {:mvn/version "0.1.6"
                                                                             :exclusions [com.cognitect/transit-clj]}
-                                           luminus/ring-ttl-session        {:mvn/version "0.3.3"}
+                                           #_#_luminus/ring-ttl-session        {:mvn/version "0.3.3"}
                                            luminus/ring-undertow-adapter   {:mvn/version "1.3.1"}}}
 
            :lib-dev   {:extra-paths    ["test" "src/dev"] ; Not needed?

@@ -361,6 +361,33 @@
                     (children parent)))]
     (shape "ProcessInvoice")))
 
+(def shape-data
+  [{"ProcessInvoice"
+    {"DataArea"
+     {"Invoice"
+      {"InvoiceLine"
+       {"Item" {"ManufacturingParty" {"Name" "<replace-me>"}},
+        "BuyerParty"
+        {"Location"
+         {"Address"
+          {"PostalCode" "<replace-me>",
+           "StreetName" "<replace-me>",
+           "CountryCode" "<replace-me>",
+           "CityName" "<replace-me>",
+           "BuildingNumber" "<replace-me>"}},
+         "TaxIDSet" {"ID" "<replace-me>"}}}},
+      "Process" "<replace-me>"},
+     "ApplicationArea" {"CreationDateTime" "<replace-me>"}}}
+
+   {"ProcessInvoice"
+    {"DataArea"
+     {"Invoice"
+      {"InvoiceLine"
+       {"Item" {"ManufacturingParty" {"Name" "<replace-me>"}},
+        "BuyerParty" {"Location" {"Address" {"AddressLine" "<replace-me>"}}, "TaxIDSet" {"ID" "<replace-me>"}}}},
+      "Process" "<replace-me>"},
+     "ApplicationArea" {"CreationDateTime" "<replace-me>"}}}])
+
 (defn match-test []
   (run "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
@@ -392,8 +419,11 @@
   $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
   $schema2Roots := $rootQuery($schema2);
 
-   $semMatch($shape($schema2Roots.?name[0], $schema2PC), // [0] here is cheating a bit; there could be multiple roots.
-             $shape($schema1Roots.?name[0], $schema1PC))
+   //$semMatch($shape($schema2Roots.?name[0], $schema2PC),
+   //          $shape($schema1Roots.?name[0], $schema1PC))
+
+   [$shape($schema2Roots.?name[0], $schema2PC),
+    $shape($schema1Roots.?name[0], $schema1PC)]
 
 )"))
 
