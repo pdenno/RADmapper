@@ -2311,7 +2311,7 @@
            http://arxiv.org/abs/2302.12246"
 
 ;;; 1416 tokens! Careful about trailing blanks!
-  "Wherever you can replace each <replace-me> in the target_form with similar information from the source_form.
+  "Wherever you can, replace each <replace-me> in the target_form with similar information from the source_form.
 Both source_form and target_form are Clojure maps.
 Because data in source_form does not match data in target_form perfectly, you should do the following to make things work:
 
@@ -2441,7 +2441,9 @@ answer 2:
 (def diag1 (atom nil))
 
 (defn $semMatch
-  "Match terminology (of keys) in two 'object shapes', producing a mapping."
+  "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
+   of the data at those keys. The prompt instructs how to indicate extraction and aggregation
+   of source object fields to target object fields."
   [src tar]
   (let [src3 (with-out-str (-> src (sem-match-pre false) pprint))
         tar3 (with-out-str (-> tar (sem-match-pre true)  pprint))

@@ -28,8 +28,8 @@
     {:get {:handler health/healthcheck!}}]
 
    ["/process-rm"
-    {:get {:summary "Run RADmapper code (and optionally data) provided as query parameters."
-           :parameters {:query {:code string?
+    {:post {:summary "Run RADmapper code (and optionally data) provided as query parameters."
+            #_#_:parameters {:query {:code string?
                                 :data string?}} ; ToDo: Learn how to express optional query parameters.
            :handler rm/process-rm}}]
 
@@ -46,7 +46,7 @@
             ;; malli like https://github.com/metosin/reitit/blob/master/examples/ring-malli-swagger/src/example/server.clj
             #_#_:parameters {:body [:map [:src map?] [:tar map?]]}
             ;:parameters {:body map?}
-            :responses {200 {:sem-match string?}}
+            #_#_:responses {200 {:sem-match string?}}
             ;; https://stackoverflow.com/questions/37397531/ring-read-body-of-a-http-request-as-string
             :handler rm/sem-match}}]])
 

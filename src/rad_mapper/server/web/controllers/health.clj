@@ -7,7 +7,7 @@
 
 (defn healthcheck!
   [_req]
-  (log/info "=============== Doing the health check! ===================")
+  (log/info "Doing a health check.")
   (http-response/ok
     {:time     (str (Date. (System/currentTimeMillis)))
      :up-since (str (Date. (.getStartTime (java.lang.management.ManagementFactory/getRuntimeMXBean))))

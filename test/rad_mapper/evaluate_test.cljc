@@ -366,27 +366,27 @@
     {"DataArea"
      {"Invoice"
       {"InvoiceLine"
-       {"Item" {"ManufacturingParty" {"Name" "<replace-me>"}},
+       {"Item" {"ManufacturingParty" {"Name" "<data>"}},
         "BuyerParty"
         {"Location"
          {"Address"
-          {"PostalCode" "<replace-me>",
-           "StreetName" "<replace-me>",
-           "CountryCode" "<replace-me>",
-           "CityName" "<replace-me>",
-           "BuildingNumber" "<replace-me>"}},
-         "TaxIDSet" {"ID" "<replace-me>"}}}},
-      "Process" "<replace-me>"},
-     "ApplicationArea" {"CreationDateTime" "<replace-me>"}}}
+          {"PostalCode" "<data>",
+           "StreetName" "<data>",
+           "CountryCode" "<data>",
+           "CityName" "<data>",
+           "BuildingNumber" "<data>"}},
+         "TaxIDSet" {"ID" "<data>"}}}},
+      "Process" "<data>"},
+     "ApplicationArea" {"CreationDateTime" "<data>"}}}
 
    {"ProcessInvoice"
     {"DataArea"
      {"Invoice"
       {"InvoiceLine"
-       {"Item" {"ManufacturingParty" {"Name" "<replace-me>"}},
-        "BuyerParty" {"Location" {"Address" {"AddressLine" "<replace-me>"}}, "TaxIDSet" {"ID" "<replace-me>"}}}},
-      "Process" "<replace-me>"},
-     "ApplicationArea" {"CreationDateTime" "<replace-me>"}}}])
+       {"Item" {"ManufacturingParty" {"Name" "<data>"}},
+        "BuyerParty" {"Location" {"Address" {"AddressLine" "<data>"}}, "TaxIDSet" {"ID" "<data>"}}}},
+      "Process" "<data>"},
+     "ApplicationArea" {"CreationDateTime" "<data>"}}}])
 
 (defn match-test []
   (run "(
@@ -411,7 +411,7 @@
                                          function($tree, $c) // Update the tree.
                                              { $update($tree,
                                                        $p,
-                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<replace-me>')}) },
+                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<data>')}) },
                                          {})};
 
   $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.

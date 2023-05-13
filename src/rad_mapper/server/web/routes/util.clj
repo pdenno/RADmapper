@@ -1,4 +1,4 @@
-(ns rad-mapper.server.web.routes.utils)
+(ns rad-mapper.server.web.routes.util)
 
 (def route-data-path [:reitit.core/match :data])
 
