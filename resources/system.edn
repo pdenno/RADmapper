@@ -1,4 +1,4 @@
-{:dev {:server/http {:port 3001 :host "0.0.0.0"}
+{:dev {:server/http {:port 3000 :host "0.0.0.0"}
        :handler/ring {:api-path "/api"
                       :cookie-secret "FQVUNCJMVERCFICT" ; Exactly 16 bytes
                       ;; from ring.middleware.defaults. anti-forgery `false` by default because services may not require it

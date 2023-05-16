@@ -71,7 +71,7 @@
 (s/def ::radix (s/and number? #(<= 2 % 36)))
 (s/def ::fn fn?)
 
-(def svr-prefix "http://localhost:3001")
+(def svr-prefix "http://localhost:3000") ; ToDo: Pick this up somehow else. Needed in CLJS.
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -1740,11 +1740,9 @@
                                   (assoc m k v)))
                     {} %)
         bsets))
-
-;;; ToDo: Did I make a mistake in the User's Guide by calling the entire returned value of query (a vector) a binding set?
-;;;       According to this code, I should have called it a "collection of bsets".
+;;; (bi/query-fn-aux [(rrr/connect-atm)] '[[?e :schema/name ?name]] '[$] nil nil nil)
 (defn query-fn-aux
-  "The function that returns a vector binding sets.
+  "The function that returns a vector of binding sets.
    Note that it attaches meta for the DB and body."
   [db-atms body in pred-args param-subs options]
   (let [dbs (mapv deref db-atms)
@@ -1766,12 +1764,36 @@
         true                       (vec))
       (with-meta ?bsets {:bi/b-set? true}))))
 
+#?(:clj
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body."
   [body in pred-args options]
   (fn [& data|dbs]
     (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
       (query-fn-aux db-atms body in pred-args {} options))))
+
+   :cljs
+(defn immediate-query-fn
+  "Return a function that can be used immediately to make the query defined in body.
+   If it is called with data|dbs = :_rm/schema-db, then make a call to REST function
+   that will cause the server to call query-fn-aux itself. Otherwise the function
+   calls query here."
+  [body in pred-args options]
+  (fn [& data|dbs]
+    (if (= {"db_connection" "_rm_schema-db"} (first data|dbs)) ; Then we can't do it here.
+      (p/do!
+         (log/info "Call to $query (remote)")
+         (POST (str svr-prefix "/api/datalog-query") ; This will do a query-fn-aux in the server.
+                {:body {:qforms body}
+                 :response-format :json
+                 :timeout 3000
+                 :handler (fn [resp] (log/info (str "$datalog-query CLJS-AJAX returns resp =" resp)) (p/promise resp))
+                 :error-handler (fn [{:keys [status status-text]}]
+                                  (log/info (str "CLJS-AJAX $datalog-query error: status = " status " status-text= " status-text))
+                                  (p/rejected (ex-info "CLJS-AJAX error on /api/datalog-query" {:status status :status-text status-text})))}))
+      (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
+        (query-fn-aux db-atms body in pred-args {} options)))))
+)
 
 (defn higher-order-query-fn
   "Return a function that can be called with parameters to return a function to m
@@ -2315,22 +2337,21 @@
 Both source_form and target_form are Clojure maps.
 Because data in source_form does not match data in target_form perfectly, you should do the following to make things work:
 
-(1) If target_form combines data from multiple source_form fields, use the Clojure str to concatenate them.
+(1) If target_form combines data from multiple source_form fields, use the Clojure function 'str' to concatenate the source fields.
 
-For example, if source_form has specific data fields for address and target_form has only has a general field :AddressLine1 that might
-accommodate that information:
+For example, if source_form has specific data fields Company, StreetAddress and BuildingName, but the target_form has only has a general field :AddressLine1,
+it might used to accommodate all three of those data fields from the source_form:
 ##
 source_fields:
- :Company <company-data>
- :Street  <street-data>
+ :Company <company-name-data>
+ :StreetAddress  <street-address-data>
  :BuildingName <building-name-data>
 
 answer:
- :AddressLine1 (str <company-data> <street-data> <building-name-data>).
+ :AddressLine1 (str <company-name-data> <street-address-data> <building-name-data>).
 ##
-(2) Conversely, if source_form has a general field that might contain information for more specific target_form fields:
-
-
+(2) Conversely, if source_form has a general field that might contain information for more specific target_form fields, use a presumed 2-argument Clojure function extract
+as shown:
 ##
 source_field:
  :AddressLine1 <address-line-1-data>
@@ -2465,7 +2486,7 @@ answer 2:
        :cljs
        (p/do!
          (log/info "Call to $semMatch")
-         (POST "/api/sem-match" ; ToDo: Use https://github.com/oliyh/martian
+         (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
                 {:body q-str
                  :response-format :json
                  :timeout 30000
@@ -2502,7 +2523,7 @@ answer 2:
       "Process" "<data>"},
      "ApplicationArea" {"CreationDateTime" "<data>"}}})
 
-(defn tryme []
+#_(defn tryme []
   (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
         {:body (json/write-str {:src shape-1 :tar shape-2})
          :response-format :json

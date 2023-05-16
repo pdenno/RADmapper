@@ -3,8 +3,10 @@
    [clojure.data.json     :as json]
    [clojure.string        :refer [split]]
    [clojure.walk          :as walk :refer [keywordize-keys]]
-   [rad-mapper.evaluate   :as ev]
+   [datahike.api          :as d]
    [rad-mapper.builtin    :as bi]
+   [rad-mapper.evaluate   :as ev]
+   [rad-mapper.resolvers  :refer [connect-atm]]
    [rad-mapper.server.web.routes.util :as util] ; for mount
    [ring.util.http-response :as response]
    [ring.util.request :as req]
@@ -59,6 +61,7 @@
 
 (def diag (atom nil))
 
+;;; Check these, I might have screwed them up.
 (def src {"ProcessInvoice"
           {"DataArea"
            {"Invoice"
@@ -67,13 +70,14 @@
               "BuyerParty"
               {"Location"
                {"Address"
-                {"PostalCode" "<data>",
-                 "StreetName" "<data>",
-                 "CountryCode" "<data>",
-                 "CityName" "<data>",
-                 "BuildingNumber" "<data>"}},
+                {"BuildingNumber" "<data>"
+                 "PostalCode" "<data>",
+                 "Street" "<data>",
+                 "City" "<data>",
+                 "State" "<data>",
+                 "Country" "<data>"}}
                "TaxIDSet" {"ID" "<data>"}}}},
-            "Process" "<data>"},
+           "Process" "<data>"},
            "ApplicationArea" {"CreationDateTime" "<data>"}}})
 
 (def tar {"ProcessInvoice"
@@ -81,7 +85,7 @@
            {"Invoice"
             {"InvoiceLine"
              {"Item" {"ManufacturingParty" {"Name" "<data>"}},
-              "BuyerParty" {"Location" {"Address" {"AddressLine" "<data>"}}, "TaxIDSet" {"ID" "<data>"}}}},
+              "BuyerParty" {"Location" {"Address" {"AddressLine1" "<data>" "AddressLine2" "<data>" "ZipCode" "<data>"}}, "TaxIDSet" {"ID" "<data>"}}}},
             "Process" "<data>"},
            "ApplicationArea" {"CreationDateTime" "<data>"}}})
 
@@ -94,6 +98,7 @@
             clojure.java.io/reader
             line-seq
             (map clojure.data.json/read-str))
+
 (defn sem-match
   "Do semantic match (bi/$semMatch) and return result. Request was a POST."
   [request]
@@ -104,3 +109,33 @@
              (log/error "sem-match:" (.getMessage e))
              (response/ok {:failure "sem-match: Args bad or request to LLM failed."})))
       (response/ok {:status 400 :body "src or tar not provided."}))))
+
+
+#_(->>  {:request-method :post :uri "/api/datalog-query"
+         :body {:qforms '[[?e :schema/name ?name]]}}
+        rad-mapper.server.web.handler/app
+        :body
+        clojure.java.io/reader
+        line-seq
+        (map clojure.data.json/read-str))
+;;; ToDo: Support the 3 options to $query that are nil below.
+;;; ToDo: The non-immediate version of $query could also be supported, I think.
+(defn datalog-query
+  "Run a datalog query against the schema database. Request was a POST.
+
+   Currently this REST datalog query is only used where the client has
+   previously used a graph query ($get) to identify the schema DB:
+   $db := $get([[db/name 'schemaDB'], ['db/connection']])
+
+   Since $query is a higher-order function, the function produced on a JS client
+   checks whether the DB is this $db (the value is just a keyword that will print <<connection>>).
+   and creates a REST call to this code using metadata on $query rather than execute
+   the main body of the query as is typical where the query is executed on the server."
+  [request]
+  (let [{:keys [qforms]} (:body request)]
+    (if (not-empty qforms)
+      (try (response/ok (bi/query-fn-aux [(connect-atm)] qforms '[$] nil nil nil))
+           (catch Throwable e
+             (log/error "datalog-query:" (.getMessage e))
+             (response/ok {:failure "Bad arguments to datalog query."})))
+      (response/ok {:status 400 :body "Now arguments applied to datalog query."}))))

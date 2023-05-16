@@ -419,11 +419,11 @@
   $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
   $schema2Roots := $rootQuery($schema2);
 
-   //$semMatch($shape($schema2Roots.?name[0], $schema2PC),
-   //          $shape($schema1Roots.?name[0], $schema1PC))
+   $semMatch($shape($schema2Roots.?name[0], $schema2PC),
+             $shape($schema1Roots.?name[0], $schema1PC))
 
-   [$shape($schema2Roots.?name[0], $schema2PC),
-    $shape($schema1Roots.?name[0], $schema1PC)]
+   //[$shape($schema2Roots.?name[0], $schema2PC),
+   // $shape($schema1Roots.?name[0], $schema1PC)]
 
 )"))
 
@@ -487,3 +487,8 @@
                  r))
              []
              @test-results))
+
+(defn tryme []
+  (run "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
+          $qfn := query{[?e :schema_name ?name]};
+          $qfn($db) )"))
