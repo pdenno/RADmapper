@@ -488,7 +488,18 @@
              []
              @test-results))
 
-(defn tryme []
+;;; These are most interesting in CLJS where they require REST calls. However, they return promises.
+#_(defn $get-test []
+  (is (> (-> (run "$get([['list/id', 'ccts/message-schema'], ['list/content']])")
+             (get "list_content")
+             count)
+         100)))
+
+(defn $get-test []
+  (run "$get([['list/id', 'ccts/message-schema'], ['list/content']])"))
+
+
+(defn $query-test []
   (run "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
-          $qfn := query{[?e :schema_name ?name]};
+          $qfn := query{[?e :schema/name ?name]};
           $qfn($db) )"))

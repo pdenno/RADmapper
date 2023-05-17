@@ -50,9 +50,9 @@
             ;; https://stackoverflow.com/questions/37397531/ring-read-body-of-a-http-request-as-string
             :handler rm/sem-match}}]
 
-      ["/datalog-query"
-       {:post {:summary "Run the datalog against the schema database."
-               :handler rm/datalog-query}}]])
+   ["/datalog-query"
+    {:post {:summary "Run the datalog against the schema database."
+            :handler rm/datalog-query}}]])
 
 (defn route-data
   [opts]

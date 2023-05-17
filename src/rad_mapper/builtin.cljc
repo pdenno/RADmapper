@@ -30,7 +30,7 @@
    [promesa.core                    :as p]
    #?(:cljs [rad-mapper.promesa-config :as pm])
    [rad-mapper.query                  :as qu]
-   #?(:clj [rad-mapper.resolvers              :refer [pathom-resolve]])
+   #?(:clj [rad-mapper.resolvers               :refer [pathom-resolve connect-atm]])
    [rad-mapper.util                   :as util :refer [qvar? box unbox]]
    [taoensso.timbre                   :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
@@ -1592,7 +1592,7 @@
            (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
 ;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
-;;;  = (rad-mapper.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:sdb/schema-object])
+;;;  = (rad-mapper.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:schema/content])
 (defn $get
   "Read a file of JSON or XML, creating a map."
   ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
@@ -1769,10 +1769,14 @@
   "Return a function that can be used immediately to make the query defined in body."
   [body in pred-args options]
   (fn [& data|dbs]
-    (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
+    (let [db-atms
+          ;; CLJ can also be called with $db := $get([['db/name', 'schemaDB'], ['db/connection']]);
+          (if (= {"db_connection" "_rm_schema-db"} (first data|dbs))
+            [(connect-atm)]
+            (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs))]
       (query-fn-aux db-atms body in pred-args {} options))))
 
-   :cljs
+:cljs
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body.
    If it is called with data|dbs = :_rm/schema-db, then make a call to REST function

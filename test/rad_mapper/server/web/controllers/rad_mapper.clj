@@ -91,14 +91,10 @@
 
 ;;; ToDo: Why does this one return a string and the other a stream?
 #_(->>  {:request-method :post :uri "/api/sem-match"
-             :body {:src rad-mapper.server.web.controllers.rad-mapper/src
-                    :tar rad-mapper.server.web.controllers.rad-mapper/tar}}
-            rad-mapper.server.web.handler/app
-            :body
-            clojure.java.io/reader
-            line-seq
-            (map clojure.data.json/read-str))
-
+         :body {:src rad-mapper.server.web.controllers.rad-mapper/src
+                :tar rad-mapper.server.web.controllers.rad-mapper/tar}}
+        rad-mapper.server.web.handler/app
+        :body)
 (defn sem-match
   "Do semantic match (bi/$semMatch) and return result. Request was a POST."
   [request]
@@ -109,7 +105,6 @@
              (log/error "sem-match:" (.getMessage e))
              (response/ok {:failure "sem-match: Args bad or request to LLM failed."})))
       (response/ok {:status 400 :body "src or tar not provided."}))))
-
 
 #_(->>  {:request-method :post :uri "/api/datalog-query"
          :body {:qforms '[[?e :schema/name ?name]]}}
@@ -132,9 +127,13 @@
    and creates a REST call to this code using metadata on $query rather than execute
    the main body of the query as is typical where the query is executed on the server."
   [request]
+  (reset! diag request)
   (let [{:keys [qforms]} (:body request)]
+    (log/info "Datalog query: qforms = " qforms)
     (if (not-empty qforms)
-      (try (response/ok (bi/query-fn-aux [(connect-atm)] qforms '[$] nil nil nil))
+      (try (let [res (bi/query-fn-aux [(connect-atm)] qforms '[$] nil nil nil)]
+             (log/info "datalog query returns: " res)
+             (response/ok res))
            (catch Throwable e
              (log/error "datalog-query:" (.getMessage e))
              (response/ok {:failure "Bad arguments to datalog query."})))

@@ -284,38 +284,38 @@
   - ident is the column in which this object can start printing.
   - width is column beyond which print should not appear."
   [obj indent width]
-  (if (empty? obj)
-    "{}"
-    (let [kv-pairs (reduce-kv (fn [m k v] ; Here we get the 'dense' size; later calculate a new rest-start
-                                (let [kk (pprint-obj k :width width)
-                                      vv (pprint-obj v :width width)]
-                                  (conj m {:k kk :v vv
-                                           :k-len (count kk)
-                                           :v-len (->> vv str/split-lines (map count) (apply max))})))
-                              []
-                              obj)
-          max-key (apply max (map :k-len kv-pairs)) ; We will line them all up with the widest.
-          max-val (apply max (map :v-len kv-pairs))]
-      (if (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
-        ;; (1) The map fits on one line.
-        (cl-format nil "{~{~A: ~A~^, ~}}" (interleave (map :k kv-pairs) (map :v kv-pairs)))
-        ;; It doesn't fit on one line.
-        (let [indent-spaces (nspaces indent)
-              key-strs (into (-> kv-pairs first :k str vector)
-                             (map #(str indent-spaces (:k %) (nspaces (- max-key (:k-len %)))) (rest kv-pairs)))
-              ;; Values may have line breaks, each line but the first needs the indent plus the max-key
-              val-strs (mapv #(indent-additional-lines (:v %) (+ indent 2)) kv-pairs)]
-          (if (<= (+ max-key max-val) (- width indent))
-            ;; (2) It fits. The values are made to line up with the entry with the longest key.
-            (cl-format nil "{~{~A: ~A~^,~% ~}}" ; one space after ~% because starts with a '{'
-                       (interleave key-strs val-strs))
-            ;; (3) Too wide; break into two lines for each k/v pair.
-            ;;     Now all the values need to be indented
-            ;;     The cl-format indents the values a few spaces relative to their key.
-            (cl-format nil "{~{~A:~%  ~A~^,~%  ~}}"
-                       (interleave
-                        key-strs
-                        (map #(str indent-spaces %) val-strs)))))))))
+  (cond (empty? obj) "{}",
+        (= obj {"db_connection" "_rm_schema-db"}) "<<connection>>",
+        :else (let [kv-pairs (reduce-kv (fn [m k v] ; Here we get the 'dense' size; later calculate a new rest-start
+                                          (let [kk (pprint-obj k :width width)
+                                                vv (pprint-obj v :width width)]
+                                            (conj m {:k kk :v vv
+                                                     :k-len (count kk)
+                                                     :v-len (->> vv str/split-lines (map count) (apply max))})))
+                                        []
+                                        obj)
+                    max-key (apply max (map :k-len kv-pairs)) ; We will line them all up with the widest.
+                    max-val (apply max (map :v-len kv-pairs))]
+                (if (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
+                  ;; (1) The map fits on one line.
+                  (cl-format nil "{~{~A: ~A~^, ~}}" (interleave (map :k kv-pairs) (map :v kv-pairs)))
+                  ;; It doesn't fit on one line.
+                  (let [indent-spaces (nspaces indent)
+                        key-strs (into (-> kv-pairs first :k str vector)
+                                       (map #(str indent-spaces (:k %) (nspaces (- max-key (:k-len %)))) (rest kv-pairs)))
+                        ;; Values may have line breaks, each line but the first needs the indent plus the max-key
+                        val-strs (mapv #(indent-additional-lines (:v %) (+ indent 2)) kv-pairs)]
+                    (if (<= (+ max-key max-val) (- width indent))
+                      ;; (2) It fits. The values are made to line up with the entry with the longest key.
+                      (cl-format nil "{~{~A: ~A~^,~% ~}}" ; one space after ~% because starts with a '{'
+                                 (interleave key-strs val-strs))
+                      ;; (3) Too wide; break into two lines for each k/v pair.
+                      ;;     Now all the values need to be indented
+                      ;;     The cl-format indents the values a few spaces relative to their key.
+                      (cl-format nil "{~{~A:~%  ~A~^,~%  ~}}"
+                                 (interleave
+                                  key-strs
+                                  (map #(str indent-spaces %) val-strs)))))))))
 
 (defn pprint-vec
   "Return a string representing vector:

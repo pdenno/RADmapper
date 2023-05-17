@@ -54,33 +54,44 @@
     (cond-> (dp/pull @(connect-atm) '[*] ent)
       resolve? (resolve-db-id (connect-atm) filter-set))))
 
-;;;============================ Resolvers  ==================================
-;;; (pathom-resolve {:list/id :ccts/message-schema} [:schema/name])
-(pco/defresolver list-id->schema-names
-  "This resolver returns schema/names (which are db/unique db.unique/identity)
-   that match the given :schema/type. They might be"
-  [_env {:list/keys [id]}]
-  {::pco/output [:schema/name]}
-  (when-let [schema-maps (->>
-                          (d/q '[:find ?name ?topic
-                                 :in $ ?schema-type
-                                 :keys schema/name schema/topic
-                                 :where
-                                   [?ent :schema/name  ?name]
-                                   [?ent :schema/topic ?topic]
-                                   [?ent :schema/type  ?schema-type]]
-                                 @(connect-atm) id) ; id is ?schema-type
-                            (sort-by :schema/topic)
-                            (mapv #(dissoc % :schema/topic))
-                            not-empty)]
-      {:list/id id
-       :list/schemas schema-maps}))
+;;;============================ Resolvers  =====================================
+;;; https://pathom3.wsscode.com/docs/resolvers/ :
+;;; "So resolvers establish edges in the Pathom graph, allowing Pathom to traverse from some source data to some target data."
+;;; [I don't think that the requires that the Pathom graph and the database have similar connectivity. You can do whatever
+;;;  you need to get the data. See my comment in the function pathom-resolve.]
+;;;
+;;; Resolvers are functions and can be called with ONE ARG, the IDENT:
+;;; For example (list-id->list-content {:list/id :ccts/message-schema})
+
+;;; Currently this only returns lists of schema, but (changing the :pco/output???) I think it could return lists of anything.
+;;; (pathom-resolve {:list/id :ccts/message-schema} [:list/content])
+;;; (list-id->list-content {:list/id :ccts/message-schema})
+(pco/defresolver list-id->list-content
+  "This resolver returns lists."
+  [{:keys [list/id]}]
+  {::pco/output [:list/content]}
+  (let [schema-type? (set (d/q '[:find [?type ...] :where [_ :schema/type  ?type]] @(connect-atm)))
+        id (keyword id)
+        res (cond (schema-type? id)
+              (->>
+               (d/q '[:find ?name
+                      :in $ ?schema-type
+                      :keys schema/name
+                      :where
+                      [?ent :schema/name  ?name]
+                      [?ent :schema/type  ?schema-type]]
+                    @(connect-atm) (keyword id))
+               (map :schema/name)
+               sort
+               vec
+               not-empty))]
+    {:list/content res}))
 
 ;;; (pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Quote"} [:db/id])
 (pco/defresolver schema-name->schema-object
   "Return the db/id for a whole schema-object.
    Subsequent queries (e.g. schema-objec->schema-props) can pull from this whatever else is needed."
-  [_env {:schema/keys [name]}]
+  [{:schema/keys [name]}]
   {::pco/output [:db/id]}
   (log/info "schema-name->schema-object")
   {:db/id (d/q '[:find ?ent .
@@ -93,7 +104,7 @@
 ;;; (pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Quote"} [:schema/content])
 #_(pco/defresolver schema-object->schema-props
  "Returns various things given a schema db/id."
- [_env {:db/keys [id]}]
+ [{:db/keys [id]}]
   {:pco/output [:schema/content #_:schema/spec]}
   (log/info "schema-object->schema-props")
   (let [sobj (resolve-db-id {:db/id id} (connect-atm) #{:db/id})]
@@ -103,7 +114,7 @@
 ;;; This one works because it can see the output map.
 (pco/defresolver schema-object->schema-props
  "Returns various things given a schema db/id."
- [_env {:db/keys [id]}]
+ [{:db/keys [id]}]
   {:pco/output [:schema/content #_:schema/spec]}
   (log/info "schema-object->schema-props")
   {:schema/content
@@ -114,7 +125,7 @@
 ;;; (pathom-resolve {:db/name :schema/db"} [:db/connection])
 (pco/defresolver db-connection
   "Return a keyword designating the schema database for use by clients."
-  [_env {:db/keys [name]}]
+  [{:db/keys [name]}]
   {:pco/out [:db/connection]}
   {:db/connection :_rm/schema-db})
 
@@ -130,8 +141,16 @@
 ;;; (pathom-resolve {:list/id :ccts/message-schema} [:schema/name])
 (defn pathom-resolve
   "Uses the indexes to respond to a query.
-   ident-map: a single-entry map, the key of which names an identity condition,
-              such as a db/ident, the value of which is a value for the identity condition.
+   ident-map: a single-key map:
+                - the key names an identity condition attribute, (e.g. schema/name)
+                - the value uniquely identifies an individual using that identity condition attribute.
+
+   IMPORTANT: The notion of uniqueness used in this function is one established for the pathom graph;
+   it need not be manifest in a database as unique. For example, {:list/id :ccts-message-schema}
+   is a unique list, but there is no notion of list in the database. In contrast,
+   {:schema/name 'urn:oagis-10.8.4:Nouns:Quote'} does refer to a :db.unique/identity DB attribute,
+   but that is not necessary.
+
    outputs: a vector of properties (the :pco/outputs of resolvers) that are sought."
   [ident-map outputs]
   (try (log/info "Pathom resolve: db = " @(connect-atm) " ident-map = " ident-map " outputs= " outputs)
@@ -160,7 +179,7 @@
 
 (defn init-resolvers
   []
-  (reset! indexes (pci/register [list-id->schema-names
+  (reset! indexes (pci/register [list-id->list-content
                                  schema-name->schema-object
                                  schema-object->schema-props
                                  db-connection
