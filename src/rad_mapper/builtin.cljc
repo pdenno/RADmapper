@@ -2463,19 +2463,22 @@ answer 2:
                   :else          obj))]
     (smp obj)))
 
-(def diag1 (atom nil))
+(defn sem-match-string
+  "Return the full string for matching."
+  [src tar]
+  (let [src3 (with-out-str (-> src (sem-match-pre false) pprint))
+        tar3 (with-out-str (-> tar (sem-match-pre true)  pprint))]
+    (str semantic-match-instructions "\n\n"
+         "source_form 3:\n" src3 "\n\n"
+         "target_form 3:\n" tar3 "\n\n"
+         "answer 3:\n")))
 
 (defn $semMatch
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
   [src tar]
-  (let [src3 (with-out-str (-> src (sem-match-pre false) pprint))
-        tar3 (with-out-str (-> tar (sem-match-pre true)  pprint))
-        q-str (str semantic-match-instructions "\n\n"
-                   "source_form 3:\n" src3 "\n\n"
-                   "target_form 3:\n" tar3 "\n\n"
-                   "answer 3:\n")]
+  (let [q-str (sem-match-string src tar)]
     #?(:clj
        (if (System/getenv "OPENAI_API_KEY")
          (try (-> (openai/create-chat-completion {:model "gpt-3.5-turbo"
@@ -2529,7 +2532,7 @@ answer 2:
 
 #_(defn tryme []
   (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
-        {:body (json/write-str {:src shape-1 :tar shape-2})
+        {:body (json/write-str (sem-match-string shape-1 shape-2))
          :response-format :json
          :timeout 1000 #_30000
          :handler (fn [resp] (log/info "$semMatch CLJS-AJAX returns resp =" resp) resp #_(p/promise resp))

@@ -22,7 +22,7 @@
 
 (alter-var-root #'s/*explain-out* (constantly expound/printer))
 (add-tap (bound-fn* clojure.pprint/pprint))
-(set-refresh-dirs "src/rad_mapper/server")  ; put as many as you need here
+(set-refresh-dirs "test/rad_mapper/server")  ; put as many as you need here
 
 (defn start
   "Start the web server"
@@ -45,12 +45,3 @@
   []
   (stop)
   (tools-ns/refresh :after 'user/start))
-
-;;; Useful for diagnosis.
-(defn try-start []
-  (mount/start #'rad-mapper.server.core/server)
-  (mount/start #'rad-mapper.server.web.routes.api/api-routes))
-
-(defn try-stop []
-  (mount/stop #'rad-mapper.server.web.routes.api/api-routes)
-  (mount/stop #'rad-mapper.server.core/server))

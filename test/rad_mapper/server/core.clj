@@ -2,11 +2,10 @@
   "top-most file for starting the server, sets mount state server and system atom."
    ;; ToDo: There might not be a reason for a server in this test environment; just use the app."
   (:require
-   [ajax.core :refer [GET]] ; for testing
+   [ajax.core :refer [GET POST]] ; for testing
    [clojure.java.io               :as io]
    [mount.core :as mount          :refer [defstate]]
-   ;[ring.adapter.undertow         :refer [run-undertow]] ; either...
-   [ring.adapter.jetty            :as jetty]              ; ...or
+   [ring.adapter.jetty            :as jetty]
    [rad-mapper.server.web.handler :refer [app]]
    [taoensso.timbre               :as log])
   (:gen-class))
@@ -30,13 +29,11 @@
 (defn start [handler {:keys [port] :as opts}]
   (try
     ;; Convert the Ring handler into a running web server.
-    (let [server
-          #_(run-undertow handler opts)
-          (jetty/run-jetty handler {:port port, :join? false})]
-      (GET (str "http://localhost:" port "/api/health")
-            {:handler (fn [resp] (log/info "Response through server:" resp))
+    (let [server (jetty/run-jetty handler {:port port, :join? false})]
+      (POST (str "http://localhost:" port "/api/health")
+            {:handler (fn [resp] (log/info "Response through server (POST):" resp))
              :error-handler (fn [{:keys [status status-text]}]
-                              (log/error "Server fails health test: status = " status " status-text = " status-text)
+                              (log/error "Server fails response through server: status = " status " status-text = " status-text)
                               (throw (ex-info "Server fails health test." {:status status :status-text status-text})))
              :timeout 1000})
       server)
