@@ -27,6 +27,7 @@
    [clojure.pprint                             :refer [cl-format pprint]]
    [clojure.string                  :as str  :refer [index-of]]
    [clojure.walk                    :as walk :refer [keywordize-keys]]
+   [muuntaja.core                   :as m]
    [promesa.core                    :as p]
    #?(:cljs [rad-mapper.promesa-config :as pm])
    [rad-mapper.query                  :as qu]
@@ -1730,24 +1731,16 @@
 ;;; 2023-01-07: I'm not running it! This causes errors by not keeping roles (keywords) as roles in user data.
 ;;;             I don't understand the rationale for this. The role position is either a keyword or qvar.
 ;;;             I wrote it for $reduce on express. So that's what needs to be investigated.
-#_(defn unkeywordize-bsets
-  "Data pushed into the DB had to have keywords for map keys. This undoes that."
-  [bsets]
-  (mapv #(reduce-kv (fn [m k v] (if (keyword? v)
-                                  (if (namespace v)
-                                    (assoc m k (str (namespace v) "/" (name v)))
-                                    (assoc m k (name v)))
-                                  (assoc m k v)))
-                    {} %)
-        bsets))
 ;;; (bi/query-fn-aux [(rrr/connect-atm)] '[[?e :schema/name ?name]] '[$] nil nil nil)
 (defn query-fn-aux
   "The function that returns a vector of binding sets.
    Note that it attaches meta for the DB and body."
-  [db-atms body in pred-args param-subs options]
+  [db-atms body-in in pred-args param-subs options]
   (let [dbs (mapv deref db-atms)
+        body (if (string? body-in) (m/decode "application/transit+json" body-in) body-in)
         e-qvar? (entity-qvars body)
         qform (final-query-form body in param-subs)]
+    (log/info "query-fn-aux: body = " body)
     (as-> (apply d/q qform (into dbs pred-args)) ?bsets ; This is possible because body is data to d/q.
       ;; Remove binding sets that involve a schema entity.
       (remove (fn [bset] (some (fn [bval]
@@ -1755,12 +1748,11 @@
                                       (= "db" (namespace bval))))
                                (vals bset))) ?bsets)
       (cond->> ?bsets
-        (-> options :keepDBid not) (map (fn [bset] bset
+        (-> options :keepDBid not) (map (fn [bset]
                                           (reduce-kv (fn [m k v]
                                                        (if (e-qvar? k) m (assoc m k v)))
                                                      {}
                                                      bset)))
-        #_#_false                      unkeywordize-bsets
         true                       (vec))
       (with-meta ?bsets {:bi/b-set? true}))))
 
@@ -1785,16 +1777,15 @@
   [body in pred-args options]
   (fn [& data|dbs]
     (if (= {"db_connection" "_rm_schema-db"} (first data|dbs)) ; Then we can't do it here.
-      (p/do!
-         (log/info "Call to $query (remote)")
-         (POST (str svr-prefix "/api/datalog-query") ; This will do a query-fn-aux in the server.
-                {:body {:qforms body}
-                 :response-format :json
-                 :timeout 3000
-                 :handler (fn [resp] (log/info (str "$datalog-query CLJS-AJAX returns resp =" resp)) (p/promise resp))
-                 :error-handler (fn [{:keys [status status-text]}]
-                                  (log/info (str "CLJS-AJAX $datalog-query error: status = " status " status-text= " status-text))
-                                  (p/rejected (ex-info "CLJS-AJAX error on /api/datalog-query" {:status status :status-text status-text})))}))
+      (let [prom (p/deferred)]
+        (POST (str svr-prefix "/api/datalog-query") ; This will do a query-fn-aux in the server.
+              {:body {:qforms body}
+               :timeout 3000
+               :handler (fn [resp] (p/resolve! prom (m/decode "application/transit+json" resp)))
+               :error-handler (fn [{:keys [status status-text]}]
+                                (log/info (str "CLJS-AJAX $datalog-query error: status = " status " status-text= " status-text))
+                                (p/rejected (ex-info "CLJS-AJAX error on /api/datalog-query" {:status status :status-text status-text})))})
+        prom)
       (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
         (query-fn-aux db-atms body in pred-args {} options)))))
 )
@@ -2479,63 +2470,30 @@ answer 2:
    of source object fields to target object fields."
   [src tar]
   (let [q-str (sem-match-string src tar)]
+    (reset! diag {:q-str q-str})
     #?(:clj
        (if (System/getenv "OPENAI_API_KEY")
-         (try (-> (openai/create-chat-completion {:model "gpt-3.5-turbo"
-                                                  :messages [{:role "user" :content q-str}]})
-                  :choices first :message :content)
+         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo"
+                                                            :messages [{:role "user" :content q-str}]})
+                            :choices first :message :content)]
+                (swap! diag #(assoc % :res res))
+                {:result (-> res read-string)})
               (catch Throwable e
-                (reset! diag e)
+                (swap! diag #(assoc % :error e))
                 (throw (ex-info "OpenAI API call failed."
                                 {:message (.getMessage e)
                                  :details (-> e .getData :body json/read-str)}))))
          (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))
        :cljs
-       (p/do!
+       (let [prom (p/deferred)]
          (log/info "Call to $semMatch")
          (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
-                {:body q-str
+                {:params {:body q-str}
                  :response-format :json
                  :timeout 30000
-                 :handler (fn [resp] (log/info (str "$semMatch CLJS-AJAX returns resp =" resp)) (p/promise resp))
+                 :handler (fn [resp] (p/resolve! prom resp))
                  :error-handler (fn [{:keys [status status-text]}]
                                   (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
-                                  (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})))))
+                                  (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})
 
-(def shape-1
-  {"ProcessInvoice"
-    {"DataArea"
-     {"Invoice"
-      {"InvoiceLine"
-       {"Item" {"ManufacturingParty" {"Name" "<data>"}},
-        "BuyerParty"
-        {"Location"
-         {"Address"
-          {"PostalCode" "<data>",
-           "StreetName" "<data>",
-           "CountryCode" "<data>",
-           "CityName" "<data>",
-           "BuildingNumber" "<data>"}},
-         "TaxIDSet" {"ID" "<data>"}}}},
-      "Process" "<data>"},
-     "ApplicationArea" {"CreationDateTime" "<data>"}}})
-
-(def shape-2
-   {"ProcessInvoice"
-    {"DataArea"
-     {"Invoice"
-      {"InvoiceLine"
-       {"Item" {"ManufacturingParty" {"Name" "<data>"}},
-        "BuyerParty" {"Location" {"Address" {"AddressLine" "<data>"}}, "TaxIDSet" {"ID" "<data>"}}}},
-      "Process" "<data>"},
-     "ApplicationArea" {"CreationDateTime" "<data>"}}})
-
-#_(defn tryme []
-  (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
-        {:body (json/write-str (sem-match-string shape-1 shape-2))
-         :response-format :json
-         :timeout 1000 #_30000
-         :handler (fn [resp] (log/info "$semMatch CLJS-AJAX returns resp =" resp) resp #_(p/promise resp))
-         :error-handler (fn [{:keys [status status-text]}]
-                          (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
-                          (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))}))
+                prom))))

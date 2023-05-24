@@ -25,16 +25,20 @@
  :aliases {:dev          {:extra-paths    ["src/dev" "test" "src/rad_mapper/server" "env/dev" "resources"]
                           :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
                           ;; :dev includes test/server thus much of this stuff.
-                          :extra-deps     {cider/cider-nrepl               {:mvn/version "0.30.0"}
+                          :extra-deps     {aleph/aleph                     {:mvn/version "0.6.1"}  ; for ancient-art
+                                           cider/cider-nrepl               {:mvn/version "0.30.0"}
                                            com.lambdaisland/classpath      {:mvn/version "0.4.44"}
                                            #_#_criterium/criterium             {:mvn/version "0.4.6"}
                                            expound/expound                 {:mvn/version "0.9.0"}
                                            org.clojure/java.classpath      {:mvn/version "1.0.0"}
                                            #_#_pjstadig/humane-test-output     {:mvn/version "0.11.0"}
+                                           manifold/manifold               {:mvn/version "0.4.1"} ; for ancient-art
                                            org.clojure/tools.namespace     {:mvn/version "1.4.4"}
                                            metosin/muuntaja                {:mvn/version "0.6.8"}
+                                           metosin/muuntaja-msgpack        {:mvn/version "0.6.8"}
                                            metosin/reitit                  {:mvn/version "0.6.0"}
                                            metosin/ring-http-response      {:mvn/version "0.9.3"}
+                                           ; metosin/spec-tools              {:mvn/version "0.10.5"}  ; for ancient-art, bu not couldn't find 'closed'.
                                            ring/ring-defaults              {:mvn/version "0.3.4"}
                                            ring/ring-jetty-adapter         {:mvn/version "1.10.0"}
                                            ring/ring-core                  {:mvn/version "1.10.0"}

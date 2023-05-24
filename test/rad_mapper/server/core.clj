@@ -21,22 +21,20 @@
 (defonce system (atom nil))
 
 (defn stop-server [& {:keys [profile] :or {profile :dev}}]
-  (.stop @system)
-  (reset! system nil)
-  ;(log/info "Server has shut down successfully.")
+  (if-let [sys @system]
+    (.stop sys)
+    (log/info "System not stopped: No record of system."))
   (when (= profile :prod) (shutdown-agents)))
 
-(defn start [handler {:keys [port] :as opts}]
+(defn test-server [port]
   (try
     ;; Convert the Ring handler into a running web server.
-    (let [server (jetty/run-jetty handler {:port port, :join? false})]
-      (POST (str "http://localhost:" port "/api/health")
-            {:handler (fn [resp] (log/info "Response through server (POST):" resp))
-             :error-handler (fn [{:keys [status status-text]}]
-                              (log/error "Server fails response through server: status = " status " status-text = " status-text)
-                              (throw (ex-info "Server fails health test." {:status status :status-text status-text})))
-             :timeout 1000})
-      server)
+    (GET (str "http://localhost:" port "/api/health")
+         {:handler (fn [resp] (log/info "Response through server (GET):" resp))
+          :error-handler (fn [{:keys [status status-text]}]
+                           (log/error "Server fails response through server: status = " status " status-text = " status-text)
+                           (throw (ex-info "Server fails health test." {:status status :status-text status-text})))
+          :timeout 1000})
     (catch Throwable t
       (log/error t (str "server failed to start on port: " port)))))
 
@@ -44,11 +42,10 @@
   (let [base-config (-> "system.edn" io/resource slurp read-string profile)
         port (-> base-config :server/http :port)
         host (-> base-config :server/http :host)]
-    (try (let [handler (atom (delay app))
-               server (start (fn [req] (@@handler req)) {:port port :host host})]
+    (try (let [server (jetty/run-jetty #'rad-mapper.server.web.handler/app {:port port, :join? false})]
            (reset! system server)
-           (log/info "Started server on port" port)
-           server)
+           #_(test-server port) ; ToDo: Later!
+           (log/info "Started server on port" port))
          (catch Throwable t
            (log/error t "Server failed to start on host " host " port " port ".")))))
 
