@@ -47,12 +47,13 @@
         request-objs (split request-objs #"\|")]
      (if (and ident-type ident-val request-objs)
       (let [res (bi/$get [[ident-type ident-val] request-objs])]
-        (response/ok res #_(m/encode "application/transit+json" res)))
+        (response/ok res #_(->> res (m/encode "application/transit+json") io/reader line-seq first)))
       (response/bad-request "Missing query args."))))
 
 (defn sem-match
   "Do semantic match (bi/$semMatch) and return result. Request was a POST."
   [{{{:keys [src tar]} :body} :parameters}]
+  (log/info "sem-match: src =" src "tar =" tar)
   (if (and src tar)
     (try (let [res (bi/$semMatch src tar)]
            (log/info "sem-match result: " res)
@@ -77,13 +78,12 @@
    and creates a REST call to this code using metadata on $query rather than execute
    the main body of the query as is typical where the query is executed on the server."
   [{{{:keys [qforms]} :body} :parameters}]
-  (log/info "Datalog query: qforms (transit) = " qforms)
-  #_(reset! diag {:qforms qforms})
+  (log/info "Datalog query: qforms (string) = " qforms)
   (if (not-empty qforms)
-    (try (let [res (bi/query-fn-aux [(connect-atm)] qforms '[$] nil nil nil)]
-           #_(log/info "Datalog query returns: " res)
-           #_(swap! diag #(assoc % :res res))
-           (response/ok (->> res (m/encode "application/transit+json") io/reader line-seq first))) ; CLJS will decode it.
+    (try (let [qforms (read-string qforms)
+               res (bi/query-fn-aux [(connect-atm)] qforms '[$] nil nil nil)]
+           (log/info "Datalog query returns: " res)
+           (response/ok res #_(->> res (m/encode "application/transit+json") io/reader line-seq first))) ; CLJS will decode it.
          (catch Throwable e
            (log/error "Datalog-query:" (.getMessage e))
            (response/bad-request "Bad arguments to datalog query.")))

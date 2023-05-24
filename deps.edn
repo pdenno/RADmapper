@@ -10,6 +10,8 @@
            funcool/promesa                     {:mvn/version "10.0.663"} ; My build.
            io.replikativ/datahike              {:mvn/version "0.6.1538"} ; Not for cljs.
            mount/mount                         {:mvn/version "0.1.17"}
+           metosin/muuntaja                    {:mvn/version "0.6.8"}
+           #_#_metosin/muuntaja-msgpack        {:mvn/version "0.6.8"}
            net.clojars.wkok/openai-clojure     {:mvn/version "0.6.0"}
            nrepl/nrepl                         {:mvn/version "1.0.0"}
            org.babashka/sci                    {:mvn/version "0.7.39"}
@@ -20,6 +22,7 @@
            org.clojure/data.json               {:mvn/version "2.4.0"}
            org.clojure/data.xml                {:mvn/version "0.2.0-alpha8"}
            org.clojure/data.zip                {:mvn/version "1.0.0"}}
+
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
  :aliases {:dev          {:extra-paths    ["src/dev" "test" "src/rad_mapper/server" "env/dev" "resources"]
@@ -34,8 +37,6 @@
                                            #_#_pjstadig/humane-test-output     {:mvn/version "0.11.0"}
                                            manifold/manifold               {:mvn/version "0.4.1"} ; for ancient-art
                                            org.clojure/tools.namespace     {:mvn/version "1.4.4"}
-                                           metosin/muuntaja                {:mvn/version "0.6.8"}
-                                           metosin/muuntaja-msgpack        {:mvn/version "0.6.8"}
                                            metosin/reitit                  {:mvn/version "0.6.0"}
                                            metosin/ring-http-response      {:mvn/version "0.9.3"}
                                            ; metosin/spec-tools              {:mvn/version "0.10.5"}  ; for ancient-art, bu not couldn't find 'closed'.

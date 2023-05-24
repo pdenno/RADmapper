@@ -248,7 +248,7 @@
               (swap! pred-subs #(assoc % pred-name fn-name)))
             (swap! where-atm #(conj % [`(~pred-name ~@(-> pat first rest))])))
           (swap! where-atm #(conj % pat))))
-      {:where (deref where-atm)
+      {:where @where-atm
        :in (into dbs (-> @pred-subs keys))
        :pred-args (-> @pred-subs vals vec)})))
 

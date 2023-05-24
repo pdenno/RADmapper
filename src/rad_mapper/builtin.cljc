@@ -15,25 +15,25 @@
               [dk.ative.docjure.spreadsheet :as ss]
               [datahike.api                 :as d]
               [datahike.pull-api            :as dp]
+              [muuntaja.core                :as m]
+              [rad-mapper.resolvers         :refer [pathom-resolve connect-atm]]
               [wkok.openai-clojure.api      :as openai]]
        :cljs [[ajax.core :refer [GET POST]]
-              [datascript.core              :as d]
-              [datascript.pull-api  :as dp]
-              ["nata-borrowed"      :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
-              [goog.crypt.base64    :as jsb64]])
+              [datascript.core           :as d]
+              [datascript.pull-api       :as dp]
+              ["nata-borrowed"           :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
+              [goog.crypt.base64         :as jsb64]
+              [rad-mapper.promesa-config :as pm]])
    [cemerick.url                    :as url]
    [camel-snake-kebab.core          :as csk]
    [clojure.spec.alpha              :as s]
-   [clojure.pprint                             :refer [cl-format pprint]]
+   [clojure.pprint                           :refer [cl-format pprint]]
    [clojure.string                  :as str  :refer [index-of]]
    [clojure.walk                    :as walk :refer [keywordize-keys]]
-   [muuntaja.core                   :as m]
    [promesa.core                    :as p]
-   #?(:cljs [rad-mapper.promesa-config :as pm])
-   [rad-mapper.query                  :as qu]
-   #?(:clj [rad-mapper.resolvers               :refer [pathom-resolve connect-atm]])
-   [rad-mapper.util                   :as util :refer [qvar? box unbox]]
-   [taoensso.timbre                   :as log :refer-macros[error debug info log!]]
+   [rad-mapper.query                :as qu]
+   [rad-mapper.util                 :as util :refer [qvar? box unbox]]
+   [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
             jflatten containerize containerize? container? flatten-except-json]])
@@ -72,7 +72,9 @@
 (s/def ::radix (s/and number? #(<= 2 % 36)))
 (s/def ::fn fn?)
 
-(def svr-prefix "http://localhost:3000") ; ToDo: Pick this up somehow else. Needed in CLJS.
+;;; AFAICS, I don't see how I can allow port to be one thing when this file is used in a library,
+;;; and another when I'm testing RM in isolation.
+(def svr-prefix "http://localhost:3000")
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -1613,11 +1615,12 @@
                     req-data {:params {:ident-type k
                                        :ident-val v
                                        :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                              :handler (fn [resp] (p/resolve! prom resp))
+                              :handler (fn [resp] (reset! diag resp) (p/resolve! prom resp))
                               :error-handler (fn [{:keys [status status-text]}]
                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
                                                                         {:status status :status-text status-text})))
                               :timeout 5000}]
+                (log/info "graph-query req-data =" req-data)
                 (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
                 prom))))))
 
@@ -1737,7 +1740,8 @@
    Note that it attaches meta for the DB and body."
   [db-atms body-in in pred-args param-subs options]
   (let [dbs (mapv deref db-atms)
-        body (if (string? body-in) (m/decode "application/transit+json" body-in) body-in)
+        body #?(:clj  (if (string? body-in) (m/decode "application/transit+json" body-in) body-in)
+                :cljs body-in)
         e-qvar? (entity-qvars body)
         qform (final-query-form body in param-subs)]
     (log/info "query-fn-aux: body = " body)
@@ -1761,14 +1765,15 @@
   "Return a function that can be used immediately to make the query defined in body."
   [body in pred-args options]
   (fn [& data|dbs]
+    (log/info "data|dbs =" data|dbs)
     (let [db-atms
           ;; CLJ can also be called with $db := $get([['db/name', 'schemaDB'], ['db/connection']]);
           (if (= {"db_connection" "_rm_schema-db"} (first data|dbs))
             [(connect-atm)]
             (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs))]
-      (query-fn-aux db-atms body in pred-args {} options))))
+      (query-fn-aux db-atms body in pred-args {} options)))))
 
-:cljs
+#?(:cljs
 (defn immediate-query-fn
   "Return a function that can be used immediately to make the query defined in body.
    If it is called with data|dbs = :_rm/schema-db, then make a call to REST function
@@ -1776,12 +1781,15 @@
    calls query here."
   [body in pred-args options]
   (fn [& data|dbs]
+    ;(log/info "immediate-query-fn: data|dbs =" data|dbs)
+    (reset! diag {:data|dbs data|dbs :body body})
     (if (= {"db_connection" "_rm_schema-db"} (first data|dbs)) ; Then we can't do it here.
       (let [prom (p/deferred)]
+        (log/info "immediate-query-fn: body =" body)
         (POST (str svr-prefix "/api/datalog-query") ; This will do a query-fn-aux in the server.
-              {:body {:qforms body}
+              {:params {:qforms (str body)}
                :timeout 3000
-               :handler (fn [resp] (p/resolve! prom (m/decode "application/transit+json" resp)))
+               :handler (fn [resp] (p/resolve! prom resp))
                :error-handler (fn [{:keys [status status-text]}]
                                 (log/info (str "CLJS-AJAX $datalog-query error: status = " status " status-text= " status-text))
                                 (p/rejected (ex-info "CLJS-AJAX error on /api/datalog-query" {:status status :status-text status-text})))})
@@ -2464,6 +2472,7 @@ answer 2:
          "target_form 3:\n" tar3 "\n\n"
          "answer 3:\n")))
 
+#?(:clj
 (defn $semMatch
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
@@ -2471,7 +2480,7 @@ answer 2:
   [src tar]
   (let [q-str (sem-match-string src tar)]
     (reset! diag {:q-str q-str})
-    #?(:clj
+
        (if (System/getenv "OPENAI_API_KEY")
          (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo"
                                                             :messages [{:role "user" :content q-str}]})
@@ -2483,17 +2492,23 @@ answer 2:
                 (throw (ex-info "OpenAI API call failed."
                                 {:message (.getMessage e)
                                  :details (-> e .getData :body json/read-str)}))))
-         (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))
-       :cljs
-       (let [prom (p/deferred)]
-         (log/info "Call to $semMatch")
-         (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
-                {:params {:body q-str}
-                 :response-format :json
-                 :timeout 30000
-                 :handler (fn [resp] (p/resolve! prom resp))
-                 :error-handler (fn [{:keys [status status-text]}]
-                                  (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
-                                  (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})
+         (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
 
-                prom))))
+ #?(:cljs
+(defn $semMatch
+  "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
+   of the data at those keys. The prompt instructs how to indicate extraction and aggregation
+   of source object fields to target object fields."
+  [src tar]
+  (let [prom (p/deferred)]
+    (log/info "Call to $semMatch")
+    (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
+          {:params {:src src :tar tar}
+           :response-format :json
+           :timeout 30000
+           :handler (fn [resp] (p/resolve! prom resp))
+           :error-handler (fn [{:keys [status status-text]}]
+                            (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
+                            (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})
+
+                prom)))
