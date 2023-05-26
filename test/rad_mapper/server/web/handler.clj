@@ -5,11 +5,9 @@
    [mount.core :as mount :refer [defstate]]
    [muuntaja.core :as m]
    [rad-mapper.server.web.controllers.rad-mapper :as rm]
-
    [ring.middleware.defaults :as defaults]
    [ring.middleware.cors :refer [wrap-cors]]
    [ring.middleware.session.cookie :as cookie]
-
    [reitit.ring :as ring]
    [reitit.http :as http]
    [reitit.coercion.spec]
@@ -80,7 +78,6 @@
 (s/def ::processRM-request (s/keys :req-un [::code] :opt-un [::data]))
 (s/def ::processRM-response string?)
 
-
 ;;; Semantic-match ($semMatch)
 (s/def ::src (st/spec {:spec map?
                        :name "src"
@@ -94,7 +91,7 @@
 (s/def ::semantic-match-response map?)
 
 ;;; datalog-query (query)
-(s/def ::qforms (st/spec {:spec string?
+(s/def ::qforms (st/spec {:spec string? ; In CLJS,
                           :name "qforms"
                           :description "datalog query triples."
                           :json-schema/default (str example-query)}))
@@ -117,8 +114,8 @@
 (s/def ::graph-query-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
 (s/def ::graph-query-response map?)
 
-;;; This is the only thing that uses the three ring.middleware namespaces.
 (defn wrap-base
+  "Wrap handler for CORS (at least). The CORS concern is for Kaocha testing through port 1818."
   [{:keys [site-defaults-config cookie-secret]}]
   (let [s ^String cookie-secret
         cookie-store (cookie/cookie-store {:key (.getBytes s)})]
@@ -168,7 +165,7 @@
              :handler rm/healthcheck}}]]])
 
 (def options
-  {;;:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs
+  {;:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs
    :validate spec/validate ;; enable spec validation for route data
    :reitit.spec/wrap spell/closed ;; strict top-level validation  (error reported if you don't have the last two interceptors)
    :exception pretty/exception
@@ -181,7 +178,7 @@
                          ;; content-negotiation
                          (muuntaja/format-negotiate-interceptor)
                          ;; encodeing response body                ; This one will take :body object (e.g. a map) and return ad java.io.ByteArrayInputStream
-                         (muuntaja/format-response-interceptor)    ; I don't see how that's helpful. Nothing past here reports anything!
+                         (muuntaja/format-response-interceptor)    ; Nothing past here reports anything trough print-context-diffs.
                          ;; exception handling
                          (exception/exception-interceptor)
                          ;; decoding request body

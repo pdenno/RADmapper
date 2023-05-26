@@ -27,7 +27,7 @@
   (if code
     (try
       (let [res (ev/processRM :ptag/exp code {:pprint? true :user-data data})]
-        (println "=== Result of" code "is" res)
+        (log/info "=== Result of" code "is" res)
         (response/ok {:result res}))
       (catch Exception e
         (log/error e "Error processing RADmapper code. Code = " code)

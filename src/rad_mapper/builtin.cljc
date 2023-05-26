@@ -115,10 +115,6 @@
 
 (def ^:dynamic *await-finalize* 15000)
 
-(defn unwind-promises
-  "Recursively execute itself until a "
-  [])
-
 (defn finalize
   [obj]
   (letfn [(fin [obj]
@@ -1782,7 +1778,7 @@
   [body in pred-args options]
   (fn [& data|dbs]
     ;(log/info "immediate-query-fn: data|dbs =" data|dbs)
-    (reset! diag {:data|dbs data|dbs :body body})
+    ;(reset! diag {:data|dbs data|dbs :body body})
     (if (= {"db_connection" "_rm_schema-db"} (first data|dbs)) ; Then we can't do it here.
       (let [prom (p/deferred)]
         (log/info "immediate-query-fn: body =" body)
