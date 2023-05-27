@@ -1,13 +1,15 @@
-(ns rad-mapper.server.core
+(ns rm-server.core
   "top-most file for starting the server, sets mount state server and system atom."
-   ;; ToDo: There might not be a reason for a server in this test environment; just use the app."
   (:require
-   [ajax.core :refer [GET POST]] ; for testing
-   [clojure.java.io               :as io]
-   [mount.core :as mount          :refer [defstate]]
-   [ring.adapter.jetty            :as jetty]
-   [rad-mapper.server.web.handler :refer [app]]
-   [taoensso.timbre               :as log])
+   [ajax.core :refer [GET]] ; for testing
+   [clojure.java.io :as io]
+   [mount.core :as mount :refer [defstate]]
+   [mount-up.core :as mu]
+   [rad-mapper.evaluate] ; for mount
+   [rad-mapper.resolvers :refer [schema-db-atm]] ; for mount
+   [rm-server.web.handler :refer [app]]
+   [ring.adapter.jetty :as jetty]
+   [taoensso.timbre :as log])
   (:gen-class))
 
 ;; log uncaught exceptions in threads
@@ -21,9 +23,8 @@
 (defonce system (atom nil))
 
 (defn stop-server [& {:keys [profile] :or {profile :dev}}]
-  (if-let [sys @system]
-    (.stop sys)
-    (log/info "System not stopped: No record of system."))
+  (.stop @system)
+  (reset! system nil)
   (when (= profile :prod) (shutdown-agents)))
 
 (defn test-server [port]
@@ -42,7 +43,7 @@
   (let [base-config (-> "system.edn" io/resource slurp read-string profile)
         port (-> base-config :server/http :port)
         host (-> base-config :server/http :host)]
-    (try (let [server (jetty/run-jetty #'rad-mapper.server.web.handler/app {:port port, :join? false})]
+    (try (let [server (jetty/run-jetty #'rm-server.web.handler/app {:port port, :join? false})]
            (reset! system server)
            #_(test-server port) ; ToDo: Later!
            (log/info "Started server on port" port))

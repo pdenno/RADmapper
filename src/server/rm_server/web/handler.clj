@@ -1,16 +1,16 @@
-(ns rad-mapper.server.web.handler
+(ns rm-server.web.handler
   (:require
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
    [mount.core :as mount :refer [defstate]]
    [muuntaja.core :as m]
-   [rad-mapper.server.web.controllers.rad-mapper :as rm]
-
+   [rm-server.web.controllers.rad-mapper :as rm]
    [ring.middleware.defaults :as defaults]
    [ring.middleware.cors :refer [wrap-cors]]
    [ring.middleware.session.cookie :as cookie]
-
    [reitit.ring :as ring]
+   [ring.middleware.anti-forgery :refer [*anti-forgery-token*]]
+   [ring.util.http-response :refer [content-type ok]]
    [reitit.http :as http]
    [reitit.coercion.spec]
    [reitit.swagger :as swagger]
@@ -24,10 +24,12 @@
    [reitit.http.interceptors.multipart :as multipart]
    [reitit.http.interceptors.dev :as dev] ; for testing
    [reitit.http.spec :as spec]
+   [selmer.parser :as parser] ; kit influence
    [spec-tools.core  :as st]
-   [spec-tools.spell :as spell]))
+   [spec-tools.spell :as spell]
+   [taoensso.timbre  :as log]))
 
-;;; ToDo: See rad-mapper.server.web.handler/app, Pretty printing spec errors.
+;;; ToDo: See rm-server.web.handler/app, Pretty printing spec errors.
 
 (def example-src
   {"ProcessInvoice"
@@ -80,7 +82,6 @@
 (s/def ::processRM-request (s/keys :req-un [::code] :opt-un [::data]))
 (s/def ::processRM-response string?)
 
-
 ;;; Semantic-match ($semMatch)
 (s/def ::src (st/spec {:spec map?
                        :name "src"
@@ -94,7 +95,7 @@
 (s/def ::semantic-match-response map?)
 
 ;;; datalog-query (query)
-(s/def ::qforms (st/spec {:spec string?
+(s/def ::qforms (st/spec {:spec string? ; In CLJS,
                           :name "qforms"
                           :description "datalog query triples."
                           :json-schema/default (str example-query)}))
@@ -117,58 +118,65 @@
 (s/def ::graph-query-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
 (s/def ::graph-query-response map?)
 
-;;; This is the only thing that uses the three ring.middleware namespaces.
-(defn wrap-base
-  [{:keys [site-defaults-config cookie-secret]}]
-  (let [s ^String cookie-secret
-        cookie-store (cookie/cookie-store {:key (.getBytes s)})]
-    (fn [handler]
-      (-> (defaults/wrap-defaults handler
-                                  (assoc-in site-defaults-config [:session :store] cookie-store))
-          (wrap-cors :access-control-allow-origin [#"http://localhost:1818"]
-                     :access-control-allow-methods [:get :put :post :delete])))))
+;;; =========== Pages (just homepage, thus far  =======
+(def selmer-opts {:custom-resource-path (io/resource "html")})
+
+(defn render
+  [_request template & [params]]
+  (-> (parser/render-file template
+                          (assoc params :page template :csrf-token *anti-forgery-token*)
+                          selmer-opts)
+      (ok)
+      (content-type "text/html; charset=utf-8")))
+
+(defn home [{:keys [flash] :as request}]
+  (log/info "Request for home.html")
+  (render request "home.html" {:errors (:errors flash)}))
+;;;====================================================
 
 (def routes
-   [["/swagger.json"
+  [["/app" {:get {:summary "Ignore this swagger entry. I get rid of this soon."
+                              :handler home}}]
+   ["/swagger.json"
      {:get {:no-doc true
             :swagger {:info {:title "RADmapper API"
                              :description "API with reitit-http"}}
             :handler (swagger/create-swagger-handler)}}]
 
-    ["/api"
+   ["/api"
      {:swagger {:tags ["RADmapper functions"]}}
 
-     ["/process-rm"
-      {:post {:summary "Run RADmapper code."
-              :parameters {:body ::processRM-request}
-              :responses {200 {:body {:result ::processRM-response}}}
-              :handler rm/process-rm}}]
+    ["/process-rm"
+     {:post {:summary "Run RADmapper code."
+             :parameters {:body ::processRM-request}
+             :responses {200 {:body {:result ::processRM-response}}}
+             :handler rm/process-rm}}]
 
-     ["/sem-match"
-      {:post {:summary "Do a semantic match similar to $semMatch()."
-              :parameters {:body ::semantic-match-request}
-              :responses {200 {:body {:result ::semantic-match-response}}}
-              :handler rm/sem-match}}]
+    ["/sem-match"
+     {:post {:summary "Do a semantic match similar to $semMatch()."
+             :parameters {:body ::semantic-match-request}
+             :responses {200 {:body {:result ::semantic-match-response}}}
+             :handler rm/sem-match}}]
 
-     ["/graph-query"
-      {:get {:summary "Make a graph query similar to $get()."
-             :parameters {:query ::graph-query-request}
-             :responses {200 {:body ::graph-query-response}}
-             :handler rm/graph-query}}]
+    ["/graph-query"
+     {:get {:summary "Make a graph query similar to $get()."
+            :parameters {:query ::graph-query-request}
+            :responses {200 {:body ::graph-query-response}}
+            :handler rm/graph-query}}]
 
-     ["/datalog-query"
-      {:post {:summary "Run datalog against the schema database."
-              :parameters {:body ::datalog-request}
-              :responses {200 {:body ::datalog-response}}
-              :handler rm/datalog-query}}]
+    ["/datalog-query"
+     {:post {:summary "Run datalog against the schema database."
+             :parameters {:body ::datalog-request}
+             :responses {200 {:body ::datalog-response}}
+             :handler rm/datalog-query}}]
 
-     ["/health"
-      {:get {:summary "Check server health"
-             :responses {200 {:body {:time string? :up-since string?}}}
-             :handler rm/healthcheck}}]]])
+    ["/health"
+     {:get {:summary "Check server health"
+            :responses {200 {:body {:time string? :up-since string?}}}
+            :handler rm/healthcheck}}]]])
 
 (def options
-  {;;:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs
+  {;:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs
    :validate spec/validate ;; enable spec validation for route data
    :reitit.spec/wrap spell/closed ;; strict top-level validation  (error reported if you don't have the last two interceptors)
    :exception pretty/exception
@@ -181,7 +189,7 @@
                          ;; content-negotiation
                          (muuntaja/format-negotiate-interceptor)
                          ;; encodeing response body                ; This one will take :body object (e.g. a map) and return ad java.io.ByteArrayInputStream
-                         (muuntaja/format-response-interceptor)    ; I don't see how that's helpful. Nothing past here reports anything!
+                         (muuntaja/format-response-interceptor)    ; Nothing past here reports anything trough print-context-diffs.
                          ;; exception handling
                          (exception/exception-interceptor)
                          ;; decoding request body
@@ -201,14 +209,22 @@
     {:path "/"
      :config {:validatorUrl nil
               :operationsSorter "alpha"}})
+   (ring/create-resource-handler {:path "/"})
    (ring/create-default-handler)))
 
 (defn handler-init []
-  (let [app (-> (http/ring-handler
+  (let [site-config (-> "system.edn" io/resource slurp read-string :dev :handler/ring)
+        s ^String (:cookie-secret site-config)
+        cookie-store (cookie/cookie-store {:key (.getBytes s)})
+        app (-> (http/ring-handler
                  (http/router routes options)
                  default-routes
                  {:executor sieppari/executor})
 
+                (defaults/wrap-defaults
+                 (assoc-in site-config [:session :store] cookie-store))
+
+                ;; For Kaocha testing through port 1818, at least."
                 (wrap-cors :access-control-allow-origin [#"http://localhost:1818"]
                            :access-control-allow-methods [:get :put :post :delete]))]
     app))

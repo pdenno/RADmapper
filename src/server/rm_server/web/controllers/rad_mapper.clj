@@ -1,4 +1,4 @@
-(ns rad-mapper.server.web.controllers.rad-mapper
+(ns rm-server.web.controllers.rad-mapper
   (:require
    [clojure.java.io       :as io]
    [clojure.string        :refer [split]]
@@ -27,7 +27,7 @@
   (if code
     (try
       (let [res (ev/processRM :ptag/exp code {:pprint? true :user-data data})]
-        (println "=== Result of" code "is" res)
+        (log/info "=== Result of" code "is" res)
         (response/ok {:result res}))
       (catch Exception e
         (log/error e "Error processing RADmapper code. Code = " code)
@@ -47,7 +47,7 @@
         request-objs (split request-objs #"\|")]
      (if (and ident-type ident-val request-objs)
       (let [res (bi/$get [[ident-type ident-val] request-objs])]
-        (response/ok res #_(->> res (m/encode "application/transit+json") io/reader line-seq first)))
+        (response/ok res))
       (response/bad-request "Missing query args."))))
 
 (defn sem-match
@@ -83,7 +83,7 @@
     (try (let [qforms (read-string qforms)
                res (bi/query-fn-aux [(connect-atm)] qforms '[$] nil nil nil)]
            (log/info "Datalog query returns: " res)
-           (response/ok res #_(->> res (m/encode "application/transit+json") io/reader line-seq first))) ; CLJS will decode it.
+           (response/ok res))
          (catch Throwable e
            (log/error "Datalog-query:" (.getMessage e))
            (response/bad-request "Bad arguments to datalog query.")))
