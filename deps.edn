@@ -7,11 +7,9 @@
            com.wsscode/pathom3                 {:mvn/version "2023.01.31-alpha"}
            dk.ative/docjure                    {:mvn/version "1.19.0"}   ; spreadsheets
            datascript/datascript               {:mvn/version "1.4.2"}    ; Just for cljs?
-           funcool/promesa                     {:mvn/version "10.0.663"} ; My build.
+           funcool/promesa                     {:mvn/version "11.0.671"} ; My build is 10.0.663
            io.replikativ/datahike              {:mvn/version "0.6.1538"} ; Not for cljs.
            mount/mount                         {:mvn/version "0.1.17"}
-           metosin/muuntaja                    {:mvn/version "0.6.8"}
-           #_#_metosin/muuntaja-msgpack        {:mvn/version "0.6.8"}
            net.clojars.wkok/openai-clojure     {:mvn/version "0.6.0"}
            nrepl/nrepl                         {:mvn/version "1.0.0"}
            org.babashka/sci                    {:mvn/version "0.7.39"}
@@ -23,34 +21,33 @@
            org.clojure/data.xml                {:mvn/version "0.2.0-alpha8"}
            org.clojure/data.zip                {:mvn/version "1.0.0"}}
 
-
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
  :aliases {:dev          {:extra-paths    ["src/server" "src/dev" "test" "env/dev" "resources"]
                           :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
                           ;; :dev includes test/server thus much of this stuff.
-                          :extra-deps     {aleph/aleph                     {:mvn/version "0.6.1"}  ; for ancient-art
+                          :extra-deps     {;;aleph/aleph                   {:mvn/version "0.6.1"}  ; for ancient-art
                                            applied-science/js-interop      {:mvn/version "0.4.2"}
                                            cider/cider-nrepl               {:mvn/version "0.30.0"}
                                            com.lambdaisland/classpath      {:mvn/version "0.4.44"}
-                                           #_#_criterium/criterium         {:mvn/version "0.4.6"}
+                                           ;criterium/criterium            {:mvn/version "0.4.6"}
                                            expound/expound                 {:mvn/version "0.9.0"}
                                            lilactown/helix                 {:mvn/version "0.1.10"}
                                            org.clojure/java.classpath      {:mvn/version "1.0.0"}
-                                           #_#_pjstadig/humane-test-output {:mvn/version "0.11.0"}
+                                           ;;pjstadig/humane-test-output   {:mvn/version "0.11.0"}
+                                           ;;manifold/manifold             {:mvn/version "0.4.1"} ; for ancient-art
+                                           metosin/muuntaja                {:mvn/version "0.6.8"}
                                            nrepl/nrepl                     {:mvn/version "1.0.0"}
-                                           manifold/manifold               {:mvn/version "0.4.1"} ; for ancient-art
                                            org.clojure/tools.namespace     {:mvn/version "1.4.4"}
                                            metosin/reitit                  {:mvn/version "0.6.0"}
                                            metosin/ring-http-response      {:mvn/version "0.9.3"}
-                                           #_#_metosin/spec-tools          {:mvn/version "0.10.5"}  ; for ancient-art, bu not couldn't find 'closed'.
+                                           ;metosin/spec-tools             {:mvn/version "0.10.5"}  ; for ancient-art, bu not couldn't find 'closed'.
                                            ring/ring-defaults              {:mvn/version "0.3.4"}
                                            ring/ring-jetty-adapter         {:mvn/version "1.10.0"}
                                            ring/ring-core                  {:mvn/version "1.10.0"}
                                            ring/ring-devel                 {:mvn/version "1.10.0"}
-                                           #_#_ring/ring-mock              {:mvn/version "0.4.0"}
+                                           ;ring/ring-mock                 {:mvn/version "0.4.0"}
                                            ring-cors/ring-cors             {:mvn/version "0.1.13"}
-                                           selmer/selmer                   {:mvn/version "1.12.58"} ; Used for home.html.
-                                           tolitius/mount-up               {:mvn/version "0.1.3"}}} ; Maybe get rid of this. I'm referencing it but maybe not using it.}}
+                                           selmer/selmer                   {:mvn/version "1.12.58"}}} ; Used for home.html.
 
            :lib-dev   {:extra-paths    ["test" "src/dev"] ; Not needed?
                        :extra-deps     {thheller/shadow-cljs {:mvn/version "2.23.3"}}}
@@ -63,16 +60,14 @@
                        :exec-fn cognitect.test-runner.api/test
                        :exec-args {:patterns [".*-test.*"]}}
 
-           ;; shadow-cljs doesn't treat these as :extra-deps??? This has to include everything needed for :deps {:aliases [:cljs]}.
            :exerciser {:extra-paths ["src/app"] ; probably this is ignored
-                       :extra-deps  {org.clojure/clojure            {:mvn/version "1.11.1"}
-                                     org.clojure/clojurescript      {:mvn/version "1.11.60"}
+                       :extra-deps  {;org.clojure/clojure            {:mvn/version "1.11.1"}
+                                     ;org.clojure/clojurescript      {:mvn/version "1.11.60"}
                                      thheller/shadow-cljs           {:mvn/version "2.23.3"}
-                                     com.google.javascript/closure-compiler-unshaded {:mvn/version "v20230206"}
+                                     ;com.google.javascript/closure-compiler-unshaded {:mvn/version "v20230206"}
                                      com.taoensso/timbre             {:mvn/version "RELEASE"}
                                      lilactown/helix                 {:mvn/version "0.1.10"}
                                      cljs-ajax/cljs-ajax             {:mvn/version "0.8.4"}
-                                     funcool/promesa                 {:mvn/version "10.0.663"} ; 663 is mine 549 doesn't work.
                                      applied-science/js-interop      {:mvn/version "0.4.2"}}}
 
            :kaochaRM {:extra-paths    ["test" "src/dev"]
@@ -80,7 +75,7 @@
                                        org.clojure/clojurescript      {:mvn/version "1.11.60"}
                                        thheller/shadow-cljs           {:mvn/version "2.23.3"}
                                        com.google.javascript/closure-compiler-unshaded {:mvn/version "v20230206"}
-                                       lambdaisland/kaocha       {:mvn/version "1.83.1314"}
+                                       lambdaisland/kaocha       {:mvn/version "1.84.1335"}
                                        lambdaisland/kaocha-cljs2 {:mvn/version "0.1.58"}
                                        com.lambdaisland/glogi    {:mvn/version "1.3.169"}
                                        nrepl/nrepl               {:mvn/version "1.0.0"}
@@ -100,22 +95,11 @@
                                                                 :git/sha "9d6f2c1ede8be7ab4508065fe6b7e40e0c099ab6"}}
                             :main-opts       ["-m" "thomasa.morpheus.main"]}}}
 
-;;; |    :file |                           :name |  :current |   :latest |
-;;; |----------+---------------------------------+-----------+-----------|
-;;; | deps.edn |          io.replikativ/datahike |  0.6.1538 |  0.6.1540 |
-;;; |          |             lambdaisland/kaocha | 1.82.1306 | 1.83.1314 |
-;;; |          | net.clojars.wkok/openai-clojure |     0.5.1 |     0.6.0 |
-;;; |          |                org.babashka/sci |    0.7.29 |    0.7.39 |
-
-
-;;; |    :file |                           :name | :current |  :latest |
-;;; |----------+---------------------------------+----------+----------|
-;;; | deps.edn | io.github.kit-clj/kit-generator |    0.1.7 |    0.1.8 |
-;;; |          |          io.replikativ/datahike | 0.6.1538 | 0.6.1540 |
-;;; |          | luminus-transit/luminus-transit |    0.1.5 |    0.1.6 |
-;;; |          |                  ring/ring-core |    1.9.6 |   1.10.0 |
-;;; |          |                 ring/ring-devel |    1.9.6 |   1.10.0 |
-;;; |          |         ring/ring-jetty-adapter |    1.9.6 |   1.10.0 |
-;;; |          |                   selmer/selmer |  1.12.57 |  1.12.58 |
-;;; |          |            thheller/shadow-cljs |  2.22.10 |   2.23.3 |
-;;; |          |            thheller/shadow-cljs |  2.22.10 |   2.23.3 |
+;;; |    :file |                                           :name |  :current |   :latest |
+;;; |----------+-------------------------------------------------+-----------+-----------|
+;;; | deps.edn |                                     aleph/aleph |     0.6.1 |     0.6.2 |
+;;; |          | com.google.javascript/closure-compiler-unshaded | v20230206 | v20230502 | not updated
+;;; |          | com.google.javascript/closure-compiler-unshaded | v20230206 | v20230502 | not updated
+;;; |          |                                 funcool/promesa |  10.0.663 |  11.0.671 |
+;;; |          |                          io.replikativ/datahike |  0.6.1538 |  0.6.1541 | not changed
+;;; |          |                             lambdaisland/kaocha | 1.83.1314 | 1.84.1335 |

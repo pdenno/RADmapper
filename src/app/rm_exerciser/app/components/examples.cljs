@@ -7,19 +7,19 @@
 
 ;;; ($get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]])
 (def rm-examples
-  [{:name "2023-05-17, (0): Schema list"
+  [{:name "Tutorial (0): Schema list"
     :code "$get([['list/id', 'ccts/message-schema'], ['list/content']])"}
 
-   {:name "2023-05-17, (1): Small remote query"
+   {:name "Tutorial (1): Small remote query"
     :code "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
   $qfn := query{[?e :schema/name ?name]};
   $qfn($db) )"}
 
-   {:name "2023-05-17, (2) : Simple get"
+   {:name "Tutorial (2) : Simple get"
     :code "( $schema := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
            $schema )"}
 
-   {:name "2023-05-17, (3) : JSONata-like"
+   {:name "Tutorial (3) : JSONata-like"
     :code
     "( // Ordinary JSONata-like expressions: get the names of the two schema in the LHS pane:
   $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content', 'schema/name']]);
@@ -27,7 +27,7 @@
 
 [$s1, $s2].`schema_name` )"}
 
-   #_{:name "2023-05-17, (2) : Simplest query"
+   #_{:name "Tutorial (2) : Simplest query"
     :code
 "(
   $x := {'element/name' : 'foo'};
@@ -35,7 +35,7 @@
   $qf($x)
 )"}
 
-   {:name "2023-05-17, (3): Simple query, complicated schema"
+   {:name "Tutorial (3): Simple query, complicated schema"
     :code "(
   // Small bug in the exerciser (because it combines data from the LHS pane):
   // currently comments have to be inside the open paren.
@@ -51,7 +51,7 @@
  $qf($db)
 )" }
 
-   #_{:name "2023-05-17, (*): (aside) Query defines a function."
+   #_{:name "Tutorial (*): (aside) Query defines a function."
     :code
     "(
   // Remember: query and express are function defining.
@@ -60,7 +60,7 @@
   query{[?x :model/elementDef ?ed]}
 )"}
 
-   {:name "2023-05-17, (4):  query :model/elementDef"
+   {:name "Tutorial (4):  query :model/elementDef"
     :code
     "(
   // This example queries for all the element definitions.
@@ -76,7 +76,7 @@
 )"}
 
 
-   {:name "2023-05-17, (5): Towards goal: query :element/name"
+   {:name "Tutorial (5): Towards goal: query :element/name"
     :code
     "(
   // We'll start working towards something useful with the two schema.
@@ -91,7 +91,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "2023-05-17, (6): Child elements"
+   {:name "Tutorial (6): Child elements"
     :code
     "(
   // Let's find the children of an element.
@@ -116,7 +116,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "2023-05-17, (7): Roots"
+   {:name "Tutorial (7): Roots"
     :code
     "(
   // The two lists we generated in (6) each have one less element than the lists
@@ -168,7 +168,7 @@
 
 )"}
 
-   {:name "2023-05-17, (8): Shape "
+   {:name "Tutorial (8): Shape "
     :code
    "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
@@ -204,7 +204,7 @@
    'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 )"}
 
-   {:name "2023-05-17, (9): Semantic match"
+   {:name "Tutorial (9): Semantic match"
     :code
    "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);

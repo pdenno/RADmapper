@@ -4,7 +4,6 @@
    [ajax.core :refer [GET]] ; for testing
    [clojure.java.io :as io]
    [mount.core :as mount :refer [defstate]]
-   [mount-up.core :as mu]
    [rad-mapper.evaluate] ; for mount
    [rad-mapper.resolvers :refer [schema-db-atm]] ; for mount
    [rm-server.web.handler :refer [app]]

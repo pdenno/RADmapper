@@ -1,12 +1,11 @@
 (ns rm-server.web.controllers.rad-mapper
   (:require
-   [clojure.java.io       :as io]
    [clojure.string        :refer [split]]
    [clojure.walk          :as walk :refer [keywordize-keys]]
-   [muuntaja.core         :as m]
    [rad-mapper.builtin    :as bi]
    [rad-mapper.evaluate   :as ev]
    [rad-mapper.resolvers  :refer [connect-atm]]
+   [rm-server.example-db :as examp]
    [ring.util.http-response :as response]
    [taoensso.timbre :as log])
   (:import
@@ -88,3 +87,19 @@
            (log/error "Datalog-query:" (.getMessage e))
            (response/bad-request "Bad arguments to datalog query.")))
     (response/bad-request "No arguments applied to datalog query.")))
+
+;;; ToDo: This probably belongs elsewhere; it is an exerciser-only thing
+(defn post-example
+  "Save an example in the examples data base."
+  [request]
+  (log/info "body = " (-> request :parameters :body))
+  (try
+    (if (-> request :parameters :body :code)
+      (if-let [uuid (examp/store-example (-> request :parameters :body))]
+        (response/ok {:save-id (str uuid)})
+        (response/ok {:status 400 :body "Store failed."}))
+      (response/ok {:status 400 :body "No code found."}))
+    (catch Exception e
+      (log/error e "Error in post-example. parameters = " (:parameters request))
+      (-> (response/found "/")
+          (assoc :flash {:errors {:unknown (.getMessage e)}})))))

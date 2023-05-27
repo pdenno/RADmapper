@@ -170,6 +170,12 @@
              :responses {200 {:body ::datalog-response}}
              :handler rm/datalog-query}}]
 
+    ["/example" ; Can have a get here too!
+    {:post {:summary "POST a RADmapper example (code and, optionally, data)."
+            :parameters {:body {:code string?, :data string?}}
+            :responses {200 {:body {:save-id string?}}}
+            :handler rm/post-example}}]
+
     ["/health"
      {:get {:summary "Check server health"
             :responses {200 {:body {:time string? :up-since string?}}}
