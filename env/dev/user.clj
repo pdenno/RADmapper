@@ -11,8 +11,8 @@
     [rad-mapper.evaluate]
     [lambdaisland.classpath.watch-deps :as watch-deps]      ;; hot loading for deps
     [rad-mapper.resolvers   :refer [schema-db-atm]] ; for mount
-    [rad-mapper.server.core :refer [server]] ; for mount
-    [rad-mapper.server.web.handler]  ; for mount, defines rm.server.config/config, and router stuff.
+    [rm-server.core :refer [server]] ; for mount
+    [rm-server.web.handler]          ; for mount, defines rm.server.config/config, and router stuff.
     [taoensso.timbre :as log]))
 
 ;;; If you get stuck do: (clojure.tools.namespace.repl/refresh)

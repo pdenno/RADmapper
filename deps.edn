@@ -1,4 +1,4 @@
-{:paths   ["src"]
+{:paths   ["src/lib"]
  :deps    {applied-science/js-interop          {:mvn/version "0.4.2"}
            camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
            cljs-ajax/cljs-ajax                 {:mvn/version "0.8.4"}
@@ -25,27 +25,32 @@
 
 
  ;; See .dir-locals.el for some defaults on CIDER C-c M-j
- :aliases {:dev          {:extra-paths    ["src/dev" "test" "src/rad_mapper/server" "env/dev" "resources"]
+ :aliases {:dev          {:extra-paths    ["src/server" "src/dev" "test" "env/dev" "resources"]
                           :jvm-opts       ["-XX:-OmitStackTraceInFastThrow"]
                           ;; :dev includes test/server thus much of this stuff.
                           :extra-deps     {aleph/aleph                     {:mvn/version "0.6.1"}  ; for ancient-art
+                                           applied-science/js-interop      {:mvn/version "0.4.2"}
                                            cider/cider-nrepl               {:mvn/version "0.30.0"}
                                            com.lambdaisland/classpath      {:mvn/version "0.4.44"}
-                                           #_#_criterium/criterium             {:mvn/version "0.4.6"}
+                                           #_#_criterium/criterium         {:mvn/version "0.4.6"}
                                            expound/expound                 {:mvn/version "0.9.0"}
+                                           lilactown/helix                 {:mvn/version "0.1.10"}
                                            org.clojure/java.classpath      {:mvn/version "1.0.0"}
-                                           #_#_pjstadig/humane-test-output     {:mvn/version "0.11.0"}
+                                           #_#_pjstadig/humane-test-output {:mvn/version "0.11.0"}
+                                           nrepl/nrepl                     {:mvn/version "1.0.0"}
                                            manifold/manifold               {:mvn/version "0.4.1"} ; for ancient-art
                                            org.clojure/tools.namespace     {:mvn/version "1.4.4"}
                                            metosin/reitit                  {:mvn/version "0.6.0"}
                                            metosin/ring-http-response      {:mvn/version "0.9.3"}
-                                           ; metosin/spec-tools              {:mvn/version "0.10.5"}  ; for ancient-art, bu not couldn't find 'closed'.
+                                           #_#_metosin/spec-tools          {:mvn/version "0.10.5"}  ; for ancient-art, bu not couldn't find 'closed'.
                                            ring/ring-defaults              {:mvn/version "0.3.4"}
                                            ring/ring-jetty-adapter         {:mvn/version "1.10.0"}
                                            ring/ring-core                  {:mvn/version "1.10.0"}
                                            ring/ring-devel                 {:mvn/version "1.10.0"}
-                                           #_#_ring/ring-mock                  {:mvn/version "0.4.0"}
-                                           ring-cors/ring-cors             {:mvn/version "0.1.13"}}}
+                                           #_#_ring/ring-mock              {:mvn/version "0.4.0"}
+                                           ring-cors/ring-cors             {:mvn/version "0.1.13"}
+                                           selmer/selmer                   {:mvn/version "1.12.58"} ; Used for home.html.
+                                           tolitius/mount-up               {:mvn/version "0.1.3"}}} ; Maybe get rid of this. I'm referencing it but maybe not using it.}}
 
            :lib-dev   {:extra-paths    ["test" "src/dev"] ; Not needed?
                        :extra-deps     {thheller/shadow-cljs {:mvn/version "2.23.3"}}}
@@ -58,12 +63,17 @@
                        :exec-fn cognitect.test-runner.api/test
                        :exec-args {:patterns [".*-test.*"]}}
 
-           #_#_:light-client {:extra-paths    ["test" "src/dev"]
-                          :extra-deps     {thheller/shadow-cljs      {:mvn/version "2.23.3"}
-                                           org.clojure/clojurescript {:mvn/version "1.11.60"}
-                                           com.lambdaisland/glogi    {:mvn/version "1.3.169"}
-                                           nrepl/nrepl               {:mvn/version "1.0.0"}
-                                           cider/cider-nrepl         {:mvn/version "0.30.0"}}}
+           ;; shadow-cljs doesn't treat these as :extra-deps??? This has to include everything needed for :deps {:aliases [:cljs]}.
+           :exerciser {:extra-paths ["src/app"] ; probably this is ignored
+                       :extra-deps  {org.clojure/clojure            {:mvn/version "1.11.1"}
+                                     org.clojure/clojurescript      {:mvn/version "1.11.60"}
+                                     thheller/shadow-cljs           {:mvn/version "2.23.3"}
+                                     com.google.javascript/closure-compiler-unshaded {:mvn/version "v20230206"}
+                                     com.taoensso/timbre             {:mvn/version "RELEASE"}
+                                     lilactown/helix                 {:mvn/version "0.1.10"}
+                                     cljs-ajax/cljs-ajax             {:mvn/version "0.8.4"}
+                                     funcool/promesa                 {:mvn/version "10.0.663"} ; 663 is mine 549 doesn't work.
+                                     applied-science/js-interop      {:mvn/version "0.4.2"}}}
 
            :kaochaRM {:extra-paths    ["test" "src/dev"]
                       :extra-deps     {org.clojure/clojure            {:mvn/version "1.11.1"}

@@ -1,4 +1,4 @@
-(ns rad-mapper.server.web.middleware.exception
+(ns rm-server.web.middleware.exception
   (:require
    [reitit.ring.middleware.exception :as exception]
    [taoensso.timbre :as log]))

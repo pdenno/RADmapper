@@ -1,7 +1,7 @@
-(ns rad-mapper.server.web.middleware.core
+(ns rm-server.web.middleware.core
   (:require
    [ring.middleware.defaults :as defaults]
-   [ring.middleware.cors :refer [wrap-cors]]
+   [ring.middleware.cors :refer [wrap-cors]] ; experimental
    [ring.middleware.session.cookie :as cookie]))
 
 ;;; (:middleware env/defaults) is just: (defn wrap-dev [handler opts] (-> handler ))
