@@ -1,16 +1,15 @@
 {:deps {:aliases [:exerciser]}
  :nrepl {:port 7002}
  :http  {:port 9631}
- #_#_:source-paths ["src/lib" "src/app"] ; <===== This will be ignore because I'm using :deps.
  :builds ; Only :frontend :kaochaRM have been used much.
  {:frontend ;-------------- Running the exerciser -------------------
   {:target           :browser
    :output-dir       "resources/public/js"
    :asset-path       "/js"
    :compiler-options {:externs ["datascript/externs.js"]}
-   :modules          {:app {:entries [rm-exerciser.app.core] ; creates app.js owing to key :app.
-                            :init-fn rm-exerciser.app.core/mount-root}}
-   :devtools         {:after-load rm-exerciser.app.core/mount-root}}
+   :modules          {:app {:entries [exerciser-app.core] ; creates app.js owing to key :app.
+                            :init-fn exerciser-app.core/mount-root}}
+   :devtools         {:after-load exerciser-app.core/mount-root}}
 
   :kaochaRM ;-------------- Testing cljs ------------------------------
   {:target           :browser-test
@@ -22,7 +21,7 @@
                       :http-root "target/kaocha-test"
                       :after-load dev.kaocha/reload ; dev.kaocha/reload is an attempt to suppress useless log output.
                       :preloads [lambdaisland.chui.remote #_dev.kaocha/reload]}}
-  
+
   :lib    ;----------------- Creating a NodeJS library -----------------
   {:target           :node-library
    :output-to        "lib.js"
@@ -35,4 +34,3 @@
    :compiler-options {:externs ["datascript/externs.js"]}
    :modules          {:app {:init-fn dev.dutil/start}} ; Ideally would be rad-mapper.evaluate/start, but then dev.dutil isn't loaded!...
    :devtools         {:after-load dev.dutil/reload}}}} ; ... LATER: Even with these, sometimes it doesn't load  dev.dutil NS.
-

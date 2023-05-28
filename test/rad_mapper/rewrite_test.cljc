@@ -4,9 +4,9 @@
    [clojure.test :refer [deftest is testing]]
    [rad-mapper.evaluate :as ev]
    [rad-mapper.rewrite  :as rew]
-   [dev.dutil-util :refer [run remove-meta]]
-  #?(:clj [dev.dutil-macros :as dm :refer [run-test unquote-body]]))
-  #?(:cljs (:require-macros [dev.dutil-macros :as dm :refer [run-test unquote-body]])))
+   [develop.dutil-util :refer [run remove-meta]]
+  #?(:clj [develop.dutil-macros :as dm :refer [run-test unquote-body]]))
+  #?(:cljs (:require-macros [develop.dutil-macros :as dm :refer [run-test unquote-body]])))
 
 (defn run-rew
   "run-test for rewrite sets :rewrite? true."

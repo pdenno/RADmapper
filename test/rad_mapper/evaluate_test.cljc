@@ -3,16 +3,16 @@
   (:require
    [ajax.core :refer [GET]]
    [clojure.pprint  :refer [cl-format pprint]]
-   [dev.dutil-util :refer [run]]
+   [develop.dutil-util :refer [run]]
    [clojure.test        :refer  [deftest is testing]]
    [promesa.core :as p]
    [rad-mapper.builtin   :as bi] ; for use in REPL.
    [rad-mapper.evaluate  :as ev :refer [processRM]]
    #?(:clj [rad-mapper.resolvers :refer [get-schema]])
    [taoensso.timbre :as log :refer-macros [info debug log]]
-   [dev.dutil :refer [nicer]] ; for use in REPL.
-   [dev.dutil-macros :as dm :refer [run-test test-results]])
-  #?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+   [develop.dutil :refer [nicer]] ; for use in REPL.
+   [develop.dutil-macros :as dm :refer [run-test test-results]])
+  #?(:cljs (:require-macros [develop.dutil-macros :refer [run-test]])))
 
 ;;; Note: To run these tests from the REPL, be aware of the value of dm/run-cljs?.
 ;;; It selects the macro-expansion of run-test.

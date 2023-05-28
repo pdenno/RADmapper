@@ -155,7 +155,7 @@
     ["/sem-match"
      {:post {:summary "Do a semantic match similar to $semMatch()."
              :parameters {:body ::semantic-match-request}
-             :responses {200 {:body {:result ::semantic-match-response}}}
+             :responses {200 {:body ::semantic-match-response}}
              :handler rm/sem-match}}]
 
     ["/graph-query"

@@ -1761,7 +1761,7 @@
   "Return a function that can be used immediately to make the query defined in body."
   [body in pred-args options]
   (fn [& data|dbs]
-    (log/info "data|dbs =" data|dbs)
+    ;(log/info "data|dbs =" data|dbs)
     (let [db-atms
           ;; CLJ can also be called with $db := $get([['db/name', 'schemaDB'], ['db/connection']]);
           (if (= {"db_connection" "_rm_schema-db"} (first data|dbs))
@@ -2336,32 +2336,34 @@
 Both source_form and target_form are Clojure maps.
 Because data in source_form does not match data in target_form perfectly, you should do the following to make things work:
 
-(1) If target_form combines data from multiple source_form fields, use the Clojure function 'str' to concatenate the source fields.
+(1) If a target_form fields combines data from multiple source_form fields, give that target_form field a value consisting of one field :concat, the value of which is a vector of the field names.
 
 For example, if source_form has specific data fields Company, StreetAddress and BuildingName, but the target_form has only has a general field :AddressLine1,
 it might used to accommodate all three of those data fields from the source_form:
 ##
 source_fields:
- :Company <company-name-data>
- :StreetAddress  <street-address-data>
- :BuildingName <building-name-data>
+ :Company \"<company-name-data>\"
+ :StreetAddress  \"<street-address-data>\"
+ :BuildingName \"<building-name-data>\"
 
 answer:
- :AddressLine1 (str <company-name-data> <street-address-data> <building-name-data>).
+ :AddressLine1 {:concat [\"<company-name-data>\" \"<street-address-data>\" \"<building-name-data>\"]}
 ##
-(2) Conversely, if source_form has a general field that might contain information for more specific target_form fields, use a presumed 2-argument Clojure function extract
-as shown:
+(2) Conversely, if source_form has a general field that might contain information for more specific target_form fields, give each of those target_form fields
+values that represent extracting the specific data from the more general field as shown:
 ##
 source_field:
- :AddressLine1 <address-line-1-data>
+ :AddressLine1 \"<address-line-1-data>\"
 
 answer:
- :Company (extract <address-line-1-data> :Company)
- :Street (extract <address-line-1-data> :Street)
- :BuildingName (extract <address-line-1-data> :Building Name)
+ :Company {:extract-from \"<address-line-1-data>\" :value :Company},
+ :Street {:extract-from  \"<address-line-1-data>\" :value :Street},
+ :BuildingName {:extract-from \"<address-line-1-data>\" :value :Building Name}
 ##
 (3) If there is nothing in source_form that seems to match the needed information in target_form,
-just leave the value <replace-me> in target_form.
+just leave the value \"<replace-me>\" in target_form.
+
+Some examples:
 
 source_form 1:
 {:Invoice
@@ -2394,7 +2396,7 @@ answer 1:
   {:BuyerParty
    {:Location
     {:Address
-     {:AddressLine1 (str \"<company-name-data>\" \"<street-data>\" \"<building-number-data>\")
+     {:AddressLine1 {:concat [\"<company-name-data>\" \"<street-data>\" \"<building-number-data>\"]}
       :City \"<city-data>\"
       :State \"<state-data>\"
       :PostalCode  \"<zip-code-data>\"}}}}}}
@@ -2430,9 +2432,9 @@ answer 2:
   {:BuyerParty
    {:Location
     {:Address
-     {:CompanyName (extract \"<address-line-1-data>\" :CompanyName)
-      :Street (extract \"<address-line-1-data>\" :Street)
-      :BuildingNumber (extract \"<address-line-1-data>\" :BuildingNumber)
+     {:CompanyName {:extract-from \"<address-line-1-data>\" :value :CompanyName}
+      :Street {:extract-from \"<address-line-1-data>\" :value :Street}
+      :BuildingNumber {:extract-from \"<address-line-1-data>\" :value :BuildingNumber)
       :City \"<city-data>\"
       :State \"<state-data>\"
       :ZipCode  \"<postal-code-data>\"}}
@@ -2474,17 +2476,14 @@ answer 2:
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
   [src tar]
+  (log/info "$semMatch on server")
   (let [q-str (sem-match-string src tar)]
-    (reset! diag {:q-str q-str})
-
        (if (System/getenv "OPENAI_API_KEY")
          (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo"
                                                             :messages [{:role "user" :content q-str}]})
                             :choices first :message :content)]
-                (swap! diag #(assoc % :res res))
-                {:result (-> res read-string)})
+                (-> res read-string))
               (catch Throwable e
-                (swap! diag #(assoc % :error e))
                 (throw (ex-info "OpenAI API call failed."
                                 {:message (.getMessage e)
                                  :details (-> e .getData :body json/read-str)}))))
@@ -2496,15 +2495,15 @@ answer 2:
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
   [src tar]
+  (log/info "$semMatch on client")
   (let [prom (p/deferred)]
-    (log/info "Call to $semMatch")
+    (log/info "Call to $semMatch") ; ToDo: For some reason, this is not printed in console.
     (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
           {:params {:src src :tar tar}
-           :response-format :json
            :timeout 30000
            :handler (fn [resp] (p/resolve! prom resp))
            :error-handler (fn [{:keys [status status-text]}]
                             (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
                             (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})
-
-                prom)))
+    (log/info "$semMatch returns promise" prom)
+    prom)))

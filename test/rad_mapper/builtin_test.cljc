@@ -7,10 +7,10 @@
    [rad-mapper.builtin :as bi]
    [rad-mapper.builtin-macros :as bm]
    [rad-mapper.evaluate :as ev] ; Useful in debugging
-   [dev.dutil :refer [examine]] ; Useful in debugging
-   [dev.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
-   #?(:clj [dev.dutil-macros :refer [run-test]]))
-#?(:cljs (:require-macros [dev.dutil-macros :refer [run-test]])))
+   [develop.dutil :refer [examine]] ; Useful in debugging
+   [develop.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
+   #?(:clj [develop.dutil-macros :refer [run-test]]))
+#?(:cljs (:require-macros [develop.dutil-macros :refer [run-test]])))
 
 (deftest jflatten-test
   (testing "Testing that JSONata flattening rules are obeyed."

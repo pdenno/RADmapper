@@ -12,10 +12,10 @@
    [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util]
-   [dev.dutil :refer [run-rew]]
-   [dev.dutil-util :refer [run remove-meta]]
-   #?(:clj [dev.dutil-macros :as dutilm :refer [run-test #_unquote-body]]))
-  #?(:cljs (:require-macros [dev.dutil-macros :as dutilm :refer [run-test #_unquote-body]])))
+   [develop.dutil :refer [run-rew]]
+   [develop.dutil-util :refer [run remove-meta]]
+   #?(:clj [develop.dutil-macros :as dutilm :refer [run-test #_unquote-body]]))
+  #?(:cljs (:require-macros [develop.dutil-macros :as dutilm :refer [run-test #_unquote-body]])))
 
 ;;; Shadow can't see the one in dutilm. I think generally speaking, it can see the macros in those files, but nothing else.
 (defn unquote-body

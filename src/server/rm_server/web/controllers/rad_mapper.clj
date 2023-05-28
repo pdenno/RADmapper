@@ -2,6 +2,7 @@
   (:require
    [clojure.string        :refer [split]]
    [clojure.walk          :as walk :refer [keywordize-keys]]
+   [promesa.core          :as p]
    [rad-mapper.builtin    :as bi]
    [rad-mapper.evaluate   :as ev]
    [rad-mapper.resolvers  :refer [connect-atm]]
@@ -49,7 +50,7 @@
         (response/ok res))
       (response/bad-request "Missing query args."))))
 
-(defn sem-match
+#_(defn sem-match
   "Do semantic match (bi/$semMatch) and return result. Request was a POST."
   [{{{:keys [src tar]} :body} :parameters}]
   (log/info "sem-match: src =" src "tar =" tar)
@@ -61,6 +62,22 @@
            (log/error "sem-match:" (.getMessage e))
            (response/bad-request "sem-match: Args bad or request to LLM failed.")))
     (response/bad-request "src or tar not provided.")))
+
+(defn sem-match
+  "Do semantic match (bi/$semMatch) and return result. Request was a POST."
+  [{{{:keys [src tar]} :body} :parameters}]
+  (log/info "sem-match: src =" src "tar =" tar)
+  (if (and src tar)
+    (let [p (p/deferred)]
+      (future (p/resolve! p (bi/$semMatch src tar)))
+      (let [res (p/await p 30000)]
+        (if (nil? res)
+          (do
+            (log/error "$semMatch timeouted out. (LLM call)")
+            (response/ok {:status :failure ; Not response/request-timeout, though that's nice.
+                          :cause "Call to LLM timed out."}))
+          (response/ok res))))
+      (response/bad-request "src or tar not provided.")))
 
 ;;; (->> '[[?e :schema/name ?name]] (m/encode "application/transit+json") (m/decode "application/transit+json"))
 ;;; ToDo: Support the 3 options to $query that are nil below.

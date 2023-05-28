@@ -12,7 +12,7 @@
                                       (fn [ml]
                                         (if (some #(contains? (first %) "rm-server.*") ml)
                                           ml
-                                          (into [[#{"user" "rm-server.*"} :info]] ml))))))}]
+                                          (into [[#{"exerciser-app.*"} :info]] ml))))))}]
     res))
 
 (defstate util-state

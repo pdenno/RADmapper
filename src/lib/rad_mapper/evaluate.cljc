@@ -170,14 +170,14 @@
   "A top-level function for all phases of translation.
    parse-string, rewrite, and execute, but with controls to quit before doing all of these, debugging etc.
    With no opts it returns the parse structure without debug output."
-  ([tag str] (processRM tag str {}))
-  ([tag str opts]
+  ([tag code] (processRM tag code {}))
+  ([tag code opts]
    (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval?
                        :debug-parse? :debug-rewrite? :pprint?} %)
                    (keys opts)))
-   (let [str         (if-let [udata (-> opts :user-data not-empty)]
-                       (combine-code-and-data str udata)
-                       str)
+   (let [code         (if-let [udata (-> opts :user-data not-empty)]
+                       (combine-code-and-data code udata)
+                       code)
          execute?    (or (:pprint? opts) (:execute? opts))
          rewrite?    (or (:pprint? opts) (:execute? opts) (:executable? opts) (:rewrite? opts))
          executable? (or (:pprint? opts) (:execute? opts) (:executable? opts))
@@ -188,13 +188,13 @@
        ;; Note that s/check-asserts = true can produce non-JSONata like behavior by means of
        ;; throwing an error where JSONata might just return ** No Match **
        (if (or rewm/*debugging?* pm/*debugging?*) (s/check-asserts true) (s/check-asserts false))
-       #?(:clj  (with-open [rdr (-> str char-array clojure.java.io/reader)]
+       #?(:clj  (with-open [rdr (-> code char-array clojure.java.io/reader)]
                   (as-> (par/make-pstate rdr) ?ps
                     (pm/parse tag ?ps)
                     (dissoc ?ps :line-seq) ; dissoc so you can print it.
                     (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
                     (reset! ps-atm ?ps)))
-          :cljs (as-> (par/make-pstate str) ?ps
+          :cljs (as-> (par/make-pstate code) ?ps
                   (pm/parse tag ?ps)
                   (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
                   (reset! ps-atm ?ps)))
@@ -346,6 +346,8 @@
                   This is an atom so that it can be set by other libraries."
   (atom 80))
 
+;(def diag (atom :before-pprint-obj-reset))
+
 (defn pprint-obj
   "Pretty print the argument object.
    (This tries to print the content within the argument width, but because we assume
@@ -355,6 +357,8 @@
      - depth: the number of nesting levels.
      - start: a number of characters to indent owing to where this object starts because of key for which it is a value."
   [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
+  ;(log/info "In pprint-obj")
+  ;(reset! diag obj)
   (let [strg (atom "")]
     (letfn [(pp [obj]
               (cond (p/promise? obj) obj
@@ -367,8 +371,9 @@
                     (fn? obj)      (swap! strg #(str %  "<<function>>"))
                     :else          (swap! strg #(str % obj))))]
       (cond-> obj
-        (map? obj) sort-obj
-        (vector? obj) sort-obj
+        (p/promise? obj) (p/then #(pprint-obj %)), ; ToDo: I expected this to work for core.cljs; it doesn't.
+        (map? obj) sort-obj,
+        (vector? obj) sort-obj,
         true pp))))
 
 (defstate evaluate

@@ -6,7 +6,8 @@
    [mount.core :as mount :refer [defstate]]
    [rad-mapper.evaluate] ; for mount
    [rad-mapper.resolvers :refer [schema-db-atm]] ; for mount
-   [rm-server.web.handler :refer [app]]
+   [rm-server.web.handler :refer [app]]          ; for mount
+   [rm-server.util :refer [util-state]]          ; for mount
    [ring.adapter.jetty :as jetty]
    [taoensso.timbre :as log])
   (:gen-class))
