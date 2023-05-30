@@ -24,16 +24,3 @@
    (if (=  (:?ns-str data) "rad-mapper.parse")
      (apply str (:vargs data)) ; So it can do simple indented call tracing.
      (taoensso.timbre/default-output-fn opts (dissoc data :hostname_ :timestamp_)))))
-
-(defn config-log
-  "Configure Timbre: set reporting levels and specify a custom :output-fn."
-  [min-level]
-  (if (#{:trace :debug :info :warn :error :fatal :report} min-level)
-    (log/set-config!
-     (-> log/*config*
-         (assoc :output-fn #'custom-output-fn)
-         (assoc :min-level [[#{"rad-mapper.*" "exerciser-app.*"} min-level]
-                            [#{"datahike.*"} :error]
-                            [#{"datascript.*"} :error]
-                            [#{"*"} :error]])))
-    (log/error "Invalid timbre reporting level:" min-level)))

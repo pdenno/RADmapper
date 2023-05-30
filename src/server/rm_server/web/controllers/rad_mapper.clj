@@ -6,6 +6,7 @@
    [rad-mapper.builtin    :as bi]
    [rad-mapper.evaluate   :as ev]
    [rad-mapper.resolvers  :refer [connect-atm]]
+   [rad-mapper.util       :as util]
    [rm-server.example-db :as examp]
    [ring.util.http-response :as response]
    [taoensso.timbre :as log])
@@ -50,32 +51,19 @@
         (response/ok res))
       (response/bad-request "Missing query args."))))
 
-#_(defn sem-match
-  "Do semantic match (bi/$semMatch) and return result. Request was a POST."
-  [{{{:keys [src tar]} :body} :parameters}]
-  (log/info "sem-match: src =" src "tar =" tar)
-  (if (and src tar)
-    (try (let [res (bi/$semMatch src tar)]
-           (log/info "sem-match result: " res)
-           (response/ok res))
-         (catch Throwable e
-           (log/error "sem-match:" (.getMessage e))
-           (response/bad-request "sem-match: Args bad or request to LLM failed.")))
-    (response/bad-request "src or tar not provided.")))
-
 (defn sem-match
   "Do semantic match (bi/$semMatch) and return result. Request was a POST."
   [{{{:keys [src tar]} :body} :parameters}]
   (log/info "sem-match: src =" src "tar =" tar)
   (if (and src tar)
     (let [p (p/deferred)]
-      (future (p/resolve! p (bi/$semMatch src tar)))
+      (future (p/resolve! p (bi/$semMatch src tar))
+              #_(p/resolve! p (do (Thread/sleep 10000) {:result (str "Test: " (Date. (System/currentTimeMillis)))})))
       (let [res (p/await p 30000)]
         (if (nil? res)
           (do
             (log/error "$semMatch timeouted out. (LLM call)")
-            (response/ok {:status :failure ; Not response/request-timeout, though that's nice.
-                          :cause "Call to LLM timed out."}))
+            (response/ok {:status :failure :cause "Call to LLM timed out."}))
           (response/ok res))))
       (response/bad-request "src or tar not provided.")))
 

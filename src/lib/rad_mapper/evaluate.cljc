@@ -20,13 +20,6 @@
     #?(:cljs [rad-mapper.promesa-config :as scip])
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
 
-(defn start
-  "NOT USED (yet)."
-  []
-  #?(:cljs (js/console.log "evaluate.cljc: Loaded console message. Setting log min-level = :debug"))
-  (util/config-log :debug)
-  (log/info "Loaded!"))
-
 (defn pretty-form
   "Replace some namespaces with aliases for diagnostic legability."
   [form]
@@ -205,7 +198,7 @@
                rewrite?            (rew/rewrite)
                executable?         (rad-form sci?)
                execute?            (user-eval opts)
-               (:pprint? opts)     (pprint-obj)))))))
+               (:pprint? opts)     pprint-obj))))))
 
 (defn indent-additional-lines
   "Indent every line but the first by the amount indicated by indent."
@@ -351,14 +344,12 @@
 (defn pprint-obj
   "Pretty print the argument object.
    (This tries to print the content within the argument width, but because we assume
-   that there is a horizontal scrollbar, it doesn't work too hard at it!)
+    that there is a horizontal scrollbar, it doesn't work too hard at it!)
      - width: the character length of the total area we have to work with.
      - indent: a number of space characters per nesting level,
      - depth: the number of nesting levels.
      - start: a number of characters to indent owing to where this object starts because of key for which it is a value."
   [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
-  ;(log/info "In pprint-obj")
-  ;(reset! diag obj)
   (let [strg (atom "")]
     (letfn [(pp [obj]
               (cond (p/promise? obj) obj

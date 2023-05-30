@@ -111,15 +111,19 @@
     (log/set-config!
      (-> log/*config*
          (assoc :output-fn #'custom-output-fn)
-         (assoc :min-level [[#{"rad-mapper.*" "rm-exerciser.*" "user"} min-level]
+         (assoc :min-level [[#{"RM-DEFAULT" "rad-mapper.*" "exerciser-app.*" "user"} min-level]
                             [#{"datahike.*"} :error]
                             [#{"datascript.*"} :error]
                             [#{"*"} :error]])))
-    (log/error "Invalid timbre reporting level:" min-level)))
+     (log/error "Invalid timbre reporting level:" min-level)))
 
 (defn default-min-log-level
+  "Get the value of 'RM-DEFAULT' in (:min-level log/*config*), it designates
+   the logging level for namespaces of rad-mapper, including rad-mapper,
+   exerciser-app, and user."
   []
-  (->> log/*config* :min-level (some #(when (= #{"*"} (first %)) (second %)))))
+  (->> log/*config* :min-level (some #(when (contains? (first %) "RM-DEFAULT") (second %)))))
+
 
 (defn cljs? [] (if (find-ns 'cljs.core.Namespace) true false))
 
@@ -390,6 +394,26 @@
         (map? obj)     :db.type/ref
         (boolean? obj) :db.type/boolean))
 
+(def max-duration
+  "This is used in places where doing set-clock might not make sense."
+  30000)
+
+(def timeout-info "Used for calls to cljs-ajax and progress bar."
+  (atom {:valid? false :max-millis max-duration :start-time nil :timeout-at nil}))
+
+(defn invalidate-timeout-info
+  []
+  (log/info "Invalidating timeout info")
+  (swap! timeout-info #(assoc % :valid? false)))
+
+(defn start-clock
+  "Set the timeout-info object and return the argument."
+  ([] (start-clock max-duration))
+  ([max-millis]
+   (swap! timeout-info
+          #(let [now #?(:clj (inst-ms (java.util.Date.)) :cljs (.getTime (js/Date.)))]
+             (assoc % :valid? true :max-millis max-millis :start-time now :timeout-at (+ now max-millis))))
+   max-millis))
 
 ;;;=============================================================================================================
 ;;; Utils for macros: It seems the CLJS macros file cannot have these in them! See javascript.org [2023-01-25].

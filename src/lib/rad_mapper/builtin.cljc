@@ -32,7 +32,7 @@
    [clojure.walk                    :as walk :refer [keywordize-keys]]
    [promesa.core                    :as p]
    [rad-mapper.query                :as qu]
-   [rad-mapper.util                 :as util :refer [qvar? box unbox]]
+   [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock]]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros
     :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
@@ -1616,7 +1616,6 @@
                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
                                                                         {:status status :status-text status-text})))
                               :timeout 5000}]
-                (log/info "graph-query req-data =" req-data)
                 (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
                 prom))))))
 
@@ -1740,7 +1739,6 @@
                 :cljs body-in)
         e-qvar? (entity-qvars body)
         qform (final-query-form body in param-subs)]
-    (log/info "query-fn-aux: body = " body)
     (as-> (apply d/q qform (into dbs pred-args)) ?bsets ; This is possible because body is data to d/q.
       ;; Remove binding sets that involve a schema entity.
       (remove (fn [bset] (some (fn [bval]
@@ -2498,6 +2496,7 @@ answer 2:
   (log/info "$semMatch on client")
   (let [prom (p/deferred)]
     (log/info "Call to $semMatch") ; ToDo: For some reason, this is not printed in console.
+    (util/start-clock 30000)
     (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
           {:params {:src src :tar tar}
            :timeout 30000

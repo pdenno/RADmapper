@@ -1,9 +1,7 @@
 (ns exerciser-app.core
   (:require
-   [clojure.pprint :refer [pprint]]
-   [clojure.string :as str]
-   [rad-mapper.evaluate :as ev]
    [applied-science.js-interop :as j]
+   [clojure.string :as str]
    ["@codemirror/view" :as view]
    ["@mui/material/Box$default" :as Box]
    ["@mui/material/ButtonGroup$default" :as ButtonGroup]
@@ -21,13 +19,19 @@
    [exerciser-app.util :as util]
    [helix.core :as helix :refer [defnc $ <>]]
    [helix.hooks :as hooks]
-   ;["react" :as react]
+   [rad-mapper.evaluate :as ev]
+   [rad-mapper.util :as rutil :refer [timeout-info invalidate-timeout-info]]
    ["react-dom/client" :as react-dom]
    ["react-router-dom" :as router :refer [useSearchParams]]
    [taoensso.timbre :as log :refer-macros [info debug log]]))
 
 (def svr-prefix "http://localhost:3000")
 (declare get-user-data get-user-code)
+
+(def progress-handle
+  "The thing that can be called by js/window.clearInterval to stop incrementing progress under js/window.setInterval."
+  (atom nil))
+(def progress-atm "Percent allowed duration for eval-cell. 100% is a timeout." (atom 0))
 
 (def diag (atom {}))
 
@@ -63,40 +67,48 @@
   "ev/processRM the source, returning a string that is either the result of processing
    or the error string that processing produced."
   [source]
-  (log/info "source = " source)
+  (log/info "run-code: running some code")
   (when-some [code (not-empty (str/trim source))]
     (let [user-data (get-user-data)
-          _zippy (log/info "******* For RM eval: CODE = \n" code)
-          _zippy (log/info "******* For RM eval: DATA = \n" user-data)
+          ;_zippy (log/info "******* For RM eval: CODE = \n" code)
+          ;_zippy (log/info "******* For RM eval: DATA = \n" user-data)
           result (try (ev/processRM :ptag/exp code  {:pprint? true :execute? true :sci? true :user-data user-data})
                       (catch js/Error e {:failure (str "Error: " (.-message e))}))]
       result)))
 
 (j/defn eval-cell
   "Run RADmapper on the string retrieved from the editor's state.
-   Apply the result to the argument function on-result, which was is the set-result function set up by hooks/use-state."
-  [on-result ^:js {:keys [state]}]
-  (log/info "eval-cell")
+   Apply the result to the argument function on-result, which was is the set-result function set up by hooks/use-state.
+   Similarly, on-progress is the progress bar completion value set up by hooks/use-state [progress set-progress].
+   Note that the actual change to the output editor is done in a use-effect [state] in the toplevel component.
+   Returns nil."
+  [on-result-fn progress-val-fn progress-bool-fn ^:js {:keys [state]}]
+  (progress-bool-fn true) ; This runs use-effect, but it isn't starting the timer!
   (as-> state ?res
     (.-doc ?res)
     (str ?res)
     (run-code ?res)
-    (if (p/promise? ?res)
-      ; (on-result "Should not be a promise owing to ev/pprint-obj") ; ToDo
-      (-> ?res
-          (p/then  #(ev/pprint-obj %))
-          (p/then  on-result)
-          (p/catch #(-> % str on-result)))
-      (-> ?res str on-result))) ;; on-result is the set-result function from hooks/use-state.
-  true)                  ;; This is run for its side-effect.
+    (-> ?res
+        (p/then #(-> % str on-result-fn)) ; for side-effect
+        (p/then  (fn [_] (progress-val-fn 100)))
+        (p/then  (fn [_] (invalidate-timeout-info)))
+        (p/catch (fn [e]
+                   (js/window.clearInterval @progress-handle)
+                   (log/info "Error in eval-cell")
+                   (-> e str on-result-fn)))
+        (p/finally (fn [_]
+                     (progress-bool-fn false)
+                     (log/info "clear handler")
+                     (js/window.clearInterval @progress-handle)))))
+  nil) ; This is run for its side-effects.
 
 (defn add-result-action
   "Return the keymap updated with the partial for :on-result, I think!" ;<===
-  [{:keys [on-result]}]
+  [{:keys [on-result progress-val progress-bool]}]
   (.of view/keymap
        (j/lit
         [{:key "Mod-Enter"
-          :run (partial eval-cell on-result)}])))
+          :run (partial eval-cell on-result progress-val progress-bool)}])))
 
 (defn get-props [obj]
   (when (map? (js->clj obj))
@@ -140,14 +152,41 @@
                   :on-stop-drag-up (partial editor/resize-finish "code-editor")
                   :on-stop-drag-dn (partial editor/resize-finish "result")}})
 
+(defn compute-progress []
+  "Use either progress-atm or timeout-info to return a percent done."
+  (let [now (.getTime (js/Date.))
+        info @timeout-info
+        timeout-at (:timeout-at info)
+        res (if (:valid? info)
+              (if (> now timeout-at)
+                100
+                (int (* 100.0  (- 1.0 (double (/ (- timeout-at now) (:max-millis info)))))))
+              (+ @progress-atm 2))]
+    res))
+
 (defnc Top [{:keys [rm-example width height]}]
   (let [[result set-result] (hooks/use-state "Ctrl-Enter above to execute.")
+        [progress set-progress] (hooks/use-state 0)
+        [progressing? set-progressing] (hooks/use-state false)
         banner-height 42
         useful-height (- height banner-height)
         data-editor-height (- useful-height banner-height 20) ; ToDo: 20 (a gap before the editor starts)
         code-editor-height   (int (* useful-height 0.5))    ; <================================== Ignored?
         result-editor-height (int (* useful-height 0.5))]   ; <================================== Ignored?
     (hooks/use-effect [result] (set-editor-text "result" result))
+    ;; setInterval runs its argument function again and again at the argument time interval (milliseconds).
+    ;; setInterval returns a handle that can be used by clearInterval to stop the running.
+    (hooks/use-effect [progressing?]
+          (set-progress 0)
+          (reset! progress-atm 0)
+          (reset! progress-handle
+                  (js/window.setInterval
+                   (fn []
+                     (let [percent (compute-progress)]
+                       (if (or (>= progress 100) (not progressing?))
+                         (js/window.clearInterval @progress-handle)
+                         (set-progress (reset! progress-atm percent)))))
+                   200)))
     (hooks/use-effect :once ; Need to set :max-height of resizable editors after everything is created.
       (editor/resize-finish "code-editor" nil code-editor-height)
       (editor/resize-finish "data-editor" nil data-editor-height)
@@ -177,10 +216,14 @@
                       :up ($ Editor {:name "code-editor"
                                      :height code-editor-height
                                      :text (:code rm-example)
-                                     :ext-adds #js [(add-result-action {:on-result set-result})]})
-                      :dn ($ Editor {:name "result"
-                                     :height result-editor-height
-                                     :text result})
+                                     :ext-adds #js [(add-result-action {:on-result set-result
+                                                                        :progress-val set-progress
+                                                                        :progress-bool set-progressing})]})
+                      :dn ($ Stack {:direction "column"}
+                             ($ LinearProgress {:variant "determinate" :value progress})
+                             ($ Editor {:name "result"
+                                        :height result-editor-height
+                                        :text result}))
                       :share-fns (:right-share top-share-fns)})
            :share-fns (:left-share top-share-fns)
            :lf-pct 0.20 #_0.55 ; <=================================
@@ -222,7 +265,7 @@
 (defonce root (react-dom/createRoot (js/document.getElementById "app")))
 
 (defn ^{:after-load true, :dev/after-load true} mount-root []
-  (util/config-log :info)
+  (rutil/config-log :info)
   (log/info "Logging level for the client:"
             (->> log/*config*
                  :min-level
