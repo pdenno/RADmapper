@@ -8,13 +8,13 @@
 (def $$ "JSONata root context." (atom :bi/unset))
 
 (defn set-context!
-  "Set the JSONata context variable to the argument.
+  "Set the JSONata context variable to the argument (using p/then if it is a promise).
    If the root context has not yet been set, set that too.
    Returns argument."
   [val]
-  (reset! $ val)
-  (when (= @$$ :bi/unset) (reset! $$ val))
-  val)
+  (p/then val #(reset! $ %))
+  (when (= @$$ :bi/unset) (p/then val #(reset! $$ %)))
+  (p/then val #(identity %)))
 
 (defn containerize [obj] (-> obj (with-meta (merge (meta obj) {:bi/container? true}))))
 (defn container?   [obj] (-> obj meta :bi/container?))

@@ -266,15 +266,18 @@
    This function is called with the state object."
   [k]
   (-> (fn get-step [& args] ; No arg if called in a primary.
-        (let [obj (-> (if (-> args first empty?) @$ (first args)))]
-          (cond (map? obj)      (get obj k)
-                (vector? obj)   (->> obj
-                                     containerize
-                                     (cmap #(get % k))
-                                     ;; lightweight flatten
-                                     (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) [])
-                                     containerize)
-                :else           nil)))
+        (let [obj (cond (-> args first p/promise?) (first args)
+                        (-> args first empty?)     (first args)
+                        :else @$)]
+          (cond (p/promise? obj) (p/then obj #(get-step %))
+                (map? obj)       (get obj k)
+                (vector? obj)    (->> obj
+                                      containerize
+                                      (cmap #(get % k))
+                                      ;; lightweight flatten
+                                      (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) [])
+                                      containerize)
+                :else            nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
 (def value-step ^:sci/macro
@@ -1068,7 +1071,7 @@
   ([] ($distinct @$))
   ([arr]
    (s/assert ::vector arr)
-   (distinct arr)))
+   (-> arr distinct vec)))
 
 ;;; $reverse
 (defn$ $reverse
@@ -1611,7 +1614,7 @@
                     req-data {:params {:ident-type k
                                        :ident-val v
                                        :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                              :handler (fn [resp] (reset! diag resp) (p/resolve! prom resp))
+                              :handler (fn [resp] (p/resolve! prom resp))
                               :error-handler (fn [{:keys [status status-text]}]
                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
                                                                         {:status status :status-text status-text})))
@@ -1775,8 +1778,8 @@
    calls query here."
   [body in pred-args options]
   (fn [& data|dbs]
-    ;(log/info "immediate-query-fn: data|dbs =" data|dbs)
-    ;(reset! diag {:data|dbs data|dbs :body body})
+    ;;(log/info "immediate-query-fn: data|dbs =" data|dbs)
+    ;;(reset! diag {:data|dbs data|dbs :body body})
     (if (= {"db_connection" "_rm_schema-db"} (first data|dbs)) ; Then we can't do it here.
       (let [prom (p/deferred)]
         (log/info "immediate-query-fn: body =" body)

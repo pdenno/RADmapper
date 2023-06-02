@@ -53,7 +53,7 @@
                        :exec-fn cognitect.test-runner.api/test
                        :exec-args {:patterns [".*-test.*"]}}
 
-           :exerciser {:extra-paths ["src/app"] ; probably this is ignored
+           :exerciser {:extra-paths ["src/app"]
                        :extra-deps  {thheller/shadow-cljs           {:mvn/version "2.23.3"}
                                      com.taoensso/timbre            {:mvn/version "RELEASE"}
                                      lilactown/helix                {:mvn/version "0.1.10"}

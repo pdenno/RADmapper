@@ -403,7 +403,6 @@
 
 (defn invalidate-timeout-info
   []
-  (log/info "Invalidating timeout info")
   (swap! timeout-info #(assoc % :valid? false)))
 
 (defn start-clock

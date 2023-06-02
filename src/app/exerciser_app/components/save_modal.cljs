@@ -28,7 +28,7 @@
              :p 2}))
 
 (def white-style (clj->js {:color "background.paper"}))
-(def svr-prefix "http://localhost:3000/api/")
+(def svr-prefix "http://localhost:3000/app/")
 (def diag (atom nil))
 
 ;;; https://mui.com/material-ui/react-modal/

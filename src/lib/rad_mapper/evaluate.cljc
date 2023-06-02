@@ -249,8 +249,8 @@
                       yi           +1
                       :else        (compare x y))))
           (compar [x y]
-            (let [nsp-x (namespace x)
-                  nsp-y (namespace y)
+            (let [nsp-x (if (or (symbol? x) (keyword? x)) (namespace x) "")
+                  nsp-y (if (or (symbol? y) (keyword? y)) (namespace y) "")
                   name-x (name x)
                   name-y (name y)]
               (cond (and nsp-x nsp-y)           (if (= nsp-x nsp-y)

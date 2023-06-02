@@ -82,33 +82,32 @@
    Similarly, on-progress is the progress bar completion value set up by hooks/use-state [progress set-progress].
    Note that the actual change to the output editor is done in a use-effect [state] in the toplevel component.
    Returns nil."
-  [on-result-fn progress-val-fn progress-bool-fn ^:js {:keys [state]}]
-  (progress-bool-fn true) ; This runs use-effect, but it isn't starting the timer!
+  [on-result-fn progress-bool-fn ^:js {:keys [state]}]
+  (progress-bool-fn true)
   (as-> state ?res
     (.-doc ?res)
     (str ?res)
     (run-code ?res)
     (-> ?res
         (p/then #(-> % str on-result-fn)) ; for side-effect
-        (p/then  (fn [_] (progress-val-fn 100)))
-        (p/then  (fn [_] (invalidate-timeout-info)))
         (p/catch (fn [e]
                    (js/window.clearInterval @progress-handle)
                    (log/info "Error in eval-cell")
                    (-> e str on-result-fn)))
         (p/finally (fn [_]
                      (progress-bool-fn false)
+                     (invalidate-timeout-info)
                      (log/info "clear handler")
                      (js/window.clearInterval @progress-handle)))))
-  nil) ; This is run for its side-effects.
+  nil)
 
 (defn add-result-action
   "Return the keymap updated with the partial for :on-result, I think!" ;<===
-  [{:keys [on-result progress-val progress-bool]}]
+  [{:keys [on-result progress-bool]}]
   (.of view/keymap
        (j/lit
         [{:key "Mod-Enter"
-          :run (partial eval-cell on-result progress-val progress-bool)}])))
+          :run (partial eval-cell on-result progress-bool)}])))
 
 (defn get-props [obj]
   (when (map? (js->clj obj))
@@ -152,8 +151,9 @@
                   :on-stop-drag-up (partial editor/resize-finish "code-editor")
                   :on-stop-drag-dn (partial editor/resize-finish "result")}})
 
-(defn compute-progress []
+(defn compute-progress
   "Use either progress-atm or timeout-info to return a percent done."
+  []
   (let [now (.getTime (js/Date.))
         info @timeout-info
         timeout-at (:timeout-at info)
@@ -177,14 +177,13 @@
     ;; setInterval runs its argument function again and again at the argument time interval (milliseconds).
     ;; setInterval returns a handle that can be used by clearInterval to stop the running.
     (hooks/use-effect [progressing?]
-          (set-progress 0)
           (reset! progress-atm 0)
           (reset! progress-handle
                   (js/window.setInterval
                    (fn []
                      (let [percent (compute-progress)]
                        (if (or (>= progress 100) (not progressing?))
-                         (js/window.clearInterval @progress-handle)
+                         (do (set-progress 0) (js/window.clearInterval @progress-handle))
                          (set-progress (reset! progress-atm percent)))))
                    200)))
     (hooks/use-effect :once ; Need to set :max-height of resizable editors after everything is created.
@@ -217,7 +216,6 @@
                                      :height code-editor-height
                                      :text (:code rm-example)
                                      :ext-adds #js [(add-result-action {:on-result set-result
-                                                                        :progress-val set-progress
                                                                         :progress-bool set-progressing})]})
                       :dn ($ Stack {:direction "column"}
                              ($ LinearProgress {:variant "determinate" :value progress})
