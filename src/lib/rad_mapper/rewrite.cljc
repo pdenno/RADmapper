@@ -290,18 +290,6 @@
 (defrewrite :ImmediateUse [m]
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
-;;; See rewrite-thread-immediate for how this came to be.
-(defrewrite :ThreadRHSfn [m]
-  `(~@(-> m :def rewrite) ~@(->> m :args (map rewrite))))
-
-;;; See rewrite-thread-immediate for how this came to be.
-;;; This one transform a function call into a function.
-(defrewrite :ThreadRHSfn-call [m]
-  (reset-dgensym!) ; For debugging, start at _x1
-  (let [xtra-arg (dgensym!)
-        [fname & args] (-> m (assoc :typ :FnCall) rewrite)]
-    `(fn [~xtra-arg] (~fname ~xtra-arg ~@args))))
-
 (defrewrite :ConditionalExp [m]
   `(bi/conditional ~(-> m :predicate rewrite)  ~(-> m :exp1 rewrite)  ~(-> m :exp2 rewrite)))
 
@@ -342,37 +330,12 @@
             :else (recur (conj res p1)
                          (-> svals rest vec))))))
 
-(defn rewrite-thread-immediate
-  "Wherever the sequence <whatever> bi/thread ImmediateUse appears,
-   it indicates a quirk in parsing things like 4 ~> function($x){$x+1}()
-   where rewriting as a ImmediateUse is incorrect; the RHS operator
-   needs to be preserved as a function def, not executed. This does
-   that by changing by replacing the Immediate use with a ThreadRHS."
-  [s]
-  (loop [res []
-         svals s]
-    (let [triple (take 3 svals)
-          [p1 p2 p3] triple
-          len (count triple)]
-      (cond (< len 3) (into res triple)
-            (and (= :op/thread p2)
-                 (map? p3) (#{:ImmediateUse :FnCall} (:typ p3)))
-            (recur (into res (vector p1
-                                     'bi/thread
-                                     (case (:typ p3)
-                                       :ImmediateUse (assoc p3 :typ :ThreadRHSfn)
-                                       :FnCall       (assoc p3 :typ :ThreadRHSfn-call))))
-                   (->> svals (drop 3) vec))
-            :else (recur (conj res p1)
-                         (-> svals rest vec))))))
-
 ;;; Filter path elements (at least(?) -- maybe map and reduce too) consist of a field path element
 ;;; followed by the body enclosed in the delimiters; the two are not separate path elements.
 (defrewrite :BinOpSeq [m]
   (->> m
        :seq
        rewrite-value-step
-       rewrite-thread-immediate
        rewrite-bvec-as-sexp)) ; This orders element and rewrites them to s-expressions.
 
 (def path-fn? #{:get-step :filter-step :reduce-step :value-step :primary})
@@ -672,9 +635,19 @@
                             omap (as-> omap ?omap
                                    (if (= pval prec)
                                      {:pos pos
-                                      :form (list (-> ?omap :op symbol)
-                                                  (nth (:args info) (dec pos))
-                                                  (nth (:args info) (inc pos)))}
+                                      :form (let [op (-> ?omap :op symbol)]
+                                              (if (= op 'bi/thread) ; This allows us to not need a macro for threading
+                                                (let [fn-arg (nth (:args info) (inc pos)) ; 'immediate' means function(..)
+                                                      immediate? (and (seq? (first fn-arg)) (= "with-meta" (-> fn-arg first first name)))]
+                                                  (list op
+                                                        (nth (:args info) (dec pos))
+                                                        (if immediate?
+                                                          `(binding [bim/*threading?* true] ~@fn-arg)
+                                                          `(binding [bim/*threading?* true] ~fn-arg))))
+                                                (list op
+                                                      (nth (:args info) (dec pos))
+                                                      (nth (:args info) (inc pos)))))}
+
                                      ?omap))]
                         (recur (rest index)
                                (-> info
@@ -686,7 +659,9 @@
               (-> (map :prec (:operators ?info)) distinct sort))
       (-> ?info :args first))))
 
-;;; A lower :val means tighter binding. ToDo: That's a leftover from MiniZinc!
+
+;;; ToDo: This is a leftover from MiniZinc!
+;;; A lower :val means tighter binding, means do it do it sooner.
 ;;; For example, 1+2*3 means 1+(2*3) because * (300) binds tighter than + (400).
 (def op-precedence-tbl ; lower :val means binds tighter.
   {'or               {:path? false :assoc :left :val 1000}

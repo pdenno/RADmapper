@@ -16,12 +16,12 @@
   "Replace some namespaces with aliases"
   [form]
   (let [ns-alia {"rad-mapper.builtin"           "bi"
-                 "bi"                           "bi"
                  "rad-mapper.builtin-macros"    "bim"
-                 "bim"                          "bim"
                  "promesa.core"                 "p"
+                 "clojure.spec.alpha"           "s"
                  "sci.configs.funcool.promesa"  "scip"
-                 "java.lang.Math"               "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
+                 "java.lang.Math"               "Math"}
+        ns-alia (merge ns-alia (zipmap (vals ns-alia) (vals ns-alia)))] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
     (letfn [(ni [form]
               (let [m (meta form)]
                 (cond (vector? form) (-> (->> form (map ni) doall vec) (with-meta m)),

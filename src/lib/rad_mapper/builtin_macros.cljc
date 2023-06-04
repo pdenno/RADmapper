@@ -12,9 +12,23 @@
    If the root context has not yet been set, set that too.
    Returns argument."
   [val]
-  (p/then val #(reset! $ %))
-  (when (= @$$ :bi/unset) (p/then val #(reset! $$ %)))
-  (p/then val #(identity %)))
+  (let [res (if (p/promise? val)
+              (p/then val #(reset! $ %))
+              (reset! $ val))]
+    (when (= @$$ :bi/unset)
+      (if (p/promise? val)
+        (p/then val #(reset! $$ %))
+        (reset! $$ val)))
+    res))
+
+#_(defn set-context!
+  "Set the JSONata context variable to the argument (using p/then if it is a promise).
+   If the root context has not yet been set, set that too.
+   Returns argument."
+  [val]
+  (reset! $ val)
+  (when (= @$$ :bi/unset) (reset! $$ val))
+  val)
 
 (defn containerize [obj] (-> obj (with-meta (merge (meta obj) {:bi/container? true}))))
 (defn container?   [obj] (-> obj meta :bi/container?))
@@ -92,7 +106,8 @@
                                 :else obj))
           :else obj)))
 
-(defmacro defn*
+;;; ToDo: Is this really necessary?
+(defmacro defn1
   "Convenience macro for numerical operators. They can be passed functions." ; <==== or promises?
   [fn-name doc-string [& args] & body]
   `(def ~fn-name
@@ -102,12 +117,25 @@
          (-> (p/all [~@args]) (p/then (fn [[~@args]] ~@body)))
          (do ~@body)))))
 
-(defmacro defn$
+#_(defmacro defn1
+  "Convenience macro for numerical operators. They can be passed functions." ; <==== or promises?
+  [fn-name doc-string [& args] & body]
+  `(def ~fn-name
+         ~doc-string
+     (fn [~@args]
+       (if (some p/promise? [~@args])
+         (-> (p/all [~@args]) (p/then (fn [[~@args]] ~@body)))
+         (do ~@body)))))
+
+(def ^:dynamic *threading?* "Set in bi/thread and used in defn* macro to decide whether to use the context variable $ or return a partial." false)
+
+(defmacro defn*
   "Define two function arities using the body:
      (1) the ordinary one, that has the usual arguments for the built-in, and,
      (2) a function where the missing argument will be assumed to be the context variable, $.
    The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
-   doc-string is required."
+   doc-string is required.
+  The one that is short args checks for *threading* and might return a partial."
   [fn-name doc-string [& params] & body]
   (let [param-map (zipmap params (map #(symbol nil (name %)) params))
         abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
@@ -119,18 +147,15 @@
                     (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
                     :else (get param-map x x)))]
     `(defn ~fn-name ~doc-string
-       (~abbrv-params (~fn-name ~@abbrv-args))
+       (~abbrv-params
+        (if *threading?*
+          (partial ~fn-name ~@abbrv-params)
+          (~fn-name ~@abbrv-args))) ; This one has a @$ in it somewhere (see above).
        ([~@(vals param-map)]
-        (let [res# (do ~@(rewrite body))] (if (seq? res#) (doall res#) res#)))))))
-
-(defmacro thread-m [x y]
-  `(let [xarg# ~x]
-     (do (set-context! xarg#)
-         (let [yarg# ~y]
-           (if (fn? yarg#)
-             (yarg# xarg#)
-             (throw (ex-info "The RHS argument to the threading operator is not a function."
-                             {:rhs-operator yarg#})))))))
+        (let [res# (do ~@(rewrite body))]
+          (cond (p/promise? res#) (p/then res# #(if (seq? %) (doall %) %))
+                (seq? res#) (doall res#)
+                :else res#)))))))
 
 (defmacro value-step-m
   [body]

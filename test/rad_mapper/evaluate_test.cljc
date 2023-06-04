@@ -1,5 +1,6 @@
 (ns rad-mapper.evaluate-test
-  "Test evaluation (and parsing and rewriting) of RADmapper code."
+  "Test evaluation (and parsing and rewriting) of RADmapper code.
+   Many of the things :require'd here are for use with REPL."
   (:require
    [ajax.core :refer [GET]]
    [clojure.pprint  :refer [cl-format pprint]]
@@ -7,6 +8,7 @@
    [clojure.test        :refer  [deftest is testing]]
    [promesa.core :as p]
    [rad-mapper.builtin   :as bi] ; for use in REPL.
+   [rad-mapper.builtin-macros   :as bim] ; for use in REPL.
    [rad-mapper.evaluate  :as ev :refer [processRM]]
    #?(:clj [rad-mapper.resolvers :refer [get-schema]])
    [taoensso.timbre :as log :refer-macros [info debug log]]
@@ -273,6 +275,14 @@
                    $sum(Account.Order.Product.(Price*Quantity)) )"
                         336.36)))))
 
+(deftest some-async
+  (testing "testing some async capabilities"
+    (testing "testing threading (not async per se but...)"
+      (run-test "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
+                   $qfn := query{[?e :schema/name ?name] [?e :schema/sdo ?sdo]};
+                   $qfn($db).?sdo ~> $distinct() ~> $sort() )"
+                [:cefact :etsi :oagi :oasis :qif :w3c]))))
+
 #_(deftest nyi
   (testing "NYI:"
     (testing "reduce using delimiters;  ToDo: the backquote thing."
@@ -487,29 +497,6 @@
                  r))
              []
              @test-results))
-
-;;; These are most interesting in CLJS where they require REST calls. However, they return promises.
-#_(defn $get-test []
-  (is (> (-> (run "$get([['list/id', 'ccts/message-schema'], ['list/content']])")
-             (get "list_content")
-             count)
-         100)))
-
-(defn $get-test []
-  (run "$get([['list/id', 'ccts/message-schema'], ['list/content']])"))
-
-
-(defn simpler []
-  (-> (run "$get([['db/name', 'schemaDB'], ['db/connection']])")
-      (p/then #(reset! diag %))
-      (p/catch #(reset! diag {:error %}))))
-
-
-(defn query-test []
-  (-> (run "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
-          $qfn := query{[?e :schema/name ?name]};
-          $qfn($db) )")
-      (p/then #(reset! diag %))))
 
 (defn smatch-test []
   (-> (run

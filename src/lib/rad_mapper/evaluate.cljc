@@ -43,7 +43,7 @@
    "map-step"    'rad-mapper.builtin-macros/map-step-m,
    "value-step"  'rad-mapper.builtin-macros/value-step-m,
    "primary"     'rad-mapper.builtin-macros/primary-m,
-   "thread"      'rad-mapper.builtin-macros/thread-m,
+   #_#_"thread"      'rad-mapper.builtin-macros/thread-m,
    "conditional" 'rad-mapper.builtin-macros/conditional-m})
 
 (defn macro?
@@ -85,10 +85,7 @@
         builtin-ns     (update-vals publics   #(sci/copy-var* % bns))
         builtin-m-ns   (update-vals publics-m #(sci/copy-var* % bns-m))
         pprint-ns      {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
-        timbre-ns      {#_#_'debug     (sci/copy-var* #'taoensso.timbre/debug tns) ; a macro
-                        #_#_'info      (sci/copy-var* #'taoensso.timbre/info tns)  ; a macro
-                        #_#_'log!      (sci/copy-var* #'taoensso.timbre/log! tns)  ; a macro
-                        '-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
+        timbre-ns      {'-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
                         '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}
         nspaces        {'rad-mapper.builtin               builtin-ns,
                         'rad-mapper.builtin-macros        builtin-m-ns,
@@ -101,7 +98,7 @@
                   'map-step   rad-mapper.builtin/map-step
                   'value-step rad-mapper.builtin/value-step
                   'primary    rad-mapper.builtin/primary
-                  'thread     rad-mapper.builtin/thread}})))
+                  #_#_'thread     rad-mapper.builtin/thread}})))
 
 (defn user-eval
   "Evaluate the argument form."
@@ -371,3 +368,20 @@
   :start
   (do
     (util/config-log :info)))
+
+
+;;;================ Sure wish I could get shadow to see the test directory! =============
+(defn f [x]
+  (if (p/promise? x)
+    (-> x (p/then #(f (/ % 0))) (p/catch #(throw (ex-info "throw on f" {:valu %}))))
+    (conj x :f)))
+
+(defn g [x]
+  (if (p/promise? x)
+    (p/then x #(g %))
+    (conj x :g)))
+
+(defn h [x]
+  (if (p/promise? x)
+    (p/then x #(h %))
+    (conj x :h)))

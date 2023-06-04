@@ -34,9 +34,9 @@
    [rad-mapper.query                :as qu]
    [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock]]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
-   [rad-mapper.builtin-macros
-    :refer [$ $$ set-context! defn* defn$ thread-m value-step-m primary-m init-step-m map-step-m
-            jflatten containerize containerize? container? flatten-except-json]])
+   [rad-mapper.builtin-macros       :as bim
+    :refer [$ $$ set-context! defn* value-step-m primary-m init-step-m map-step-m
+            *threading?* jflatten containerize containerize? container? flatten-except-json]])
   #?(:cljs (:require-macros [rad-mapper.builtin-macros]
                             [promesa.core :refer [loop]])) ; ToDo: probably not necessary.
    #?(:clj
@@ -125,7 +125,7 @@
                   :else                   obj))]
     (-> obj fin jflatten)))
 
-(defn deref$
+#_(defn deref$
   "Dereference the $ atom.
    Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
@@ -134,26 +134,28 @@
    (set-context! (containerize? val))))
 
 ;;;========================= JSONata built-ins  =========================================
-(defn* add      "plus"   [x y] (+ x y))
-(defn* subtract "minus"  [x y] (- x y))
-(defn* multiply "times"  [x y] (* x y))
-(defn* div      "divide" [x y] (s/assert ::non-zero y) (double (/ x y)))  ; cljs.core/divide
-(defn* gt       "greater-than"          [x y] (>  x y))
-(defn* lt       "less-than "            [x y] (<  x y))
-(defn* gteq     "greater-than-or-equal" [x y] (>= x y))
-(defn* lteq     "less-than-or-equal"    [x y] (<= x y))
-(defn* eq       "equal, need not be numbers"     [x y] (= (jflatten x) (jflatten y)))
-(defn* !=       "not equal, need not be numbers" [x y] (not= (jflatten x) (jflatten y)))
+(defn add      "plus"   [x y] (+ x y))
+(defn subtract "minus"  [x y] (- x y))
+(defn multiply "times"  [x y] (* x y))
+(defn div      "divide" [x y] (s/assert ::non-zero y) (double (/ x y)))  ; cljs.core/divide
+(defn gt       "greater-than"          [x y] (>  x y))
+(defn lt       "less-than "            [x y] (<  x y))
+(defn gteq     "greater-than-or-equal" [x y] (>= x y))
+(defn lteq     "less-than-or-equal"    [x y] (<= x y))
+(defn eq       "equal, need not be numbers"     [x y] (= (jflatten x) (jflatten y)))
+(defn !=       "not equal, need not be numbers" [x y] (not= (jflatten x) (jflatten y)))
 
-(def thread ^:sci/macro
-  (fn [_&form _&env x y]
-    `(let [xarg# ~x]
-       (do (set-context! xarg#)
-           (let [yarg# ~y]
-             (if (fn? yarg#)
-               (yarg# xarg#)
-               (throw (ex-info "The RHS argument to the threading operator is not a function."
-                               {:rhs-operator yarg#}))))))))
+(defn thread
+  "Apply the function to the object. This should be called with the dynamic variable *threading?* bound to true."
+  [obj func]
+    (if (p/promise? obj)
+      (-> obj
+          (p/then #(func %))
+          (p/catch #(throw (ex-info (str "In bi/thread: " %) {:obj obj :func func :err %}))))
+      (try
+        (func obj)
+        (catch #?(:clj Exception :cljs :default) e
+            (ex-info "In bi/thread (ordinary):" {:obj obj :func func :err e})))))
 
 (defn step-type
   "Return a keyword describing what type of step to take next."
@@ -177,7 +179,7 @@
       (if (empty? steps) res
           (let [styp (step-type steps)
                 sfn  (first steps)
-                new-res (case styp ; init-step, value-step, map-step, thread, and primary use SCI's notion of macros.
+                new-res (case styp ; init-step, value-step, map-step, #_thread, and primary use SCI's notion of macros.
                           :bi/init-step    (-> (sfn @$) containerize?),
                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
                                                                 :bi/attr (-> sfn meta :bi/arg)}),
@@ -229,7 +231,9 @@
                         (-> (filterv #(binding [$ (atom %)] (pred|ix-fn %)) ?o) containerize?)))))]
         (let [prix (pred|ix-fn @$)] ; If it returns a number, it is indexing.
           (cond (number? prix)     (fbody prix)
-                (p/promise? prix)  (-> prix (p/then #(fbody %)) (p/catch #(do % (fbody nil))))
+                (p/promise? prix)  (-> prix
+                                       (p/then #(fbody %))
+                                       (p/catch #(throw (ex-info (str "In bi/filter-step: " %) {:prix prix :err %}))))
                 :else              (fbody prix))))) ; Not sure this one happens!
       (with-meta {:bi/step-type :bi/filter-step})))
 
@@ -269,7 +273,9 @@
         (let [obj (cond (-> args first p/promise?) (first args)
                         (-> args first empty?)     (first args)
                         :else @$)]
-          (cond (p/promise? obj) (p/then obj #(get-step %))
+          (cond (p/promise? obj) (-> obj
+                                     (p/then #(get-step %))
+                                     (p/catch #(throw (ex-info (str "In bi/get-step: " %) {:k k :err %}))))
                 (map? obj)       (get obj k)
                 (vector? obj)    (->> obj
                                       containerize
@@ -355,48 +361,62 @@
 
 ;;; ToDo: Put some code around assignments so that you know the 'name' of the function
 ;;;       that is failing the arg count requirement.
-(defn fncall
+#_(defn fncall
   [{:keys [func args]}]
   (if-let [cnt (-> func meta :bi/expected-arg-cnt)]
     (if (== cnt (count args))
       (apply func args)
       (throw (ex-info (cl-format nil "A function of type ~A expected ~A args; it got ~A."
                                  (-> func meta :bi/fn-type) cnt (count args)) {})))
-        (apply func args)))
+    (apply func args)))
+
+(defn fncall
+  [{:keys [func args]}]
+  (when-let [cnt (-> func meta :bi/expected-arg-cnt)]
+    (when (not= cnt (count args))
+      (throw (ex-info (cl-format nil "A function of type ~A expected ~A args; it got ~A."
+                                 (-> func meta :bi/fn-type) cnt (count args)) {}))))
+  (if (some p/promise? args)
+    (-> args
+        p/all
+        (p/then #(apply func %))
+        (p/catch #(throw (ex-info (str "In bi/fncall: " %) {:args args :func func :err %}))))
+    (apply func args)))
 
 ;;;--------------------------- JSONata built-in functions ------------------------------------
 
 ;;;------------- String --------------
-(defn$ concat-op
+(defn concat-op
   "JSONata & operator."
-  [s1_ s2]
-  (s/assert ::string s1_)
+  [s1 s2]
+  (s/assert ::string s1)
   (s/assert ::string s2)
-  (str s1_ s2))
+  (str s1 s2))
 
+;;; ToDo: Investigate problem with defn* on the next few.
 ;;; $base64decode
-(defn $base64decode
+(defn* $base64decode
   "Converts base 64 encoded bytes to a string, using a UTF-8 Unicode codepage."
-  [c]
-#?(:clj  (-> c .getBytes b64/decode String.)
-   :cljs (jsb64/decodeString c)))
+  [c_]
+#?(:clj  (-> c_ .getBytes b64/decode String.)
+   :cljs (jsb64/decodeString c_)))
 
 ;;; $base64encode
-(defn $base64encode
+(defn* $base64encode
   "Converts an ASCII string to a base 64 representation.
    Each each character in the string is treated as a byte of binary data.
    This requires that all characters in the string are in the 0x00 to 0xFF range,
    which includes all characters in URI encoded strings.
    Unicode characters outside of that range are not supported."
-  [s]
-  #?(:clj  (-> s .getBytes b64/encode String.)
-     :cljs (jsb64/encodeString s)))
+  [s_]
+   #?(:clj  (-> s_ .getBytes b64/encode String.)
+      :cljs (jsb64/encodeString s_)))
 
 ;;;  ToDo: (generally) when arguments do not pas s/assert, need to throw an error.
 ;;;        For example, "Argument 1 of function "contains" does not match function signature."
 ;;;        This could be built into defn$ and defn$ could be generalized and used more widely.
 ;;; $contains
-(defn$ $contains
+(defn* $contains
   "Returns true if str is matched by pattern, otherwise it returns false.
    If str is not specified (i.e. this function is invoked with one argument),
    then the context value is used as the value of str.
@@ -412,32 +432,37 @@
     (if (index-of s_ pat) true false)))
 
 ;;; $decodeUrl
-(defn $decodeUrl
-  [url-string]
-  (s/assert ::string url-string)
-  (url/url-decode url-string))
+(defn* $decodeUrl
+  "Decode the url" ; ToDo: A lot of these doc-strings are bogus.
+  [url-string_]
+  (s/assert ::string url-string_)
+  (url/url-decode url-string_))
 
 ;;; $decodeUrlComponent
-(defn $decodeUrlComponent
-  [s]
-  (s/assert ::string s)
-  (url/url-decode s))
+(defn* $decodeUrlComponent
+  "Decode the url component"
+  [s_]
+  (s/assert ::string s_)
+  (url/url-decode s_))
 
 ;;; $encodeUrl
-(defn $encodeUrl
-  [s]
-  (s/assert ::string s)
-  (-> s url/url str))
+(defn* $encodeUrl
+  "Encode the stringa as url"
+  [s_]
+  (s/assert ::string s_)
+  (-> s_ url/url str))
 
 ;;; $encodeUrlComponent
-(defn $encodeUrlComponent
-  [s]
-  (s/assert ::string s)
-  (url/url-encode s))
+(defn* $encodeUrlComponent
+  "Encode the URL component"
+  [s_]
+  (s/assert ::string s_)
+  (url/url-encode s_))
 
 ;;; $eval
 #?(:clj
 (defn $eval
+  ([]  (partial $eval))
   ([s] ($eval s @$))
   ([s context]
    (s/assert ::string s)
@@ -459,6 +484,7 @@
    It is an error if the input array contains an item which isn't a string.
    If separator is not specified, then it is assumed to be the empty string, i.e. no separator between
    the component strings. It is an error if separator is not a string."
+  ([] (partial $join))
   ([strings]
    (s/assert ::strings strings)
    (apply str strings))
@@ -470,15 +496,20 @@
         (apply str))))
 
 ;;; $length
-(defn $length [s] (s/assert ::string s) (count s))
+(defn* $length
+  "Return the length of the string."
+  [s_]
+  (s/assert ::string s_)
+  (count s_))
 
 ;;; $lowercase
-(defn $lowercase
+(defn* $lowercase
   "Returns a string with all the characters of str converted to lowercase.
    If str is not specified (i.e. this function is invoked with no arguments),
    then the context value is used as the value of str. An error is thrown if str is not a string."
-  ([]  ($lowercase @$))
-  ([s] (s/assert ::string s) (str/lower-case s)))
+  [s_]
+  (s/assert ::string s_)
+  (str/lower-case s_))
 
 ;;; ToDo: match is in nata-borrowed. Should I use it?
 ;;; $match
@@ -555,7 +586,7 @@
 ;;;               "next": "<native function>#0"} <===============
 ;;;
 ;;; So I'm going to do something similar.
-;;; ToDo: It seems like there are lots of opportunities to use defn$ where I'm not using it. Should I care?
+;;; ToDo: It seems like there are lots of opportunities to use defn* where I'm not using it. Should I care?
 #?(
 :cljs
    (defn match-regex [& args] :nyi) ; ToDo: re-matcher differs in CLJS
@@ -689,9 +720,10 @@
        (-> (str/split s regex) (subvec 0 lim))))))
 
 ;;; $string
-(defn $string
+(defn* $string
   "Return the argument as a string."
-  [s] (str s))
+  [s_]
+  (str s_))
 
 ;;; $substring
 (defn $substring
@@ -901,7 +933,7 @@
    (nb/formatInteger num pic)))
 
 ;;; $number
-(defn $number
+(defn* $number
   " * Numbers are unchanged.
     * Strings that contain a sequence of characters that represent a legal JSON number are converted to that number.
     * Boolean true casts to 1, Boolean false casts to 0.
@@ -916,7 +948,7 @@
         :else (throw (ex-info "Cannot be cast to a number:" {:v_ v_}))))
 
 ;;; $max
-(defn $max
+(defn* $max
   "Return the largest the numeric argument (an array or singleton)."
   [v_]
   (let [v (singlize v_)]
@@ -924,7 +956,7 @@
     (apply max v)))
 
 ;;; $min
-(defn $min
+(defn* $min
   "Return the smallest the numeric argument (an array or singleton)."
   [v_]
   (let [v (singlize v_)]
@@ -984,19 +1016,21 @@
       :cljs
       (nb/round num precision))))
 
-(defn $sum
+(defn* $sum
   "Take one number of a vector of numbers; return the sum."
-  [nums]
+  [nums_]
   (letfn [(sum [nums]
             (let [v (singlize nums)]
               (s/assert ::numbers v)
               (apply + v)))]
-    (if (p/promise? nums) ; ToDo: THIS, everywhere! (a macro for it, I suppose)
-      (-> nums (p/then sum))
-      (sum nums))))
+    (if (p/promise? nums_) ; ToDo: Make the defn* macro do this!
+      (-> nums_
+          (p/then sum)
+          (p/catch #(throw (ex-info (str "In bi/$sum: " %) {:nums nums_ :err %}))))
+      (sum nums_))))
 
 ;;; $sqrt
-(defn $sqrt
+(defn* $sqrt
   "Returns the square root of the argument."
   [v_]
   (s/assert ::number v_)
@@ -1004,7 +1038,7 @@
 
 ;;;--------------- Boolean ------------
 ;;; $boolean
-(defn $boolean
+(defn* $boolean
    " Casts the argument to a Boolean using the following rules:
 
     | Argument type                               | Result    |
@@ -1021,30 +1055,30 @@
     | object: empty                               | false     |
     | object: non-empty                           | true      |
     | function                                    | false     |"
-  [arg]
-  (cond (map? arg)     (if (empty? arg) false true)
-        (vector? arg)  (if (some $boolean arg) true false)
-        (string? arg)  (if (empty? arg) false true)
-        (number? arg)  (if (zero? arg) false true)
-        (fn? arg)      false
-        (nil? arg)     false
-        (boolean? arg) arg
-        (keyword? arg) true)) ; query role.
+  [arg_]
+  (cond (map? arg_)     (if (empty? arg_) false true)
+        (vector? arg_)  (if (some $boolean arg_) true false)
+        (string? arg_)  (if (empty? arg_) false true)
+        (number? arg_)  (if (zero? arg_) false true)
+        (fn? arg_)      false
+        (nil? arg_)     false
+        (boolean? arg_) arg_
+        (keyword? arg_) true)) ; query role.
 
 ;;; ToDo: I'll need more information than just the comment line here to understand what this
 ;;;       is suppose to do. It might require that I have better established how try/catch is handled.
 ;;; $exists
-(defn $exists
+(defn* $exists
   "Returns Boolean true if the arg expression evaluates to a value, or false if the expression
    does not match anything (e.g. a path to a non-existent field reference)."
-  [arg]
-  ($boolean arg))
+  [arg_]
+  ($boolean arg_))
 
 ;;; $not
-(defn $not
+(defn* $not
   "Returns Boolean NOT on the argument. arg is first cast to a boolean."
-  [arg]
-  (-> arg $boolean not))
+  [arg_]
+  (-> arg_ $boolean not))
 
 ;;;--------------- Arrays -------
 ;;; $append
@@ -1064,30 +1098,32 @@
   ([arr]
    (if (vector? arr) (count arr) 1)))
 
-;;; $distinct
-(defn $distinct
+(defn* $distinct
   "Returns an array containing all the values from the array parameter, but with any duplicates removed.
    Values are tested for deep equality as if by using the equality operator."
-  ([] ($distinct @$))
-  ([arr]
-   (s/assert ::vector arr)
-   (-> arr distinct vec)))
+  [arr_]
+  (if (p/promise? arr_)
+    (-> arr_
+        (p/then #($distinct %))
+        (p/catch #(throw (ex-info (str "In bi/$distinct: " %) {:arr_ arr_ :err %}))))
+    (do (s/assert ::vector arr_)
+        (-> arr_ distinct vec))))
 
 ;;; $reverse
-(defn$ $reverse
+(defn* $reverse
   "Returns an array containing all the values from the array parameter, but in reverse order."
   [arr_]
   (s/assert ::vector arr_)
   (-> arr_ reverse vec))
 
 ;;; $shuffle
-(defn $shuffle
+(defn* $shuffle
   "Returns an array containing all the values from the array parameter, but shuffled into random order."
-  [arr]
-  (s/assert ::vector arr)
+  [arr_]
+  (s/assert ::vector arr_)
   (c/loop [res []
-         size (count arr)
-         rem arr]
+           size (count arr_)
+           rem arr_]
     (if (empty? rem) res
         (let [ix (rand-int size)]
           (recur (conj res (nth rem ix))
@@ -1095,9 +1131,20 @@
                  (let [[f b] (split-at ix rem)]
                    (into f (rest b))))))))
 
+(defn* sort-internal
+  "Do work of $sort. Separate so can def$ it."
+  [fun arr_]
+  (if (p/promise? arr_)
+    (-> arr_
+        (p/then #(sort-internal % fun))
+        (p/catch #(throw (ex-info (str "In bi/sort-internal: " %) {:arr_ arr_ :fun fun :err %}))))
+     (do (s/assert ::vector arr_)
+         (s/assert ::fn fun)
+         (vec (sort fun arr_)))))
+
 ;;; $sort
 (defn $sort
-   "Returns an array containing all the values in the array parameter, but sorted into order.
+  "Returns an array containing all the values in the array parameter, but sorted into order.
     If no function parameter is supplied, then the array parameter must contain only numbers or only strings,
     and they will be sorted in order of increasing number, or increasing unicode codepoint respectively.
     If a comparator function is supplied, then is must be a function that takes two parameters:
@@ -1105,11 +1152,9 @@
     This function gets invoked by the sorting algorithm to compare two values left and right.
     If the value of left should be placed after the value of right in the desired sort order,
     then the function must return Boolean true to indicate a swap. Otherwise it must return false."
-  ([arr] ($sort arr compare))
-  ([arr fun]
-   (s/assert ::vector arr)
-   (s/assert ::fn fun)
-   (vec (sort fun arr))))
+  ([] (sort-internal compare))
+  ([arr] (sort-internal compare arr))
+  ([arr fun] (sort-internal fun arr)))
 
 ;;; $zip
 (defn $zip
@@ -1121,7 +1166,7 @@
   (s/assert ::vectors arrays)
   (let [size (->> arrays (map count) (apply min))]
     (c/loop [res []
-           ix 0]
+             ix 0]
       (if (>= ix size) res
           (recur (conj res
                        (reduce
@@ -1139,45 +1184,45 @@
   (when exp msg))
 
 ;;; $each
-(defn $each
+(defn* $each
   "Returns an array containing the values return by the function when applied to each key/value pair in the object.
    The function parameter will get invoked with two arguments:
    function(value, name)
    where the value parameter is the value of each name/value pair in the object and name is its name.
    The name parameter is optional."
-  [obj func]
-  (s/assert ::map obj)
+  [obj_ func]
+  (s/assert ::map obj_)
   (s/assert ::fn func)
   (if (== 2 (-> func meta :bi/params count))
-    (reduce-kv (fn [r  k v] (conj r (func v k))) [] obj)
-    (reduce-kv (fn [r _k v] (conj r (func v  ))) [] obj)))
+    (reduce-kv (fn [r  k v] (conj r (func v k))) [] obj_)
+    (reduce-kv (fn [r _k v] (conj r (func v  ))) [] obj_)))
 
 ;;; $error
-(defn $error
+(defn* $error
   "Deliberately throws an error with an optional message"
-  [msg]
-  (s/assert ::string msg)
-  (throw (ex-info msg {})))
+  [msg_]
+  (s/assert ::string msg_)
+  (throw (ex-info msg_ {})))
 
 ;;; $keys
-(defn $keys
+(defn* $keys
   "Returns an array containing the keys in the object.
    If the argument is an array of objects, then the array returned contains a
    de-duplicated list of all the keys in all of the objects."
-  [obj] ; ToDo (use s/assert?)
-  (cond (map? obj) (-> obj keys vec)
-        (vector? obj) (->> obj (map keys) distinct)
-        :else (throw (ex-info "The argument to $keys must be an object or array:" {:obj obj}))))
+  [obj_] ; ToDo (use s/assert?)
+  (cond (map? obj_) (-> obj_ keys vec)
+        (vector? obj_) (->> obj_ (map keys) distinct)
+        :else (throw (ex-info "The argument to $keys must be an object or array:" {:obj obj_}))))
 
 ;;; $lookup
-(defn $lookup
+(defn* $lookup
   "Returns the value associated with key in object.
    If the first argument is an array of objects, then all of the objects in the array are searched,
    and the values associated with all occurrences of key are returned."
-  [obj k]
-  (cond (map? obj) (get obj k)
-        (vector? obj) (mapv #(get % k) obj)
-        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj}))))
+  [obj_ k]
+  (cond (map? obj_) (get obj_ k)
+        (vector? obj_) (mapv #(get % k) obj_)
+        :else (throw (ex-info "The argument to $keys must be an object or array." {:arg obj_}))))
 
 ;;; $merge
 (defn $merge
@@ -1211,34 +1256,34 @@
            :else (throw (ex-info "The function provided to $sift must specify 1 to 3 arguments:" {:nargs nargs}))))))
 
 ;;; $spread
-(defn $spread
+(defn* $spread
   "Splits an object containing key/value pairs into an array of objects,
    each of which has a single key/value pair from the input object.
    If the parameter is an array of objects, then the resultant array contains an object
    for every key/value pair in every object in the supplied array."
-  [obj]
-  (when-not (or (map? obj)
-                (and (vector? obj) (every? map? obj)))
-    (throw (ex-info "The argument to $spread must be an object or array of objects:" {:obj obj})))
-  (if (map? obj)
-                                (reduce-kv (fn [r k v] (conj r {k v})) [] obj)
+  [obj_]
+  (when-not (or (map? obj_)
+                (and (vector? obj_) (every? map? obj_)))
+    (throw (ex-info "The argument to $spread must be an object or array of objects:" {:obj obj_})))
+  (if (map? obj_)
+                                (reduce-kv (fn [r k v] (conj r {k v})) [] obj_)
       (reduce (fn [r o] (into r (reduce-kv (fn [r k v] (conj r {k v})) []  o)))
               []
-              obj)))
+              obj_)))
 
 ;;; $type
-(defn $type
+(defn* $type
   "Evaluates the type of value and returns one of the following strings:
    'null', 'number', 'string', 'boolean', 'array', 'object', 'function'.
    Returns (non-string) undefined when value is undefined."
-  [arg]
-  (cond (nil? arg) "null"
-        (number? arg) "number"
-        (string? arg) "string"
-        (boolean? arg) "boolean"
-        (vector? arg) "array"
-        (map? arg) "object"
-        (fn? arg) "function"))
+  [arg_]
+  (cond (nil? arg_) "null"
+        (number? arg_) "number"
+        (string? arg_) "string"
+        (boolean? arg_) "boolean"
+        (vector? arg_) "array"
+        (map? arg_) "object"
+        (fn? arg_) "function"))
 
 ;;;------------- DateTime -----------
 ;;; What JSONata calls a timestamp is a string
@@ -1368,6 +1413,7 @@
    The timezone string should be in the format '±HHMM', where ± is either the plus or minus sign and
    HHMM is the offset in hours and minutes from UTC. Positive offset for timezones east of UTC,
    negative offset for timezones west of UTC."
+  ([]           (partial $fromMillis))
   ([millis]     ($fromMillis millis nil nil))
   ([millis pic] ($fromMillis millis pic nil))
   ([millis pic tzone]
@@ -1544,7 +1590,7 @@
                (inc i))))))
 
 ;;; $single
-(defn $single
+(defn* $single
   "See http://docs.jsonata.org/higher-order-functions
    Signature: $single(array, function)
 
@@ -1558,21 +1604,21 @@
    Each value in the input array is passed in as the first parameter in the supplied function.
    The index (position) of that value in the input array is passed in as the second parameter,
    if specified. The whole input array is passed in as the third parameter, if specified."
-  [coll func]
+  [coll_ func]
   (let [nvars  (-> func meta :bi/params count)]
     (cond
       (== nvars 3)
-      (c/loop [c coll, i 0, r false]
+      (c/loop [c coll_, i 0, r false]
         (cond r r
               (empty? c) false
-              :else (recur (rest c) (inc i) (func (first c) i coll))))
+              :else (recur (rest c) (inc i) (func (first c) i coll_))))
       (== nvars 2)
-      (c/loop [c coll, i 0, r false]
+      (c/loop [c coll_, i 0, r false]
         (cond r r
               (empty? c) false
               :else (recur (rest c) (inc i) (func (first c) i))))
       (== nvars 1)
-      (c/loop [c coll, r false]
+      (c/loop [c coll_, r false]
         (cond r r
               (empty? c) false
               :else (recur (rest c) (func (first c))))),
