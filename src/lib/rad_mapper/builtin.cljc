@@ -36,7 +36,7 @@
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros       :as bim
     :refer [$ $$ set-context! defn* value-step-m primary-m init-step-m map-step-m
-            *threading?* jflatten containerize containerize? container? flatten-except-json]])
+            *threading?* threading? jflatten containerize containerize? container? flatten-except-json]])
   #?(:cljs (:require-macros [rad-mapper.builtin-macros]
                             [promesa.core :refer [loop]])) ; ToDo: probably not necessary.
    #?(:clj
@@ -125,7 +125,7 @@
                   :else                   obj))]
     (-> obj fin jflatten)))
 
-#_(defn deref$
+(defn deref$
   "Dereference the $ atom.
    Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
    making it advantageous to have a deref that sets the value and returns it."
@@ -145,17 +145,27 @@
 (defn eq       "equal, need not be numbers"     [x y] (= (jflatten x) (jflatten y)))
 (defn !=       "not equal, need not be numbers" [x y] (not= (jflatten x) (jflatten y)))
 
+(declare $string)
+
+;;; ToDo: Get SCI dynamic variables working so that you don't need this!
+#_(def try-threading ^:sci/macro
+  (fn [_&form _&env body]
+    `(try (reset! bim/threading? true)
+          ~@body
+          (finally (reset! bim/threading? false)))))
+
 (defn thread
   "Apply the function to the object. This should be called with the dynamic variable *threading?* bound to true."
   [obj func]
-    (if (p/promise? obj)
-      (-> obj
-          (p/then #(func %))
-          (p/catch #(throw (ex-info (str "In bi/thread: " %) {:obj obj :func func :err %}))))
-      (try
-        (func obj)
-        (catch #?(:clj Exception :cljs :default) e
-            (ex-info "In bi/thread (ordinary):" {:obj obj :func func :err e})))))
+  (log/info "func = " func)
+  (if (p/promise? obj)
+    (-> obj
+        (p/then #(func %))
+        (p/catch #(throw (ex-info (str "In bi/thread: " %) {:obj obj :func func :err %}))))
+    (try
+      (func obj)
+      (catch #?(:clj Exception :cljs :default) e
+        (ex-info "In bi/thread (ordinary):" {:obj obj :func func :err e})))))
 
 (defn step-type
   "Return a keyword describing what type of step to take next."
@@ -289,7 +299,7 @@
 (def value-step ^:sci/macro
   (fn [_&form _&env body]
       `(-> (fn [& ignore#] ~body)
-       (with-meta {:bi/step-type :bi/value-step :body '~body}))))
+           (with-meta {:bi/step-type :bi/value-step :body '~body}))))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $.
@@ -1057,7 +1067,7 @@
     | function                                    | false     |"
   [arg_]
   (cond (map? arg_)     (if (empty? arg_) false true)
-        (vector? arg_)  (if (some $boolean arg_) true false)
+        (vector? arg_)  (if (some boolean? arg_) true false)
         (string? arg_)  (if (empty? arg_) false true)
         (number? arg_)  (if (zero? arg_) false true)
         (fn? arg_)      false
@@ -1102,12 +1112,8 @@
   "Returns an array containing all the values from the array parameter, but with any duplicates removed.
    Values are tested for deep equality as if by using the equality operator."
   [arr_]
-  (if (p/promise? arr_)
-    (-> arr_
-        (p/then #($distinct %))
-        (p/catch #(throw (ex-info (str "In bi/$distinct: " %) {:arr_ arr_ :err %}))))
-    (do (s/assert ::vector arr_)
-        (-> arr_ distinct vec))))
+    (s/assert ::vector arr_)
+  (-> arr_ distinct vec))
 
 ;;; $reverse
 (defn* $reverse
@@ -1130,6 +1136,8 @@
                  (dec size)
                  (let [[f b] (split-at ix rem)]
                    (into f (rest b))))))))
+
+(declare sort-internal)
 
 (defn* sort-internal
   "Do work of $sort. Separate so can def$ it."

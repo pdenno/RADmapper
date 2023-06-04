@@ -9,7 +9,7 @@
     [mount.core                   :refer [defstate]]
     [promesa.core                 :as p]
     [rad-mapper.builtin           :as bi]
-    [rad-mapper.builtin-macros    :as bm]
+    [rad-mapper.builtin-macros    :as bim]
     [rad-mapper.parse-macros      :as pm]
     [rad-mapper.parse             :as par]
     [rad-mapper.rewrite           :as rew]
@@ -19,6 +19,8 @@
     [sci.core                     :as sci]
     #?(:cljs [rad-mapper.promesa-config :as scip])
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
+
+(def diag (atom nil))
 
 (defn pretty-form
   "Replace some namespaces with aliases for diagnostic legability."
@@ -39,12 +41,12 @@
 (def macro-subs
   "When rewriting produces any of the symbols corresponding to the keys of the map,
    AND evaluation with Clojure eval is intended, use the corresponding value of the map."
-  {"init-step"   'rad-mapper.builtin-macros/init-step-m,
-   "map-step"    'rad-mapper.builtin-macros/map-step-m,
-   "value-step"  'rad-mapper.builtin-macros/value-step-m,
-   "primary"     'rad-mapper.builtin-macros/primary-m,
-   #_#_"thread"      'rad-mapper.builtin-macros/thread-m,
-   "conditional" 'rad-mapper.builtin-macros/conditional-m})
+  {"conditional"   'rad-mapper.builtin-macros/conditional-m,
+   "init-step"     'rad-mapper.builtin-macros/init-step-m,
+   "map-step"      'rad-mapper.builtin-macros/map-step-m,
+   "primary"       'rad-mapper.builtin-macros/primary-m,
+   #_#_"try-threading" 'rad-mapper.builtin-macros/try-threading-m, ; ToDo: Get SCI dynamic variable working so you don't need this!
+   "value-step"    'rad-mapper.builtin-macros/value-step-m})
 
 (defn macro?
   "Return a ns-qualified -macro symbol substituting for the argument symbol created from rewriting.
@@ -100,6 +102,11 @@
                   'primary    rad-mapper.builtin/primary
                   #_#_'thread     rad-mapper.builtin/thread}})))
 
+(defn bim-var [sym]
+  (-> ctx :env deref :namespaces (get 'rad-mapper.builtin-macros) (get sym)))
+
+;;; To remain safe and sandboxed, SCI programs do not have access to Clojure vars, unless you explicitly provide that access.
+;;; SCI has its own var type, distinguished from Clojure vars.
 (defn user-eval
   "Evaluate the argument form."
   [full-form opts]
@@ -112,15 +119,16 @@
       (-> full-form pretty-form pprint))
     (try
       ;;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
-      (sci/binding [(-> ctx :env deref :namespaces (get 'rad-mapper.builtin-macros) (get '$)) nil]
-        (sci/binding [sci/out *out*]
-          (if run-sci?
-            (sci/eval-form ctx full-form)
-            #?(:clj (binding [*ns* (find-ns 'rad-mapper.builtin)]
-                      (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
-                           (catch Throwable e   ; Is this perhaps because I didn't have the alias for bi in builtin.cljc? No.
-                             (ex-info "Failure in clojure.eval:" {:error e}))))
-               :cljs :never-happens))))
+      (sci/binding [(bim-var '$) nil]
+        (sci/binding [(bim-var '*threading?*) false]
+          (sci/binding [sci/out *out*]
+            (if run-sci?
+              (sci/eval-form ctx full-form)
+              #?(:clj (binding [*ns* (find-ns 'rad-mapper.builtin)]
+                        (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
+                             (catch Throwable e   ; Is this perhaps because I didn't have the alias for bi in builtin.cljc? No.
+                               (ex-info "Failure in clojure.eval:" {:error e}))))
+                 :cljs :never-happens)))))
       (finally (util/config-log min-level)))))
 
 (defn user-eval-devl
@@ -131,7 +139,8 @@
     (log/info (cl-format nil "*****  Running SCI *****"))
     (try
       (sci/binding [sci/out *out*]
-        (sci/eval-form ctx form))
+        (sci/binding [(bim-var '$) nil]
+          (sci/eval-form ctx form)))
       (finally (util/config-log min-level)))))
 
 (declare processRM)
@@ -370,18 +379,17 @@
     (util/config-log :info)))
 
 
-;;;================ Sure wish I could get shadow to see the test directory! =============
-(defn f [x]
-  (if (p/promise? x)
-    (-> x (p/then #(f (/ % 0))) (p/catch #(throw (ex-info "throw on f" {:valu %}))))
-    (conj x :f)))
+(defn tryme []
+  (user-eval-devl
+   '(do
+      (rad-mapper.builtin/reset-env)
+      (rad-mapper.builtin/finalize
+       (promesa.core/let
+           [$x (cljs.core/with-meta ["a" "a" "b"] #:bi{:json-array? true})]
+         (rad-mapper.builtin/thread $x (cljs.core/binding [rad-mapper.builtin-macros/*threading?* true] (rad-mapper.builtin/$distinct))))))))
 
-(defn g [x]
-  (if (p/promise? x)
-    (p/then x #(g %))
-    (conj x :g)))
-
-(defn h [x]
-  (if (p/promise? x)
-    (p/then x #(h %))
-    (conj x :h)))
+(comment
+  (bi/reset-env)
+  (bi/finalize
+   (p/let [$x (with-meta ["a" "a" "b"] #:bi{:json-array? true})]
+     (bi/thread $x (binding [rad-mapper.builtin-macros/*threading?* true] (bi/$distinct))))))

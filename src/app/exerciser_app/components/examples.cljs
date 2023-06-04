@@ -11,12 +11,13 @@
     :code "1 + 2"}
 
    {:name "Tutorial (0): Schema list"
-    :code "$get([['list/id', 'ccts/message-schema'], ['list/content']])"}
+      :code "$get([['list/id', 'ccts/message-schema'], ['list/content']])"}
 
    {:name "Tutorial (1): Small remote query"
     :code "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
-  $qfn := query{[?e :schema/name ?name]};
-  $qfn($db) )"}
+  $qfn := query{[?e :schema/name ?name] [?e :schema/sdo ?sdo]};
+  $qfn($db).?sdo ~> $distinct() ~> $sort()
+   )"}
 
    {:name "Tutorial (2) : Simple get"
     :code "( $schema := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
@@ -30,7 +31,7 @@
 
 [$s1, $s2].`schema_name` )"}
 
-   #_{:name "Tutorial (2) : Simplest query"
+   {:name "Tutorial (4) : Simplest query"
     :code
 "(
   $x := {'element/name' : 'foo'};
@@ -38,7 +39,7 @@
   $qf($x)
 )"}
 
-   {:name "Tutorial (3): Simple query, complicated schema"
+   {:name "Tutorial (5): Simple query, complicated schema"
     :code "(
   // Small bug in the exerciser (because it combines data from the LHS pane):
   // currently comments have to be inside the open paren.
@@ -63,7 +64,7 @@
   query{[?x :model/elementDef ?ed]}
 )"}
 
-   {:name "Tutorial (4):  query :model/elementDef"
+   {:name "Tutorial (6):  query :model/elementDef"
     :code
     "(
   // This example queries for all the element definitions.
@@ -79,7 +80,7 @@
 )"}
 
 
-   {:name "Tutorial (5): Towards goal: query :element/name"
+   {:name "Tutorial (7): Towards goal: query :element/name"
     :code
     "(
   // We'll start working towards something useful with the two schema.
@@ -94,7 +95,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "Tutorial (6): Child elements"
+   {:name "Tutorial (8): Child elements"
     :code
     "(
   // Let's find the children of an element.
@@ -119,7 +120,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "Tutorial (7): Roots"
+   {:name "Tutorial (9): Roots"
     :code
     "(
   // The two lists we generated in (6) each have one less element than the lists
@@ -171,7 +172,7 @@
 
 )"}
 
-   {:name "Tutorial (8): Shape "
+   {:name "Tutorial (10): Shape "
     :code
    "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
@@ -207,7 +208,7 @@
    'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 )"}
 
-   {:name "Tutorial (9): Semantic match"
+   {:name "Tutorial (11): Semantic match"
     :code
    "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);

@@ -534,3 +534,18 @@
             $shape($schema2Roots.?name[0], $schema2PC))
 )")
       (p/then #(reset! diag %))))
+
+(defn $get-test []
+  (run "$get([['list/id', 'ccts/message-schema'], ['list/content']])"))
+
+
+(defn simpler []
+  (-> (run "$get([['db/name', 'schemaDB'], ['db/connection']])")
+      (p/then #(reset! diag %))
+      (p/catch #(reset! diag {:error %}))))
+
+(defn query-test []
+  (-> (run "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
+          $qfn := query{[?e :schema/name ?name]};
+          $qfn($db) )")
+      (p/then #(reset! diag %))))

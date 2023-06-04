@@ -637,13 +637,10 @@
                                      {:pos pos
                                       :form (let [op (-> ?omap :op symbol)]
                                               (if (= op 'bi/thread) ; This allows us to not need a macro for threading
-                                                (let [fn-arg (nth (:args info) (inc pos)) ; 'immediate' means function(..)
-                                                      immediate? (and (seq? (first fn-arg)) (= "with-meta" (-> fn-arg first first name)))]
-                                                  (list op
-                                                        (nth (:args info) (dec pos))
-                                                        (if immediate?
-                                                          `(binding [bim/*threading?* true] ~@fn-arg)
-                                                          `(binding [bim/*threading?* true] ~fn-arg))))
+                                                (let [fn-arg (-> info :args (nth (inc pos)) first)]
+                                                  `(try (reset! bim/threading? true)
+                                                        (~op ~(nth (:args info) (dec pos)) ~fn-arg)
+                                                        (finally (reset! bim/threading? false))))
                                                 (list op
                                                       (nth (:args info) (dec pos))
                                                       (nth (:args info) (inc pos)))))}
