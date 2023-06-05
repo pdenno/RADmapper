@@ -174,7 +174,7 @@
     {:post {:summary "POST a RADmapper example (code and, optionally, data)."
             :parameters {:body {:code string?, :data string?}}
             :responses {200 {:body {:save-id string?}}}
-            :handler rm/post-example}}]
+            :handler rm/post-code}}]
 
     ["/health"
      {:get {:summary "Check server health"

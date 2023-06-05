@@ -6,8 +6,7 @@
    [rad-mapper.builtin    :as bi]
    [rad-mapper.evaluate   :as ev]
    [rad-mapper.resolvers  :refer [connect-atm]]
-   [rad-mapper.util       :as util]
-   [rm-server.example-db :as examp]
+   [rm-server.saved-code-db :as saved-code]
    [ring.util.http-response :as response]
    [taoensso.timbre :as log])
   (:import
@@ -94,17 +93,18 @@
     (response/bad-request "No arguments applied to datalog query.")))
 
 ;;; ToDo: This probably belongs elsewhere; it is an exerciser-only thing
-(defn post-example
-  "Save an example in the examples data base."
+(defn post-code
+  "Save the user's code for future reference."
   [request]
   (log/info "body = " (-> request :parameters :body))
+  (reset! diag {:request request})
   (try
     (if (-> request :parameters :body :code)
-      (if-let [uuid (examp/store-example (-> request :parameters :body))]
+      (if-let [uuid (saved-code/store-code (-> request :parameters :body))]
         (response/ok {:save-id (str uuid)})
         (response/ok {:status 400 :body "Store failed."}))
       (response/ok {:status 400 :body "No code found."}))
     (catch Exception e
-      (log/error e "Error in post-example. parameters = " (:parameters request))
+      (log/error e "Error in post-code. parameters = " (:parameters request))
       (-> (response/found "/")
           (assoc :flash {:errors {:unknown (.getMessage e)}})))))

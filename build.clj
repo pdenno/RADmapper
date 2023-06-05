@@ -19,7 +19,7 @@
 
 (def main-cls (string/join "." (filter some? [(namespace lib) (name lib) "core"])))
 (def target-dir "target")
-(def uber-file (format "%s/%s-standalone.jar" target-dir (name lib)))
+(def uber-file (format "%s/%s-%s-standalone.jar" target-dir (name lib) version))
 
 (defn clean [_]
   (println "Doing the clean")
@@ -38,25 +38,38 @@
   (println "writing the jar")
   (b/jar {:class-dir class-dir :jar-file jar-file}))
 
-(defn uber [_]
-  (println "Compiling Clojure...")
-  (b/compile-clj {:basis basis
-                  :src-dirs ["src/lib" "src/server" "resources" #_"env/prod/resources" #_"env/prod/clj"]
-                  :class-dir class-dir})
-  (println "Making uberjar...")
-  (b/uber {:class-dir class-dir
-           :uber-file uber-file
-           :main main-cls
-           :basis basis}))
-
 ;;; :basis - required, used for :mvn/local-repo
 (defn install [_]
   (println "Installing: class-dir =" class-dir "version = " version)
   (let [opts {:lib lib :basis basis :jar-file jar-file :class-dir class-dir :version version}]
     (b/install opts)))
 
+;;;=================================================================================
+(defn prep-uber [_]
+  (println "prep-uber: Writing the pom.")
+  (b/write-pom {:class-dir class-dir
+                :lib lib
+                :version version
+                :basis basis
+                :src-dirs ["src"] #_["src/lib" "src/server"]})
+  (println "prep-uber: copying directories.")
+  (b/copy-dir {:src-dirs ["src/lib" "src/server" "resources"] :target-dir class-dir}))
+
+(defn uber [_]
+  (println "uber: Compiling: uber-file = " uber-file)
+  (println "uber: Compiling: main = " main-cls "class-dir = " class-dir)
+  (b/compile-clj {:basis basis
+                  :src-dirs ["src/lib" "src/server" "resources" #_"env/prod/resources" #_"env/prod/clj"]
+                  :class-dir class-dir})
+  (println "uber: Making uberjar...")
+  (b/uber {:class-dir class-dir
+           :uber-file uber-file
+           :main main-cls
+           :basis basis}))
+
+
 (defn all-uber [_]
-  (clean nil) (prep nil) (uber nil))
+  (clean nil) (prep-uber nil) (uber nil))
 
 (defn all-jar [_]
   (clean nil) (prep nil) (jar nil) (install nil))

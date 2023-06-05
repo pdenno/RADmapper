@@ -140,8 +140,9 @@
     (try
       (sci/binding [sci/out *out*]
         (sci/binding [(bim-var '$) nil]
-          (sci/eval-form ctx form)))
-      (finally (util/config-log min-level)))))
+          (sci/binding [(bim-var '*threading?*) false]
+            (sci/eval-form ctx form))))
+        (finally (util/config-log min-level)))))
 
 (declare processRM)
 
