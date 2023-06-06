@@ -36,7 +36,8 @@
   "scripts": {
     "exer-client": "shadow-cljs -d nrepl/nrepl:1.0.0 -d cider/piggieback:0.5.3 -d cider/cider-nrepl:0.30.0 watch frontend",
     "kaochaRM":    "shadow-cljs -d nrepl/nrepl:1.0.0 -d cider/piggieback:0.5.3 -d cider/cider-nrepl:0.30.0 watch kaochaRM",
-    "CLJRM": "clj -A:dev -Sdeps '{:deps {nrepl/nrepl {:mvn/version \"1.0.0\"} cider/cider-nrepl {:mvn/version \"0.30.0\"}} :aliases {:cider/nrepl {:main-opts [\"-m\" \"nrepl.cmdline\" \"--middleware\" \"[cider.nrepl/cider-middleware]\"]}}}' -M:cider/nrepl"
+    "CLJRM": "clj -A:dev -Sdeps '{:deps {nrepl/nrepl {:mvn/version \"1.0.0\"} cider/cider-nrepl {:mvn/version \"0.30.0\"}} :aliases {:cider/nrepl {:main-opts [\"-m\" \"nrepl.cmdline\" \"--middleware\" \"[cider.nrepl/cider-middleware]\"]}}}' -M:cider/nrepl",
+    "build-repl": "clj -A:build -Sdeps '{:deps {nrepl/nrepl {:mvn/version \"1.0.0\"} cider/cider-nrepl {:mvn/version \"0.30.0\"}} :aliases {:cider/nrepl {:main-opts [\"-m\" \"nrepl.cmdline\" \"--middleware\" \"[cider.nrepl/cider-middleware]\"]}}}' -M:cider/nrepl"
   },
   "author": "Peter Denno",
   "license": "ISC",

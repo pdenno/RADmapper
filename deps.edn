@@ -40,7 +40,6 @@
                                            ring/ring-jetty-adapter         {:mvn/version "1.10.0"}
                                            ring/ring-core                  {:mvn/version "1.10.0"}
                                            ring/ring-devel                 {:mvn/version "1.10.0"}
-                                           ;ring/ring-mock                 {:mvn/version "0.4.0"}
                                            ring-cors/ring-cors             {:mvn/version "0.1.13"}
                                            selmer/selmer                   {:mvn/version "1.12.58"}}} ; Used for home.html.
 
@@ -72,7 +71,7 @@
                                         :sign-releases? false ; signing problem (see mznp deps.edn)
                                         :artifact "RADmapper-1.0.29.jar"}}
 
-           :build    {:deps {io.github.clojure/tools.build {:git/tag "v0.9.4" :git/sha "76b78fe"}}
+           :build    {:deps {io.github.clojure/tools.build {:mvn/version "0.9.4"} #_{:git/tag "v0.9.4" :git/sha "76b78fe"}}
                       :ns-default build}
 
            ;; clj -M:morpheus -d graphs -f svg -e 'clojure.core/.*|:clj-kondo/unknown-namespace/.*|:cljs.core/.*' src
@@ -80,6 +79,7 @@
                                                                 :git/sha "9d6f2c1ede8be7ab4508065fe6b7e40e0c099ab6"}}
                             :main-opts       ["-m" "thomasa.morpheus.main"]}}}
 
+;;; clj -T:search/outdated
 ;;; |    :file |                                           :name |  :current |   :latest |
 ;;; |----------+-------------------------------------------------+-----------+-----------|
 ;;; | deps.edn |                                     aleph/aleph |     0.6.1 |     0.6.2 | not used anymore

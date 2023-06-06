@@ -89,5 +89,5 @@
                       :schema-flexibility :write})
   (connect-atm))
 
-(defstate save-code-db-atm
+(defstate saved-code-db-atm
   :start (init-db))

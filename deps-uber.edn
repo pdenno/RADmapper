@@ -1,0 +1,37 @@
+{:paths   ["src/lib" "src/server"]
+ :deps    {camel-snake-kebab/camel-snake-kebab {:mvn/version "0.4.3"}
+           cljs-ajax/cljs-ajax                 {:mvn/version "0.8.4"}
+           com.cemerick/url                    {:mvn/version "0.1.1"}
+           com.taoensso/timbre                 {:mvn/version "6.1.0"}
+           com.wsscode/pathom3                 {:mvn/version "2023.01.31-alpha"}
+           dk.ative/docjure                    {:mvn/version "1.19.0"}   ; spreadsheets
+           datascript/datascript               {:mvn/version "1.4.2"}
+           funcool/promesa                     {:mvn/version "11.0.671"}
+           io.replikativ/datahike              {:mvn/version "0.6.1538"}
+           mount/mount                         {:mvn/version "0.1.17"}
+           net.clojars.wkok/openai-clojure     {:mvn/version "0.6.0"}
+           org.babashka/sci                    {:mvn/version "0.7.39"}
+           org.apache.logging.log4j/log4j-api  {:mvn/version "2.20.0"} ; ToDo: Move logging to :dev.
+           org.apache.logging.log4j/log4j-core {:mvn/version "2.20.0"} ; ToDo: Move logging to :dev.
+           org.slf4j/slf4j-nop                 {:mvn/version "2.0.7"}  ; Stop spurious logging!
+           org.clojure/data.codec              {:mvn/version "0.1.1"}
+           org.clojure/data.json               {:mvn/version "2.4.0"}
+           org.clojure/data.xml                {:mvn/version "0.2.0-alpha8"}
+           ;; These from the server
+           applied-science/js-interop      {:mvn/version "0.4.2"}
+           cider/cider-nrepl               {:mvn/version "0.30.0"}
+           com.lambdaisland/classpath      {:mvn/version "0.4.44"}
+           expound/expound                 {:mvn/version "0.9.0"}
+           lilactown/helix                 {:mvn/version "0.1.10"}
+           org.clojure/java.classpath      {:mvn/version "1.0.0"}
+           metosin/muuntaja                {:mvn/version "0.6.8"}
+           nrepl/nrepl                     {:mvn/version "1.0.0"}
+           org.clojure/tools.namespace     {:mvn/version "1.4.4"}
+           metosin/reitit                  {:mvn/version "0.6.0"}
+           metosin/ring-http-response      {:mvn/version "0.9.3"}
+           ring/ring-defaults              {:mvn/version "0.3.4"}
+           ring/ring-jetty-adapter         {:mvn/version "1.10.0"}
+           ring/ring-core                  {:mvn/version "1.10.0"}
+           ring/ring-devel                 {:mvn/version "1.10.0"}
+           ring-cors/ring-cors             {:mvn/version "0.1.13"}
+           selmer/selmer                   {:mvn/version "1.12.58"}}} ; Used for home.html.

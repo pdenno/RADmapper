@@ -52,7 +52,7 @@
            (log/error t "Server failed to start on host " host " port " port ".")))))
 
 (defn -main [& _]
-  (start-server))
+  (mount/start))
 
 ;;; This is top-most state for starting the server; it happens last.
 (defstate server
