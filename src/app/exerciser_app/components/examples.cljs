@@ -7,10 +7,7 @@
 
 ;;; ($get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]])
 (def rm-examples
-  [{:name "Try (12): LLM extract"
-    :code "$llmExtract('Acme Widgets, 100 Main Street, Bldg 123, Chicago, IL, 60610', 'building')"}
-
-   {:name "So simple!"
+  [{:name "So simple!"
     :code "1 + 2"}
 
    {:name "Try (0): Schema list"
