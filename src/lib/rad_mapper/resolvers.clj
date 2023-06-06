@@ -93,7 +93,6 @@
    Subsequent queries (e.g. schema-objec->schema-props) can pull from this whatever else is needed."
   [{:schema/keys [name]}]
   {::pco/output [:db/id]}
-  (log/info "schema-name->schema-object")
   {:db/id (d/q '[:find ?ent .
                  :in $ ?schema-name
                  :where [?ent :schema/name ?schema-name]]
@@ -116,7 +115,6 @@
  "Returns various things given a schema db/id."
  [{:db/keys [id]}]
   {:pco/output [:schema/content #_:schema/spec]}
-  (log/info "schema-object->schema-props")
   {:schema/content
    (-> {:db/id id}
        (resolve-db-id (connect-atm) #{:db/id})
@@ -153,7 +151,7 @@
 
    outputs: a vector of properties (the :pco/outputs of resolvers) that are sought."
   [ident-map outputs]
-  (try (log/info "Pathom resolve: db = " @(connect-atm) " ident-map = " ident-map " outputs= " outputs)
+  (try (log/info "Pathom resolve: ident-map = " ident-map " outputs= " outputs)
        (catch Exception _e
          (throw (ex-info "schema database has not been initialized." {}))))
   (p.eql/process @indexes ident-map outputs))

@@ -3,6 +3,7 @@
   (:require
    [ajax.core :refer [GET]] ; for testing
    [clojure.java.io :as io]
+   [clojure.string]
    [mount.core :as mount :refer [defstate]]
    [rad-mapper.evaluate]                                ; for mount
    [rad-mapper.resolvers :refer [schema-db-atm]]        ; for mount
@@ -52,7 +53,9 @@
            (log/error t "Server failed to start on host " host " port " port ".")))))
 
 (defn -main [& _]
-  (mount/start))
+  (let [res (mount/start)
+        info (str "   " (clojure.string/join ",\n    " (:started res)))]
+    (log/info "started:\n" info)))
 
 ;;; This is top-most state for starting the server; it happens last.
 (defstate server

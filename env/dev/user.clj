@@ -3,17 +3,18 @@
    This file isn't used in cljs and is a problem for shadow-cljs without the
    :clj compiler directives."
   (:require
-    [clojure.pprint]
-    [clojure.spec.alpha :as s]
-    [clojure.tools.namespace.repl :as tools-ns :refer [disable-reload! refresh clear set-refresh-dirs]]
-    [expound.alpha :as expound]
-    [mount.core :as mount]
-    [rad-mapper.evaluate]
-    [lambdaisland.classpath.watch-deps :as watch-deps]      ;; hot loading for deps
-    [rad-mapper.resolvers   :refer [schema-db-atm]] ; for mount
-    [rm-server.core :refer [server]] ; for mount
-    [rm-server.web.handler]          ; for mount, defines rm.server.config/config, and router stuff.
-    [taoensso.timbre :as log]))
+   [clojure.pprint]
+   [clojure.string]
+   [clojure.spec.alpha :as s]
+   [clojure.tools.namespace.repl :as tools-ns :refer [disable-reload! refresh clear set-refresh-dirs]]
+   [expound.alpha :as expound]
+   [mount.core :as mount]
+   [rad-mapper.evaluate]
+   [lambdaisland.classpath.watch-deps :as watch-deps]      ;; hot loading for deps
+   [rad-mapper.resolvers   :refer [schema-db-atm]] ; for mount
+   [rm-server.core :refer [server]] ; for mount
+   [rm-server.web.handler]          ; for mount, defines rm.server.config/config, and router stuff.
+   [taoensso.timbre :as log]))
 
 ;;; If you get stuck do: (clojure.tools.namespace.repl/refresh)
 
@@ -27,7 +28,9 @@
 (defn start
   "Start the web server"
   []
-  (mount/start))
+  (let [res (mount/start)
+        info (str "   " (clojure.string/join ",\n    " (:started res)))]
+    (log/info "started:\n" info)))
 
 (defn stop
   "Stop the web server"

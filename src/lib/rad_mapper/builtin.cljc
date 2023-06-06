@@ -2379,7 +2379,7 @@
   (update m k f))
 
 ;;; https://platform.openai.com/docs/guides/chat/introduction
-(def semantic-match-instructions
+(def llm-match-instructions
   "A prompt for an LLM to produce a solution for reconciling information in two EDN structures.
    See (1) Wei et al. 'Chain-of-Thought Prompting Elicits Reasoning in Large Language Models'
            https://arxiv.org/abs/2201.11903
@@ -2497,8 +2497,8 @@ answer 2:
 ###")
 
 ;;; ToDo: Make keys go back two steps.
-(defn sem-match-pre
-  "Create a Clojure map like used in the $semMatch prompt from the string thing
+(defn llm-match-pre
+  "Create a Clojure map like used in the $llmMatch prompt from the string thing
    typically created, it has the string '<data>' for values.
    '<data>' is replaced with '<replace-me>' if :replace-me?
    otherwise the kebab-case version of the key inside '<...-data>'."
@@ -2515,26 +2515,26 @@ answer 2:
                   :else          obj))]
     (smp obj)))
 
-(defn sem-match-string
+(defn llm-match-string
   "Return the full string for matching."
   [src tar]
-  (let [src3 (with-out-str (-> src (sem-match-pre false) pprint))
-        tar3 (with-out-str (-> tar (sem-match-pre true)  pprint))]
-    (str semantic-match-instructions "\n\n"
+  (let [src3 (with-out-str (-> src (llm-match-pre false) pprint))
+        tar3 (with-out-str (-> tar (llm-match-pre true)  pprint))]
+    (str llm-match-instructions "\n\n"
          "source_form 3:\n" src3 "\n\n"
          "target_form 3:\n" tar3 "\n\n"
          "answer 3:\n")))
 
 #?(:clj
-(defn $semMatch
+(defn $llmMatch
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
   [src tar]
-  (log/info "$semMatch on server")
-  (let [q-str (sem-match-string src tar)]
+  (log/info "$llmMatch on server")
+  (let [q-str (llm-match-string src tar)]
        (if (System/getenv "OPENAI_API_KEY")
-         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo"
+         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301" #_"gpt-3.5-turbo"
                                                             :messages [{:role "user" :content q-str}]})
                             :choices first :message :content)]
                 (-> res read-string))
@@ -2545,21 +2545,82 @@ answer 2:
          (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
 
  #?(:cljs
-(defn $semMatch
+(defn $llmMatch
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
   [src tar]
-  (log/info "$semMatch on client")
+  (log/info "$llmMatch on client")
   (let [prom (p/deferred)]
-    (log/info "Call to $semMatch") ; ToDo: For some reason, this is not printed in console.
+    (log/info "Call to $llmMatch") ; ToDo: For some reason, this is not printed in console.
     (util/start-clock 30000)
-    (POST (str svr-prefix "/api/sem-match") ; ToDo: Use https://github.com/oliyh/martian
+    (POST (str svr-prefix "/api/llm-match") ; ToDo: Use https://github.com/oliyh/martian
           {:params {:src src :tar tar}
            :timeout 30000
            :handler (fn [resp] (p/resolve! prom resp))
            :error-handler (fn [{:keys [status status-text]}]
-                            (log/info (str "CLJS-AJAX $semMatch error: status = " status " status-text= " status-text))
-                            (p/rejected (ex-info "CLJS-AJAX error on /api/sem-match" {:status status :status-text status-text})))})
-    (log/info "$semMatch returns promise" prom)
+                            (log/info (str "CLJS-AJAX $llmMatch error: status = " status " status-text= " status-text))
+                            (p/rejected (ex-info "CLJS-AJAX error on /api/llm-match" {:status status :status-text status-text})))})
+    (log/info "$llmMatch returns promise" prom)
+    prom)))
+
+(defn llm-extract-string
+  "Create a few-shot prompt for extracting particular information from a text field."
+  [src seek]
+  (cl-format nil
+  "The Clojure map provided contains two keys: :source provides a string of information, :seek provides some type of information sought in :source.
+   Return only this Clojure map with two additional keys:
+     (1) :found is the substring of the string at :source that contains the information sought.
+     (2) :probability contains a probability that the value in :found is of the type sought.
+   Example:
+   {:source \"South Windsor, CT, 06074\" :seek \"city\"}
+   {:source \"South Windsor, CT, 06074\" :seek \"city\" :found \"South Windsor\" :probability 0.98}
+##
+   Example:
+   {:source \"NIST Bldg 220\" :seek \"building\"}
+   {:source \"NIST Bldg 220\" :seek \"building\" :found \"Bldg 220\" :probability 0.95}
+##
+   {:source ~S :seek ~S}"
+  src seek))
+
+
+#?(:clj
+(defn $llmExtract
+  "Find closes extract of terminology of keys in two 'object shapes' and thereby produce a mapping
+   of the data at those keys. The prompt instructs how to indicate extraction and aggregation
+   of source object fields to target object fields."
+  [src seek]
+  (log/info "$llmExtract on server")
+  (let [q-str (llm-extract-string src seek)]
+       (if (System/getenv "OPENAI_API_KEY")
+         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301" ; <===== ToDo: Try the "text extraction" models.
+                                                            :messages [{:role "user" :content q-str}]})
+                            :choices first :message :content)]
+                (reset! diag {:res res})
+                (-> res read-string))
+              (catch Throwable e
+                (swap! diag #(assoc % :e e))
+                (throw (ex-info "OpenAI API call failed."
+                                {:message (.getMessage e)
+                                 #_#_:details (-> e .getData :body json/read-str)}))))
+         (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
+
+ #?(:cljs
+(defn $llmExtract
+  "Find closes extract of terminology of keys in two 'object shapes' and thereby produce a mapping
+   of the data at those keys. The prompt instructs how to indicate extraction and aggregation
+   of source object fields to target object fields."
+  [src seek]
+  (log/info "$llmExtract on client")
+  (let [prom (p/deferred)]
+    (log/info "Call to $llmExtract") ; ToDo: For some reason, this is not printed in console.
+    (util/start-clock 30000)
+    (GET (str svr-prefix "/api/llm-extract") ; ToDo: Use https://github.com/oliyh/martian
+          {:params {:source src :seek seek}
+           :timeout 30000
+           :handler (fn [resp] (p/resolve! prom resp))
+           :error-handler (fn [{:keys [status status-text]}]
+                            (log/info (str "CLJS-AJAX $llmExtract error: status = " status " status-text= " status-text))
+                            (p/rejected (ex-info "CLJS-AJAX error on /api/llm-extract" {:status status :status-text status-text})))})
+    (log/info "$llmExtract returns promise" prom)
     prom)))

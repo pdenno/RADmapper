@@ -50,21 +50,38 @@
         (response/ok res))
       (response/bad-request "Missing query args."))))
 
-(defn sem-match
-  "Do semantic match (bi/$semMatch) and return result. Request was a POST."
+(defn llm-match
+  "Use an LLM to match maps (bi/$llmMatch) and return result. Request was a POST."
   [{{{:keys [src tar]} :body} :parameters}]
-  (log/info "sem-match: src =" src "tar =" tar)
+  (log/info "llm-match: src =" src "tar =" tar)
   (if (and src tar)
     (let [p (p/deferred)]
-      (future (p/resolve! p (bi/$semMatch src tar))
+      (future (p/resolve! p (bi/$llmMatch src tar))
               #_(p/resolve! p (do (Thread/sleep 10000) {:result (str "Test: " (Date. (System/currentTimeMillis)))})))
-      (let [res (p/await p 30000)]
+      (let [res (p/await p 45000)]
         (if (nil? res)
           (do
-            (log/error "$semMatch timeouted out. (LLM call)")
+            (log/error "$llmMatch timeouted out. (LLM call)")
             (response/ok {:status :failure :cause "Call to LLM timed out."}))
           (response/ok res))))
-      (response/bad-request "src or tar not provided.")))
+    (response/bad-request "src or tar not provided.")))
+
+(defn llm-extract
+  "Use an LLM to extract text (bi/$llmExtract) and return result. Request was a GET."
+  [request]
+  (let [{:keys [source seek]} (-> request :query-params keywordize-keys)]
+    (log/info "llm-extract: source =" source "seek =" seek)
+    (if (and source seek)
+      (let [p (p/deferred)]
+        (future (p/resolve! p (bi/$llmExtract source seek))
+                #_(p/resolve! p (do (Thread/sleep 10000) {:result (str "Test: " (Date. (System/currentTimeMillis)))})))
+        (let [res (p/await p 20000)]
+          (if (nil? res)
+            (do
+              (log/error "$llmExtract timeouted out. (LLM call)")
+              (response/ok {:status :failure :cause "Call to LLM timed out."}))
+            (response/ok res))))
+      (response/bad-request "extract-src or extract-seek not provided."))))
 
 ;;; (->> '[[?e :schema/name ?name]] (m/encode "application/transit+json") (m/decode "application/transit+json"))
 ;;; ToDo: Support the 3 options to $query that are nil below.

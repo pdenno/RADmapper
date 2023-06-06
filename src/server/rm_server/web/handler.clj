@@ -82,7 +82,7 @@
 (s/def ::processRM-request (s/keys :req-un [::code] :opt-un [::data]))
 (s/def ::processRM-response string?)
 
-;;; Semantic-match ($semMatch)
+;;; llm-match ($llmMatch)
 (s/def ::src (st/spec {:spec map?
                        :name "src"
                        :description "Source schema (e.g. JSON) for matching."
@@ -91,8 +91,23 @@
                        :name "tar"
                        :description "Target schema (e.g. JSON) for matching."
                        :json-schema/default example-tar}))
-(s/def ::semantic-match-request (s/keys :req-un [::src ::tar]))
-(s/def ::semantic-match-response map?)
+(s/def ::llm-match-request (s/keys :req-un [::src ::tar]))
+(s/def ::llm-match-response map?)
+
+(s/def ::source (st/spec {:spec string?
+                          :name "extract-src"
+                          :description "Source string from which to find information."
+                          :json-schema/default "Acme Widgets, 100 Main Street, Bldg 123, Chicago, IL, 60610"}))
+(s/def ::seek (st/spec {:spec string?
+                        :name "extract-seek"
+                        :description "Type of information sought."
+                        :json-schema/default "building"}))
+
+(s/def ::probability number?)
+(s/def ::found string?)
+
+(s/def ::llm-extract-request  (s/keys :req-un [::source ::seek]))
+(s/def ::llm-extract-response (s/keys :req-un [::source ::seek ::probability ::found]))
 
 ;;; datalog-query (query)
 (s/def ::qforms (st/spec {:spec string? ; In CLJS,
@@ -152,11 +167,17 @@
              :responses {200 {:body {:result ::processRM-response}}}
              :handler rm/process-rm}}]
 
-    ["/sem-match"
-     {:post {:summary "Do a semantic match similar to $semMatch()."
-             :parameters {:body ::semantic-match-request}
-             :responses {200 {:body ::semantic-match-response}}
-             :handler rm/sem-match}}]
+    ["/llm-match"
+     {:post {:summary "Use an LLM to match keys of two structures; similar to $llmMatch()."
+             :parameters {:body ::llm-match-request}
+             :responses {200 {:body ::llm-match-response}}
+             :handler rm/llm-match}}]
+
+    ["/llm-extract"
+     {:get {:summary "Do an LLM text extraction similar to $llmMatch()."
+            :parameters {:query ::llm-extract-request}
+            :responses {200 {:body ::llm-extract-response}}
+            :handler rm/llm-extract}}]
 
     ["/graph-query"
      {:get {:summary "Make a graph query similar to $get()."

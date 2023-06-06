@@ -84,7 +84,7 @@
 (def datetime-fns (fn-maps ["$fromMillis" "$millis" "$now" "$toMillis"]))
 (def higher-fns   (fn-maps ["$filter" "$map" "$reduce" "$sift" "$single"]))
 ;;; Non-JSONata functions
-(def rm-fns       (fn-maps ["$db" "$get" "$eIdent" "$getSpreadsheet" "$identities" "$pull" "$qIdent" "$semMatch"]))
+(def rm-fns       (fn-maps ["$db" "$get" "$eIdent" "$getSpreadsheet" "$identities" "$pull" "$qIdent" "$llmExtract" "$llmMatch"]))
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns rm-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" \$]) set))

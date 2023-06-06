@@ -7,23 +7,26 @@
 
 ;;; ($get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]])
 (def rm-examples
-  [{:name "So simple!"
+  [{:name "Try (12): LLM extract"
+    :code "$llmExtract('Acme Widgets, 100 Main Street, Bldg 123, Chicago, IL, 60610', 'building')"}
+
+   {:name "So simple!"
     :code "1 + 2"}
 
-   {:name "Tutorial (0): Schema list"
+   {:name "Try (0): Schema list"
       :code "$get([['list/id', 'ccts/message-schema'], ['list/content']])"}
 
-   {:name "Tutorial (1): Small remote query"
+   {:name "Try (1): Small remote query"
     :code "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
   $qfn := query{[?e :schema/name ?name] [?e :schema/sdo ?sdo]};
   $qfn($db).?sdo ~> $distinct() ~> $sort()
    )"}
 
-   {:name "Tutorial (2) : Simple get"
+   {:name "Try (2) : Simple get"
     :code "( $schema := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
            $schema )"}
 
-   {:name "Tutorial (3) : JSONata-like"
+   {:name "Try (3) : JSONata-like"
     :code
     "( // Ordinary JSONata-like expressions: get the names of the two schema in the LHS pane:
   $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content', 'schema/name']]);
@@ -31,7 +34,7 @@
 
 [$s1, $s2].`schema_name` )"}
 
-   {:name "Tutorial (4) : Simplest query"
+   {:name "Try (4) : Simplest query"
     :code
 "(
   $x := {'element/name' : 'foo'};
@@ -39,7 +42,7 @@
   $qf($x)
 )"}
 
-   {:name "Tutorial (5): Simple query, complicated schema"
+   {:name "Try (5): Simple query, complicated schema"
     :code "(
   // Small bug in the exerciser (because it combines data from the LHS pane):
   // currently comments have to be inside the open paren.
@@ -55,7 +58,7 @@
  $qf($db)
 )" }
 
-   #_{:name "Tutorial (*): (aside) Query defines a function."
+   #_{:name "Try (*): (aside) Query defines a function."
     :code
     "(
   // Remember: query and express are function defining.
@@ -64,7 +67,7 @@
   query{[?x :model/elementDef ?ed]}
 )"}
 
-   {:name "Tutorial (6):  query :model/elementDef"
+   {:name "Try (6):  query :model/elementDef"
     :code
     "(
   // This example queries for all the element definitions.
@@ -80,7 +83,7 @@
 )"}
 
 
-   {:name "Tutorial (7): Towards goal: query :element/name"
+   {:name "Try (7): Towards goal: query :element/name"
     :code
     "(
   // We'll start working towards something useful with the two schema.
@@ -95,7 +98,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "Tutorial (8): Child elements"
+   {:name "Try (8): Child elements"
     :code
     "(
   // Let's find the children of an element.
@@ -120,7 +123,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "Tutorial (9): Roots"
+   {:name "Try (9): Roots"
     :code
     "(
   // The two lists we generated in (6) each have one less element than the lists
@@ -172,7 +175,7 @@
 
 )"}
 
-   {:name "Tutorial (10): Shape "
+   {:name "Try (10): Shape "
     :code
    "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
@@ -208,7 +211,7 @@
    'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 )"}
 
-   {:name "Tutorial (11): Semantic match"
+   {:name "Try (11): LLM match"
     :code
    "(
   $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
@@ -240,10 +243,12 @@
   $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
   $schema2Roots := $rootQuery($schema2);
 
-  $semMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
+  $llmMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
             $shape($schema2Roots.?name[0], $schema2PC))
 )"}
 
+   {:name "Try (12): LLM extract"
+    :code "$llmExtract('Acme Widgets, 100 Main Street, Bldg 123, Chicago, IL, 60610', 'building')"}
 
    {:name "2 Databases"
     :code

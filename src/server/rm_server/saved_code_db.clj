@@ -53,7 +53,7 @@
       conn)))
 
 (defn store-code
-  "Store the argument saved-code and return a UUID."
+  "Store the argument user code and return a UUID."
   [{:keys [code data]}]
   (let [uuid (java.util.UUID/randomUUID)
         obj (cond-> {:code/id uuid
@@ -62,7 +62,7 @@
               data (assoc :code/data data))]
     (d/transact (get-db-atm) [[:db/add -1 :code/id uuid]])
     (d/transact (get-db-atm) [obj])
-    (log/info "Stored saved-code " uuid)
+    (log/info "Stored user code " uuid)
     uuid))
 
 (defn get-code
@@ -91,3 +91,14 @@
 
 (defstate saved-code-db-atm
   :start (init-db))
+
+
+{:domain-problem-name "jelly production",
+ :task-list ["buy ingredients" "forecasting",,,],
+ :task-resources {"buy-ingredients" ["truck",,,],
+                  "forecasting"     ["sales data", "computer"]
+                  ,,,}
+ :task-order [{:before-task "boil fruit",
+               :after-tasks ["whatever" "whatever2"]}]
+ :task-duration {"forecasting" 1
+                 "buy ingredients" 1}}
