@@ -174,7 +174,7 @@
              :handler rm/llm-match}}]
 
     ["/llm-extract"
-     {:get {:summary "Do an LLM text extraction similar to $llmMatch()."
+     {:get {:summary "Do an LLM text extraction similar to $llmExtract()."
             :parameters {:query ::llm-extract-request}
             :responses {200 {:body ::llm-extract-response}}
             :handler rm/llm-extract}}]

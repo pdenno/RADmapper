@@ -2564,7 +2564,7 @@ answer 2:
     (log/info "$llmMatch returns promise" prom)
     prom)))
 
-(defn llm-extract-string
+(defn llm-extract-prompt
   "Create a few-shot prompt for extracting particular information from a text field."
   [src seek]
   (cl-format nil
@@ -2591,7 +2591,7 @@ answer 2:
    of source object fields to target object fields."
   [src seek]
   (log/info "$llmExtract on server")
-  (let [q-str (llm-extract-string src seek)]
+  (let [q-str (llm-extract-prompt src seek)]
        (if (System/getenv "OPENAI_API_KEY")
          (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301" ; <===== ToDo: Try the "text extraction" models.
                                                             :messages [{:role "user" :content q-str}]})

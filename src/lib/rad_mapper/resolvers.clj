@@ -159,7 +159,7 @@
 ;;; ===== Starting and stopping =================================
 (def base-dir
   (or (-> (System/getenv) (get "RM_MESSAGING"))
-      (throw (ex-info (str "Set the environment variable RM_DATABASES to the directory in which you want databases written."
+      (throw (ex-info (str "Set the environment variable RM_MESSAGING to the directory containing RADmapper databases."
                            "\nCreate a directory 'schema' under it.") {}))))
 
 (def db-dir
