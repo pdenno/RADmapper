@@ -70,20 +70,24 @@
   [{:keys [id]}]
   (dp/pull @(get-db-atm) '[*] [:code/id (java.util.UUID/fromString id)]))
 
-
-(def base-dir
-  (or (-> (System/getenv) (get "RM_MESSAGING"))
-      (throw (ex-info (str "Set the environment variable RM_DATABASES to the directory in which you want databases written."
-                           "\nCreate a directory 'schema' under it.") {}))))
-
-(def db-dir
-    (if (-> base-dir (str "/databases/saved-code") io/file .isDirectory)
-      (str base-dir "/databases/saved-code")
-      (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/saved-code")}))))
+(def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)
+(def db-dir "The directory containing schema DBs. Can't be set at compile time in Docker." nil)
 
 (defn init-db
   "Reset and return the atom used to connect to the db."
   []
+  (alter-var-root
+   (var base-dir)
+   (fn [_]
+     (or (-> (System/getenv) (get "RM_MESSAGING"))
+         (throw (ex-info (str "Set the environment variable RM_MESSAGING to the directory containing RADmapper databases."
+                              "\nCreate a directory 'saved-code' under it.") {})))))
+  (alter-var-root
+   (var db-dir)
+   (fn [_]
+     (if (-> base-dir (str "/databases/saved-code") io/file .isDirectory)
+       (str base-dir "/databases/saved-code")
+       (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/saved-code")})))))
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
                       :rebuild-db? false ; <=======================
                       :schema-flexibility :write})
@@ -91,14 +95,3 @@
 
 (defstate saved-code-db-atm
   :start (init-db))
-
-
-{:domain-problem-name "jelly production",
- :task-list ["buy ingredients" "forecasting",,,],
- :task-resources {"buy-ingredients" ["truck",,,],
-                  "forecasting"     ["sales data", "computer"]
-                  ,,,}
- :task-order [{:before-task "boil fruit",
-               :after-tasks ["whatever" "whatever2"]}]
- :task-duration {"forecasting" 1
-                 "buy ingredients" 1}}

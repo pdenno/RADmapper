@@ -29,6 +29,7 @@ target
 .lsp/.cache
 data/OAGIS
 data/testing/elena
+databases
 resources/databases
 resources/js
 public/js

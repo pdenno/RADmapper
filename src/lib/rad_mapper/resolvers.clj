@@ -157,19 +157,25 @@
   (p.eql/process @indexes ident-map outputs))
 
 ;;; ===== Starting and stopping =================================
-(def base-dir
-  (or (-> (System/getenv) (get "RM_MESSAGING"))
-      (throw (ex-info (str "Set the environment variable RM_MESSAGING to the directory containing RADmapper databases."
-                           "\nCreate a directory 'schema' under it.") {}))))
-
-(def db-dir
-    (if (-> base-dir (str "/databases/schema") io/file .isDirectory)
-      (str base-dir "/databases/schema")
-      (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/schema")}))))
+(def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)
+(def db-dir "The directory containing schema DBs. Can't be set at compile time in Docker." nil)
 
 (defn init-db
-  "Reset and return the atom used to connect to the db."
+  "Set directory vars from environment variables.
+   Reset and return the atom used to connect to the db."
   []
+  (alter-var-root
+   (var base-dir)
+   (fn [_]
+     (or (-> (System/getenv) (get "RM_MESSAGING"))
+         (throw (ex-info (str "Set the environment variable RM_MESSAGING to the directory containing RADmapper databases."
+                              "\nCreate a directory 'schema' under it.") {})))))
+  (alter-var-root
+   (var db-dir)
+   (fn [_]
+     (if (-> base-dir (str "/databases/schema") io/file .isDirectory)
+       (str base-dir "/databases/schema")
+       (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/schema")})))))
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
                       :rebuild-db? false
                       :schema-flexibility :write})

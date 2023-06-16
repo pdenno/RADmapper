@@ -14,7 +14,8 @@
 (def basis (b/create-basis {:project "deps-uber.edn"}))
 (def jar-file (format "target/%s-%s.jar" (name lib) version))
 (def target-dir "target")
-(def uber-file (format "%s/%s-%s-standalone.jar" target-dir (name lib) version))
+;;;(def uber-file (format "%s/%s-%s-standalone.jar" target-dir (name lib) version))
+(def uber-file (format "%s/%s-standalone.jar" target-dir (name lib)))
 
 (defn clean [_]
   (println "Doing the clean")
