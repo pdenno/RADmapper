@@ -15,7 +15,9 @@
     [rad-mapper.rewrite           :as rew]
     [rad-mapper.rewrite-macros    :as rewm]
     [rad-mapper.util              :as util :refer [nspaces]]
-    #?(:clj [rad-mapper.resolvers         :refer [schema-db-atm]]) ; for mount
+    #?@(:clj
+        [[rad-mapper.resolvers     :refer [schema-atm]]    ; for mount
+         [rad-mapper.codelib       :refer [codelib-atm]]]) ; for mount
     [sci.core                     :as sci]
     #?(:cljs [rad-mapper.promesa-config :as scip])
     [taoensso.timbre              :as log :refer-macros [info debug log]]))
@@ -344,7 +346,7 @@
 
 (def print-width "Number of characters that can be comfortably fit on a line.
                   This is an atom so that it can be set by other libraries."
-  (atom 80))
+  (atom 120))
 
 ;(def diag (atom :before-pprint-obj-reset))
 

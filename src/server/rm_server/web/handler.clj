@@ -133,6 +133,9 @@
 (s/def ::graph-query-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
 (s/def ::graph-query-response map?)
 
+(s/def ::graph-put-request (s/keys :req-un [::ident-type ::ident-val ::obj]))
+
+
 ;;; =========== Pages (just homepage, thus far.)  =======
 (def selmer-opts {:custom-resource-path (io/resource "html")})
 
@@ -184,6 +187,12 @@
             :parameters {:query ::graph-query-request}
             :responses {200 {:body ::graph-query-response}}
             :handler rm/graph-query}}]
+
+    ["/graph-put"
+     {:post {:summary "Write to a graph DB similar to $put()."
+             :parameters {:body ::graph-put-request}
+             :responses {200 {:body boolean?}}
+             :handler rm/graph-put}}]
 
     ["/datalog-query"
      {:post {:summary "Run datalog against the schema database."

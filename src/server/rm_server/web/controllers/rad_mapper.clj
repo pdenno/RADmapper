@@ -6,7 +6,7 @@
    [rad-mapper.builtin    :as bi]
    [rad-mapper.evaluate   :as ev]
    [rad-mapper.resolvers  :refer [connect-atm]]
-   [rm-server.saved-code-db :as saved-code]
+   [rm-server.exerciser-saves :as user-saves]
    [ring.util.http-response :as response]
    [taoensso.timbre :as log])
   (:import
@@ -49,6 +49,20 @@
       (let [res (bi/$get [[ident-type ident-val] request-objs])]
         (response/ok res))
       (response/bad-request "Missing query args."))))
+
+(defn graph-put
+  "Make a graph query (currently only to data managed by this server).
+   Query parameters:
+     - ident-type   : a namespaced string such as 'schema/name'.
+     - ident-val    : a string, that is the value of a lookup-id.
+     - request-objs : a string of elements separated by '|' that will be keywordized to the 'sdb' ns,
+                      for example, 'foo|bar' ==> [:sdb/foo :sdb/bar]."
+  [{{{:keys [ident-type ident-val obj]} :body} :parameters}]
+  (log/info "Call to graph-put")
+  (if (and ident-type ident-val obj)
+    (let [res (bi/$put [[ident-type ident-val] obj])]
+      (response/ok res))
+    (response/bad-request "Missing args.")))
 
 (defn llm-match
   "Use an LLM to match maps (bi/$llmMatch) and return result. Request was a POST."
@@ -117,7 +131,7 @@
   (reset! diag {:request request})
   (try
     (if (-> request :parameters :body :code)
-      (if-let [uuid (saved-code/store-code (-> request :parameters :body))]
+      (if-let [uuid (user-saves/store-code (-> request :parameters :body))]
         (response/ok {:save-id (str uuid)})
         (response/ok {:status 400 :body "Store failed."}))
       (response/ok {:status 400 :body "No code found."}))

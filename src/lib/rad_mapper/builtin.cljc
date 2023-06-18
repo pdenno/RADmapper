@@ -17,6 +17,7 @@
               [datahike.pull-api            :as dp]
               [muuntaja.core                :as m]
               [rad-mapper.resolvers         :refer [pathom-resolve connect-atm]]
+              [rad-mapper.codelib           :refer [codelib-atm]]
               [wkok.openai-clojure.api      :as openai]]
        :cljs [[ajax.core :refer [GET POST]]
               [datascript.core           :as d]
@@ -1676,6 +1677,26 @@
                 (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
                 prom))))))
 
+(defn $put
+  "Read a file of JSON or XML, creating a map."
+  [[ident-type ident-val] obj]
+  #?(:clj
+     (if (= ident-type "library/fn")
+       (try (let [ns-obj (reduce-kv (fn [m k v] (assoc m (-> k (str/replace  #"_" "/") keyword) v)) {} obj)]
+              (d/transact codelib-atm [(into {:fn/name ident-val} ns-obj)]))
+         (catch Throwable e (ex-info "$put to library failed." {:obj obj :message (.getMessage e)})))
+       (throw (ex-info "Only $put to library/fn currently supported." {:ident-type ident-type})))
+  :cljs
+      (let [prom (p/deferred)
+            req-data {:params {:ident-type ident-type :ident-val ident-val :obj obj}
+                      :handler (fn [resp] (p/resolve! prom resp))
+                      :error-handler (fn [{:keys [status status-text]}]
+                                       (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-put"
+                                                                {:status status :status-text status-text})))
+                      :timeout 5000}]
+                (POST (str svr-prefix "/api/graph-put") req-data) ; ToDo: use Martian.
+                prom)))
+
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to
    be a header. The names of the columns (map keys) uses the conventional :A,:B,:C,...
@@ -2533,8 +2554,9 @@ answer 2:
   [src tar]
   (log/info "$llmMatch on server")
   (let [q-str (llm-match-string src tar)]
-       (if (System/getenv "OPENAI_API_KEY")
-         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301" #_"gpt-3.5-turbo"
+       (if-let [key (util/get-api-key :llm)]
+         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301"
+                                                            :api-key key
                                                             :messages [{:role "user" :content q-str}]})
                             :choices first :message :content)]
                 (-> res read-string))
@@ -2546,9 +2568,7 @@ answer 2:
 
  #?(:cljs
 (defn $llmMatch
-  "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
-   of the data at those keys. The prompt instructs how to indicate extraction and aggregation
-   of source object fields to target object fields."
+  "Call server for $llmMatch."
   [src tar]
   (log/info "$llmMatch on client")
   (let [prom (p/deferred)]
@@ -2583,33 +2603,31 @@ answer 2:
    {:source ~S :seek ~S}"
   src seek))
 
-
 #?(:clj
 (defn $llmExtract
-  "Find closes extract of terminology of keys in two 'object shapes' and thereby produce a mapping
-   of the data at those keys. The prompt instructs how to indicate extraction and aggregation
-   of source object fields to target object fields."
+  "Use LLM to extract seek argument, a descriptive string from source string.
+   Token limit is 3000."
   [src seek]
   (log/info "$llmExtract on server")
   (let [q-str (llm-extract-prompt src seek)]
-       (if (System/getenv "OPENAI_API_KEY")
-         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301" ; <===== ToDo: Try the "text extraction" models.
-                                                            :messages [{:role "user" :content q-str}]})
-                            :choices first :message :content)]
-                (reset! diag {:res res})
+       (if-let [key (util/get-api-key :llm)]
+         (try (let [res (-> (openai/create-completion {:model "text-davinci-003"
+                                                       :api-key key
+                                                       :max-tokens 3000
+                                                       :temperature 0.1
+                                                       :prompt q-str})
+                            :choices first :text)]
+                #_(reset! diag {:res res})
                 (-> res read-string))
               (catch Throwable e
-                (swap! diag #(assoc % :e e))
+                #_(swap! diag #(assoc % :e e))
                 (throw (ex-info "OpenAI API call failed."
-                                {:message (.getMessage e)
-                                 #_#_:details (-> e .getData :body json/read-str)}))))
+                                {:message (.getMessage e)}))))
          (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
 
  #?(:cljs
 (defn $llmExtract
-  "Find closes extract of terminology of keys in two 'object shapes' and thereby produce a mapping
-   of the data at those keys. The prompt instructs how to indicate extraction and aggregation
-   of source object fields to target object fields."
+  "Call server for $llmExtract."
   [src seek]
   (log/info "$llmExtract on client")
   (let [prom (p/deferred)]

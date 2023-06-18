@@ -9,16 +9,14 @@
    [clojure.tools.namespace.repl :as tools-ns :refer [disable-reload! refresh clear set-refresh-dirs]]
    [expound.alpha :as expound]
    [mount.core :as mount]
-   [rad-mapper.evaluate]
+   [rad-mapper.evaluate] ; for mount
    [lambdaisland.classpath.watch-deps :as watch-deps]      ;; hot loading for deps
-   [rad-mapper.resolvers   :refer [schema-db-atm]] ; for mount
    [rm-server.core :refer [server]] ; for mount
-   [rm-server.web.handler]          ; for mount, defines rm.server.config/config, and router stuff.
    [taoensso.timbre :as log]))
 
 ;;; If you get stuck do: (clojure.tools.namespace.repl/refresh)
 
-;; uncomment to enable hot loading for deps
+;; uncomment to enable hot loading for deps.
 (watch-deps/start! {:aliases [:dev :test]})
 
 (alter-var-root #'s/*explain-out* (constantly expound/printer))

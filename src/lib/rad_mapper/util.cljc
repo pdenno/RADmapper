@@ -12,6 +12,7 @@
       :cljs [datascript.core    :refer [db?]])
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
+   #?(:clj [rad-mapper.paillier  :refer [api-key]])
    [taoensso.timbre              :as log]))
 
 ;;; ================== CLJ/CLJS/SCI Interop =========================
@@ -413,6 +414,8 @@
           #(let [now #?(:clj (inst-ms (java.util.Date.)) :cljs (.getTime (js/Date.)))]
              (assoc % :valid? true :max-millis max-millis :start-time now :timeout-at (+ now max-millis))))
    max-millis))
+
+#?(:clj (defn get-api-key [_] api-key))
 
 ;;;=============================================================================================================
 ;;; Utils for macros: It seems the CLJS macros file cannot have these in them! See javascript.org [2023-01-25].

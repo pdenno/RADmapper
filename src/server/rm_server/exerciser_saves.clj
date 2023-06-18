@@ -1,4 +1,5 @@
-(ns rm-server.saved-code-db
+(ns rm-server.exerciser-saves
+  "Manage a DB of code saved from the exerciser save icon."
   (:require
    [clojure.java.io     :as io]
    [datahike.api        :as d]
@@ -17,7 +18,7 @@
       (d/connect db-cfg)
       (log/warn "There is no DB to connect to."))))
 
-(def saved-code-entries
+#_(def saved-code-entries
   [[:db/add -1 :code/id (java.util.UUID/fromString "7b4f5d46-e09f-4cd9-b3f4-ef5803da2ae4")]
    {:code/id    #uuid "7b4f5d46-e09f-4cd9-b3f4-ef5803da2ae4"
     :code/date  #inst "2023-03-06T19:11:34.799-00:00"
@@ -33,7 +34,7 @@
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :code/title
         :doc "Used in saved-code provided by the exerciser"}])
 
-(defn get-db-atm
+#_(defn get-db-atm
   "Do a d/connect to the database, returning a connection atom."
   []
   (if (d/database-exists? @db-cfg-atm)
@@ -48,7 +49,7 @@
     (d/create-database @db-cfg-atm)
     (let [conn (d/connect @db-cfg-atm)]
       (d/transact conn db-schema)
-      (d/transact conn saved-code-entries)
+      #_(d/transact conn saved-code-entries)
       (log/info "Created schema DB " conn)
       conn)))
 
@@ -60,15 +61,15 @@
                      :code/date (new java.util.Date)
                      :code/code code}
               data (assoc :code/data data))]
-    (d/transact (get-db-atm) [[:db/add -1 :code/id uuid]])
-    (d/transact (get-db-atm) [obj])
+    (d/transact (connect-atm) [[:db/add -1 :code/id uuid]])
+    (d/transact (connect-atm) [obj])
     (log/info "Stored user code " uuid)
     uuid))
 
 (defn get-code
-  "Retrieve an saved-code from the saved-code DB by its id"
+  "Retrieve an saved-code from the exerciser-saves DB by its id"
   [{:keys [id]}]
-  (dp/pull @(get-db-atm) '[*] [:code/id (java.util.UUID/fromString id)]))
+  (dp/pull @(connect-atm) '[*] [:code/id (java.util.UUID/fromString id)]))
 
 (def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)
 (def db-dir "The directory containing schema DBs. Can't be set at compile time in Docker." nil)
@@ -85,13 +86,13 @@
   (alter-var-root
    (var db-dir)
    (fn [_]
-     (if (-> base-dir (str "/databases/saved-code") io/file .isDirectory)
-       (str base-dir "/databases/saved-code")
-       (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/saved-code")})))))
+     (if (-> base-dir (str "/databases/exerciser-saves") io/file .isDirectory)
+       (str base-dir "/databases/exerciser-saves")
+       (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/exerciser-saves")})))))
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
                       :rebuild-db? false ; <=======================
                       :schema-flexibility :write})
   (connect-atm))
 
-(defstate saved-code-db-atm
+(defstate exerciser-saves-atm
   :start (init-db))

@@ -151,7 +151,7 @@
 
    outputs: a vector of properties (the :pco/outputs of resolvers) that are sought."
   [ident-map outputs]
-  (try (log/info "Pathom resolve: ident-map = " ident-map " outputs= " outputs)
+  (try (log/info "Pathom3 resolve: ident-map = " ident-map " outputs= " outputs)
        (catch Exception _e
          (throw (ex-info "schema database has not been initialized." {}))))
   (p.eql/process @indexes ident-map outputs))
@@ -188,9 +188,10 @@
                                  schema-object->schema-props
                                  db-connection
                                  current-system-time]))
-  (log/info "Pathom3 resolvers: " (pathom-resolve {} [:server/time])))
+  (pathom-resolve {} [:server/time])
+  @indexes)
 
-(defstate schema-db-atm
+(defstate schema-atm
   :start (init-db))
 
 (defstate resolvers

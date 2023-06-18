@@ -549,3 +549,81 @@
           $qfn := query{[?e :schema/name ?name]};
           $qfn($db) )")
       (p/then #(reset! diag %))))
+
+(defn tryme []
+  (bi/$put ["library/fn" "schemaParentChild"]
+           {"fn_src" "query{[?x     :element_name        ?parent]
+                        [?x     :element_complexType ?cplx1]
+                        [?cplx1 :model_sequence      ?def]
+                        [?def   :model_elementDef    ?cplx2]
+                        [?cplx2 :element_name        ?child]}",
+            "fn_doc" "Query a standard schema for parent/child relationships"}));
+
+
+(def shape-put
+  "($put(['library/fn' , 'schemaParentChild']
+     {'fn_src' : 'query{[?x     :element_name        ?parent] // pc = 'parent/child'
+                        [?x     :element_complexType ?cplx1]
+                        [?cplx1 :model_sequence      ?def]
+                        [?def   :model_elementDef    ?cplx2]
+                        [?cplx2 :element_name        ?child]}',
+      'fn_doc' : 'Query a standard schema for parent/child relationships'});
+
+    $put(['library/fn' , 'schemaRoots']
+     {'fn_src' : 'query{[?c :schema_content   ?e]
+                        [?e :model_elementDef ?d]
+                        [?d :element_name     ?name]}'
+      'fn_doc' : 'Query a standard schema for top-level element_names'});
+
+   $put(['library/fn' , 'schemaShape']
+     {'fn_src' : 'function($p, $spc) { $reduce($children($spc, $p),
+                                         function($tree, $c) // Update the tree.
+                                             { $update($tree,
+                                                       $p,
+                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<data>')}) },
+                                         {})};
+      'fn_doc' : 'Given a root :element_name and a standard schema, create a nested map of its :element_name'});
+    )")
+
+(def shape-get 
+"($schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+  $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+  $pcQuery   := $get([['library/fn' , 'schemaParentChild'], ['fn/exe']]).fn_exe;
+  $rootQuery := $get([['library/fn' , 'schemaRoots'],       ['fn/exe']]).fn_exe;
+  $shape     := $get([['library/fn' , 'schemaShape'],       ['fn/exe']]).fn_exe; )
+
+  $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.
+  $schema2PC    := $pcQuery($schema2);     // The first two return binding sets for {?parent x ?child y}
+  $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
+  $schema2Roots := $rootQuery($schema2);
+
+  {'shape1' : $shape($schema1Roots.?name[0], $schema1PC),
+   'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
+)")
+
+(def s1
+ {"ProcessInvoice"
+  {"DataArea"
+   {"Invoice"
+    {"InvoiceLine"
+     {"Item" {"ManufacturingParty" {"Name" "<data>"}},
+      "BuyerParty"
+      {"Location"
+       {"Address" {"AddressLine" "<data>"}},
+       "TaxIDSet" {"ID" "<data>"}}}},
+    "Process" "<data>"},
+   "ApplicationArea" {"CreationDateTime" "<data>"}}})
+
+(def s2
+ {"ProcessInvoice"
+  {"DataArea"
+   {"Invoice"
+    {"InvoiceLine"
+     {"Item" {"ManufacturingParty" {"Name" "<data>"}},
+      "BuyerParty"
+      {"Location"
+       {"Address" {"PostalCode" "<data>", "StreetName" "<data>", "CountryCode" "<data>", "CityName" "<data>", "BuildingNumber" "<data>"}},
+       "TaxIDSet" {"ID" "<data>"}}}},
+    "Process" "<data>"},
+   "ApplicationArea" {"CreationDateTime" "<data>"}}})
+
