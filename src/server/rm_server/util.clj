@@ -19,7 +19,7 @@
     (log/set-config!
      (-> log/*config*
          (assoc :output-fn #'custom-output-fn)
-         (assoc :min-level [[#{"scheduling-tbd.*" "stbd-app.*" "user"} min-level]
+         (assoc :min-level [[#{"user" "exerciser-app.*" "rad-mapper.*" "RM-DEFAULT"} min-level]
                             [#{"datahike.*"} :error]
                             [#{"datascript.*"} :error]
                             [#{"*"} :error]])))

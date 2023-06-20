@@ -9,7 +9,7 @@
    [rad-mapper.util :as util]
    [taoensso.timbre :as log]
    [rad-mapper.parse-macros :refer [defparse *debugging?* parse parse-dispatch]])
-#?(:cljs (:require-macros [rad-mapper.parse-macros :refer [defparse]])))
+  #?(:cljs (:require-macros [rad-mapper.parse-macros :refer [defparse]])))
 
 ;;; from utils.cljc
 (defn nspaces
@@ -159,23 +159,35 @@
   (or (regex-from-string st)
       {:raw "/" :tkn \/}))
 
+(declare get-more whitesp)
 (defn quoted-string
   "Return a token map for a string delimited by matching single- or double-quote characters.
+   Made more complex owing to
    Note that you get double-quoted strings for free from the Clojure reader."
-  [s quote-char]
-  (loop [chars (rest s)
+  [pstate s quote-char ws]
+  (loop [ps pstate
+         chars (rest s)
          raw quote-char
          res ""]
-    (cond (empty? chars) (throw (ex-info "unbalanced quoted string" {:string s}))
-          (= quote-char (-> chars first))
-          {:raw (str raw quote-char) :tkn {:typ :StringLit :value res}}
-          (and (= \\ (-> chars first)) (= quote-char (-> chars second)))
-          (recur (-> chars rest rest)
-                 (str raw \\ quote-char)
-                 (str res quote-char))
-          :else (recur (rest chars)
-                       (str raw (-> chars first))
-                       (str res (-> chars first))))))
+    (cond (= :eol       (first chars))         (throw (ex-info "unbalanced quoted string" {:string s}))
+          (= quote-char (first chars))         (-> ps
+                                                   (assoc :one-token {:ws ws :raw (str raw quote-char) :tkn {:typ :StringLit :value res}})
+                                                   (update :string-block #(subs % 1)))
+          (and (= \\    (first chars))
+               (= quote-char (second chars)))  (recur (update ps :string-block #(subs % 1))
+                                                      (-> chars rest rest)
+                                                      (str raw \\ quote-char)
+                                                      (str res quote-char))
+          (empty? chars)                      (let [ps (get-more ps)]
+                                                (recur ps
+                                                       (:string-block ps)
+                                                       raw
+                                                       res))
+          :else                                (recur (update ps :string-block #(subs % 1))
+                                                      (rest chars)
+                                                      (str raw (-> chars first))
+                                                      (str res (-> chars first))))))
+
 
 (defn read-qvar
   "read a query var"
@@ -212,6 +224,7 @@
     {:tkn {:typ :EOL-comment :text text} :raw raw :ws ws}))
 
 ;;; ToDo: Reading of blocks can mean that we don't have a complete comment. read-comment should get more (and give up at some point).
+;;;       See quoted-string for this.
 (defn read-c-comment
   "Return a token object (keys :ws, :raw, and :tkn {:typ :Comment :text <the text>} for a c-style comment.
    This is called with a string-block possibly containing whitespace before '/*'.
@@ -236,27 +249,31 @@
 (defn read-long-syntactic
   "Return a map containing a :tkn and :raw string for 'long syntactic' lexemes,
    which include arbitray query vars and roles too."
-  [st ws]
-  (let [len (count st)
+  [pstate st ws]
+  (let [pstate (dissoc pstate :one-token)
+        len (count st)
         c0  (nth st 0)
         c1  (and (> len 1) (nth st 1))]
-    (when-let [res (cond (and (= c0 \/) (= c1 \/)) (read-eol-comment st ws),
-                         (= c0 \/) (regex-or-divide st),
-                         (#{\' \"} c0) (quoted-string st c0),
-                         (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (read-qvar st),
-                         (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (read-pattern-role st),
-                         (and (= c0 \:) (= c1 \=)) {:raw ":="},
-                         (and (= c0 \<) (= c1 \=)) {:raw "<="},
-                         (and (= c0 \>) (= c1 \=)) {:raw ">="},
-                         (and (= c0 \=) (= c1 \=)) {:raw "=="},
-                         (and (= c0 \.) (= c1 \.)) {:raw ".."},
-                         (and (= c0 \!) (= c1 \=)) {:raw "!="},
-                         (and (= c0 \~) (= c1 \>)) {:raw "~>"},
-                         (and (= c0 \<) (= c1 \|)) {:raw "<|"},
-                         (and (= c0 \|) (= c1 \>)) {:raw "|>"})]
-      (cond-> res
-        (#{":=" "<=" ">=" "==" ".." "<|" "|>" "!=" "~>"} (:raw res)) (assoc :tkn (:raw res))
-        true (assoc :ws ws)))))
+    (if (#{\' \"} c0)
+      (quoted-string pstate st c0 ws)
+      (when-let [res (cond (and (= c0 \/) (= c1 \/)) (read-eol-comment st ws),
+                           (= c0 \/) (regex-or-divide st),
+                           (and (= c0 \?) (re-matches #"[a-zA-Z]" (str c1))) (read-qvar st),
+                           (and (= c0 \:) (re-matches #"[a-zA-Z]" (str c1))) (read-pattern-role st),
+                           (and (= c0 \:) (= c1 \=)) {:raw ":="},
+                           (and (= c0 \<) (= c1 \=)) {:raw "<="},
+                           (and (= c0 \>) (= c1 \=)) {:raw ">="},
+                           (and (= c0 \=) (= c1 \=)) {:raw "=="},
+                           (and (= c0 \.) (= c1 \.)) {:raw ".."},
+                           (and (= c0 \!) (= c1 \=)) {:raw "!="},
+                           (and (= c0 \~) (= c1 \>)) {:raw "~>"},
+                           (and (= c0 \<) (= c1 \|)) {:raw "<|"},
+                           (and (= c0 \|) (= c1 \>)) {:raw "|>"})]
+        (assoc pstate
+               :one-token
+               (cond-> res
+               (#{":=" "<=" ">=" "==" ".." "<|" "|>" "!=" "~>"} (:raw res)) (assoc :tkn (:raw res))
+               true (assoc :ws ws)))))))
 
 (defn position-break
   "Return the first position in s containing a syntactic character or ws.
@@ -295,42 +312,44 @@
   "Return a map with keys :ws, :raw and :tkn from the front of the argument string.
    Tokenization returns maps with :tkn as a STRING for things that you might expect a keyword or symbol.
    For example + is the string \"+\". Parsing returns :op/add for this."
-  [string-block line] ; line is just for error reporting.
-  (when *debugging-tokenizer?*  (println (cl-format nil "-----> string-block = ~S " string-block)))
-  (let [ws (whitesp string-block)
+  [pstate]
+  (when *debugging-tokenizer?* (println (cl-format nil "-----> string-block = ~S " (:string-block pstate))))
+  (let [string-block (:string-block pstate)
+        line (:line pstate) ; line is just for error reporting.
+        ws (whitesp string-block)
         s (subs string-block (count ws))
         c (-> s first)
-        result
+        pstate
         (if (empty? s)
-          {:ws ws :raw "" :tkn ::end-of-block},   ; Lazily pulling lines from line-seq; need more.
+          (assoc pstate :one-token {:ws ws :raw "" :tkn ::end-of-block}),   ; Lazily pulling lines from line-seq; need more.
           ;; The problem with use of the clj regex in cljs is that it reads past the closing */
-          (or  (when (re-matches #"(?s)/\*.*" s) (read-c-comment string-block)) ; JS needs the (?s) even though it is not used!
-;;;               (when-let [[_ cm _] (re-matches #?(:cljs #"(?s)(/\*.*\*/).*"  ; #"(?s)(/\*.*\*/).*" ; NOT WORKING cljs <==============
-;;;                                                    :clj  #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*")
-;;;                                               s)]   ; comment; JS has problems with #"(?s)(\/\*(\*(?!\/)|[^*])*\*\/).*"
-;;;                 {:ws ws :raw cm :tkn {:typ :Comment :text cm}})
-               (and (long-syntactic? c) (read-long-syntactic s ws))    ; string literals, /regex-pattern/ ++, <=, == etc.
+          (or  (when (re-matches #"(?s)/\*.*" s)
+                 (assoc pstate :one-token (read-c-comment string-block))) ; JS needs the (?s) even though it is not used!
+               ;; read-long-syntactic sets :one-token (and maybe changes other things in pstate owing to call to get-more).
+               (and (long-syntactic? c)
+                    (let [ps (read-long-syntactic pstate s ws)]    ; string literals, /regex-pattern/ ++, <=, == etc.
+                      (when (contains? ps :one-token) ps)))
                (when-let [[_ num] (re-matches #"(?s)([-]?\d+(\.\d+(e[+-]?\d+)?)?).*" s)] ; + cannot be used as a unary operator.
-                 {:ws ws :raw num :tkn (util/read-str num)}),          ; number
+                 (assoc pstate :one-token {:ws ws :raw num :tkn (util/read-str num)})),          ; number
                (when-let [[_ st] (re-matches #"(?s)(\`[^\`]*\`).*" s)] ; backquoted field
-                 {:ws ws :raw st :tkn {:typ :Field :field-name (strip-backquotes st)}})
-               (and (syntactic? c) {:ws ws :raw (str c) :tkn c}) ; literal syntactic char.
+                 (assoc pstate :one-token {:ws ws :raw st :tkn {:typ :Field :field-name (strip-backquotes st)}}))
+               (and (syntactic? c) (assoc pstate :one-token {:ws ws :raw (str c) :tkn c})) ; literal syntactic char.
                (let [pos (position-break s)
                      word (-> (subs s 0 (or pos (count s))) str/trim)]
                  (or ; We don't check for "builtin-fns"; as tokens they are just jvars.
-                  (and (keywords word)    {:ws ws :raw word :tkn (keywords word)})
+                  (and (keywords word) (assoc pstate :one-token {:ws ws :raw word :tkn (keywords word)}))
                   (when-let [[_ id] (re-matches #"^([a-zA-Z0-9\_]+).*" word)]              ; field or symbol in params map
-                    {:ws ws :raw id :tkn (util/read-str id)})
+                    (assoc pstate :one-token {:ws ws :raw id :tkn (util/read-str id)}))
                   (when-let [[_ id] (re-matches #"^(\$[a-zA-Z][A-Za-z0-9\_]*).*" word)]    ; jvar
-                    {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id}})
+                    (assoc pstate :one-token {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id}}))
                   (when-let [[_ id] (re-matches #"^(\${1,3}).*" word)]                     ; $, $$, $$$.
-                    {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id :special? true}})
+                    (assoc pstate :one-token {:ws ws :raw id :tkn {:typ :Jvar :jvar-name id :special? true}}))
                   (when-let [[_ id] (re-matches #"^(:[a-zA-Z][a-zA-Z0-9\-\_]*).*" word)]   ; pattern role
-                    {:ws ws :raw id :tkn {:typ :PatternRole :role-name id}})))
+                    (assoc pstate :one-token {:ws ws :raw id :tkn {:typ :PatternRole :role-name id}}))))
                (throw (ex-info "Char starts no known token:" {:raw c :line line}))))]
     (when *debugging-tokenizer?*
-      (println (cl-format nil "<----- result = ~S" result)))
-    result))
+      (println (cl-format nil "<----- one-token = ~S" (:one-token pstate))))
+    pstate))
 
 ;;; ToDo: I've lost track of what happens to c-style comments; they aren't in the argument pstate here!
 (defn filter-comments
@@ -338,31 +357,64 @@
   [pstate]
   (update pstate :tokens (fn [tkns] (filterv #(not (#{:EOL-comment :C-comment} (-> % :tkn :typ))) tkns))))
 
+(defn string-lit-col
+  "Return the column at which the :StringLit ends.
+   Necessary because StringLits can go multiple lines."
+  [col str-lit]
+  (if (str/index-of str-lit "\n")
+    (-> str-lit :tkn :value str/split-lines last count inc)
+    (+ col (-> str-lit :raw count))))
+
+(defn whitesp-col
+  "Return the column after any newlines"
+  [col ws]
+  (let [last-line (-> ws str/split-lines last)
+        len (-> last-line count inc)]
+    (if (str/index-of ws "\n")
+      len
+      (+ col len))))
+
+;;; ToDo: whitesp returns spaces and newlines. This needs to reflect that!
 (defn tokens-from-string
-  "Return pstate with :tokens and :string-block updated as the effect of tokenizing
-   :string-block into :tokens."
+  "Return pstate with :tokens and :string-block updated as the effect of tokenizing :string-block into :tokens.
+   This puts :line and :col into tokens too."
   [pstate]
   (loop [ps pstate
+         line 1
          col 1]
-    (let [lex (one-token-from-string (:string-block ps) (:cursor ps)) ; Returns a map with keys :ws :raw and :tkn.
-          new-lines (->> lex :ws (re-seq #"\n") count) ; :ws is in front of token.
-          col (if (> new-lines 0)
-                (- (count (:ws lex)) (str/last-index-of (:ws lex) "\n"))
-                (+ (count (:ws lex)) col))
-          tkn {:tkn (:tkn lex) :line (+ (:cursor ps) new-lines) :col col}]
-      (as-> ps ?ps
-        (update ?ps :string-block #(subs % (+ (count (:raw lex)) (count (:ws lex)))))
-        (update ?ps :cursor #(+ % new-lines))
-        (if (= ::end-of-block (:tkn lex))
-          (filter-comments ?ps)
-          (recur
-           (if (= (-> lex :tkn :typ) :Comment)
-             (update ?ps :comments conj tkn)
-             (update ?ps :tokens   conj tkn))
-           (+ (-> lex :raw count) col)))))))
+    (let [ps  (one-token-from-string ps)
+          lex (:one-token ps) ; Returns a map with keys :ws :raw and :tkn.
+          ps ps ; <=================== Update for SAME.
+          ws-new-lines (->> lex :ws (re-seq #"\n") count)]
+      (cond (= ::end-of-block (:tkn lex))   (filter-comments ps)
+            (=  :Comment  (-> lex :tkn :typ))
+            (recur (update ps :comments conj lex)
+                   line
+                   col) ; ToDo: Test this! <=======================
+            ;; StringLits have new-lines that are in addition to those in the whitespace. :string-block is taken care of.
+            (= :StringLit (-> lex :tkn :typ))
+            (recur
+             (as-> ps ?ps
+               (update ?ps :cursor #(+ % ws-new-lines))
+               (update ?ps :tokens conj (-> (:tkn lex)
+                                            (assoc :line (:cursor ?ps))
+                                            (assoc :col (whitesp-col col (:ws lex))))))
+             (+ line ws-new-lines (->> lex :raw (re-seq #"\n") count))
+             (string-lit-col col lex)) ; <======================= WRONG (and make it work for both).
+            :else ;; Non-StringLit
+            (recur
+             (as-> ps ?ps
+               (update ?ps :cursor #(+ % ws-new-lines))
+               (update ?ps :tokens (-> (:tkn lex) ; SAME!
+                                       (assoc :line (:cursor ?ps)) ; SAME!
+                                       (assoc :col  (+ col (-> lex :ws count))))) ; Should be SAME???
+               (update ?ps :string-block #(subs % (+ (-> lex :raw count) (-> lex :ws count)))))
+               (+ line ws-new-lines)
+               (whitesp-col col (:ws lex)))))))
 
 (defn tokenize
-  "Update :tokens and :line-seq. A token is a map with keys :tkn, :line :col."
+  "Update :tokens and :line-seq. A token is a map with keys :tkn, :line :col.
+   tokens-from-string (called here) adds :col and :line."
   [pstate]
   (let [ps (get-more pstate)]        ; charges up :string-block...
     (if (-> ps :string-block empty?) ; ...or not, if done.
