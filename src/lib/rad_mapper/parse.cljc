@@ -17,17 +17,11 @@
   [n]
   (reduce (fn [s _] (str s " ")) "" (range n)))
 
-;;; The 'defparse' parsing functions pass around complete state.
-;;; The lexer mostly produces maps where the :tkn is a string.
-;;; The parser uses these :tkn "string things" to produce map grammar map structures where ":tk/things",
-;;; and ":op/things" are created to match the corresponding "string things."
-;;; binary-op? is an example map from string things to :op/things: {"*" :op/multiply,...}.
-;;;
 ;;; The 'parse state' (AKA pstate) is a map with keys:
 ;;;   :result    - the parse structure from the most recent call to (parse :<some-rule-tag> pstate)
-;;;   :tokens    - tokenized content that needs to be parsed into :model. First on this vector is also :tkn.
+;;;   :head      - current token, not yet consumed.
+;;;   :tokens    - other tokens that needs to be parsed into :model.
 ;;;   :tags      - a stack of tags indicating where in the grammar it is parsing (used for debugging)
-;;;   :head      - current token, not yet consumed. It is also the first token on :tokens.
 ;;;   :line      - line in which token appears.
 ;;;   :col       - column where token starts.
 ;;;   :local     - temporarily stored parse content used later to form a complete grammar element.
@@ -159,22 +153,22 @@
   (or (regex-from-string st)
       {:raw "/" :tkn \/}))
 
-(declare get-more whitesp)
+(declare get-more)
 (defn quoted-string
   "Return a token map for a string delimited by matching single- or double-quote characters.
    Made more complex owing to
    Note that you get double-quoted strings for free from the Clojure reader."
   [pstate s quote-char ws]
-  (loop [ps pstate
+  (loop [ps (update pstate :string-block #(subs % (-> ws count inc)))
          chars (rest s)
          raw quote-char
          res ""]
-    (cond (= :eol       (first chars))         (throw (ex-info "unbalanced quoted string" {:string s}))
+    (cond (= ::eof      (first chars))         (throw (ex-info "unbalanced quoted string" {:string s}))
           (= quote-char (first chars))         (-> ps
                                                    (assoc :one-token {:ws ws :raw (str raw quote-char) :tkn {:typ :StringLit :value res}})
                                                    (update :string-block #(subs % 1)))
-          (and (= \\    (first chars))
-               (= quote-char (second chars)))  (recur (update ps :string-block #(subs % 1))
+          (and (= (first chars) \\)  ; escaped quote
+               (= (second chars) quote-char))  (recur (update ps :string-block #(subs % 2))
                                                       (-> chars rest rest)
                                                       (str raw \\ quote-char)
                                                       (str res quote-char))
@@ -219,6 +213,7 @@
    {:tkn :eol-comment :ws ws :raw <// string to the end of the line>} :value <string to the end of the line>}."
   [st ws]
   (let [line (-> st str/split-lines first)
+        ws (-> ws str/split-lines first)
         line (subs line (count ws))
         [raw text] (re-matches #"//(.*)$" line)]
     {:tkn {:typ :EOL-comment :text text} :raw raw :ws ws}))
@@ -300,7 +295,10 @@
 
 ;;; ToDo: See split-at.
 (defn get-more
-  "Update :string-block and :line-seq by getting more lines from the line-seq lazy seq."
+  "Update :string-block and :line-seq by getting more lines from the line-seq lazy seq.
+   This is called though
+      (1) eat-token ->  refresh-tokens ->  tokenize,  and
+      (2) quoted-string."
   [pstate]
   (as-> pstate ?ps
     (assoc  ?ps :string-block (->> ?ps :line-seq (take block-size) (map #(str % "\n")) (apply str)))
@@ -365,58 +363,62 @@
     (-> str-lit :tkn :value str/split-lines last count inc)
     (+ col (-> str-lit :raw count))))
 
-(defn whitesp-col
-  "Return the column after any newlines"
-  [col ws]
-  (let [last-line (-> ws str/split-lines last)
-        len (-> last-line count inc)]
-    (if (str/index-of ws "\n")
-      len
-      (+ col len))))
+(def diag (atom nil))
 
-;;; ToDo: whitesp returns spaces and newlines. This needs to reflect that!
+(defn lex-new-lines
+  "Return a map containing:
+     :lines-before - the number of newlines in whitespace before this token,
+     :lines-after  - the number of newlines used by this token (0 except for some StringLits),
+     :col-start    - the column where this token starts, and
+     :col-end      - the column where this token ends."
+  [lex col] ; col starts on zero.
+  (when lex
+    (let [{:keys [ws raw]} lex
+          lines (str/split-lines raw)
+          ws-before (->> ws str/split-lines last count)
+          has-newline? (second lines) ; Means it is a StringLit.
+          ws-newline? (index-of ws "\n")
+          len (-> lines last count)]
+      {:lines-before (->> ws (re-seq #"\n") count)
+       :lines-after (if has-newline? (count (re-seq #"\n" raw)) 0)
+       :col-start (if ws-newline? (inc ws-before) (+ col ws-before 1))
+       :col-end (if has-newline? len (+ col len ws-before))})))
+
 (defn tokens-from-string
   "Return pstate with :tokens and :string-block updated as the effect of tokenizing :string-block into :tokens.
    This puts :line and :col into tokens too."
   [pstate]
   (loop [ps pstate
-         line 1
-         col 1]
+         line (:line pstate)
+         col  (:col pstate)]
     (let [ps  (one-token-from-string ps)
           lex (:one-token ps) ; Returns a map with keys :ws :raw and :tkn.
-          ps ps ; <=================== Update for SAME.
-          ws-new-lines (->> lex :ws (re-seq #"\n") count)]
+          typ (-> lex :tkn :typ)
+          {:keys [lines-before lines-after col-start col-end]} (lex-new-lines lex (dec col))
+          ps (if (= ::end-of-block (:tkn lex))
+               ps
+               (as-> ps ?ps
+                 (update ?ps :line #(+ % lines-before lines-after))
+                 (assoc  ?ps :col col-end)
+                 (update ?ps :tokens conj (-> lex
+                                              (dissoc :ws :raw)
+                                              (assoc :line (+ line lines-before))
+                                              (assoc :col  col-start)))))]
       (cond (= ::end-of-block (:tkn lex))   (filter-comments ps)
-            (=  :Comment  (-> lex :tkn :typ))
-            (recur (update ps :comments conj lex)
-                   line
-                   col) ; ToDo: Test this! <=======================
-            ;; StringLits have new-lines that are in addition to those in the whitespace. :string-block is taken care of.
-            (= :StringLit (-> lex :tkn :typ))
-            (recur
-             (as-> ps ?ps
-               (update ?ps :cursor #(+ % ws-new-lines))
-               (update ?ps :tokens conj (-> (:tkn lex)
-                                            (assoc :line (:cursor ?ps))
-                                            (assoc :col (whitesp-col col (:ws lex))))))
-             (+ line ws-new-lines (->> lex :raw (re-seq #"\n") count))
-             (string-lit-col col lex)) ; <======================= WRONG (and make it work for both).
-            :else ;; Non-StringLit
-            (recur
-             (as-> ps ?ps
-               (update ?ps :cursor #(+ % ws-new-lines))
-               (update ?ps :tokens (-> (:tkn lex) ; SAME!
-                                       (assoc :line (:cursor ?ps)) ; SAME!
-                                       (assoc :col  (+ col (-> lex :ws count))))) ; Should be SAME???
-               (update ?ps :string-block #(subs % (+ (-> lex :raw count) (-> lex :ws count)))))
-               (+ line ws-new-lines)
-               (whitesp-col col (:ws lex)))))))
+            (=  :C-comment typ)             (recur (-> ps
+                                                       (update :comments conj lex)
+                                                       (update :string-block #(subs % (+ (-> lex :raw count) (-> lex :ws count)))))
+                                                   line
+                                                   col)
+            :else                           (recur (if (= :StringLit typ) ps (update ps :string-block #(subs % (+ (-> lex :raw count) (-> lex :ws count)))))
+                                                   (+ line lines-before lines-after)
+                                                   (inc col-end))))))
 
 (defn tokenize
   "Update :tokens and :line-seq. A token is a map with keys :tkn, :line :col.
    tokens-from-string (called here) adds :col and :line."
   [pstate]
-  (let [ps (get-more pstate)]        ; charges up :string-block...
+  (let [ps (get-more pstate)]        ; charges up :string-block... (as do calls to this in quoted-string).
     (if (-> ps :string-block empty?) ; ...or not, if done.
       (-> ps
           (assoc  :end-of-file? true) ;
@@ -591,7 +593,6 @@
          :reader       #?(:clj reader-or-str :cljs nil)
          :line-seq     (util/ln-seq reader-or-str)
          :call-count 0
-         :cursor 1 ; what line you are on; used in tokenizing.
          :comments []} ?ps
     (refresh-tokens ?ps) ; 1 of 3, refreshing tokens.
     (assoc ?ps :head (-> ?ps :tokens first :tkn)) ; One of two places :head is set; the other is eat-token.
@@ -976,7 +977,6 @@
 ;;; <literal> ::= string | number | 'true' | 'false' | regex | <obj> | <array>
 (defparse :ptag/literal
   [ps]
-  (reset! diag {:ps ps})
   (let [tkn (:head ps)]
     (cond (string-lit? tkn)               (-> ps (assoc :result (:value tkn)) eat-token)
           (literal? tkn)                  (-> ps (assoc :result tkn) eat-token),

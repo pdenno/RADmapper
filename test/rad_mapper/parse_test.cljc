@@ -11,10 +11,9 @@
 ;;;       I use backquote, and I'm not sure what sort of funky stuff ;^)
 
 (defn tokenize-head
-  "test-tokenize (below) doesn't produce tokens (except for head) it creates maps
-   containing :tkn, :line and :col. (:head ps) is a token; make it a vector of one of these maps."
+  "make-pstate removes first token (and takes its :tkn). For testing of the tokenizer, we put it back."
   [ps]
-  (-> {:line 1 :col 1}
+  (-> {:line 1 :col 1} ; ToDo: This is less than perfect. Only work if the text really starts in line 1, col 1.
       (assoc :tkn (:head ps))
       vector))
 
@@ -24,16 +23,14 @@
   [s]
   (with-open [rdr (io/reader (char-array s))]
     (as-> (par/make-pstate rdr) ?ps
-      (par/tokens-from-string ?ps)
       (par/tokenize ?ps)
-      (into (tokenize-head ?ps) (:tokens ?ps))))))
+      (into (tokenize-head ?ps) (:tokens ?ps)))))
 
-#?(:cljs
+:cljs
 (defn test-tokenize
   "Run the tokenizer on the argument string."
   [s]
   (as-> (par/make-pstate s) ?ps
-    (par/tokens-from-string ?ps)
     (par/tokenize ?ps)
     (into (tokenize-head ?ps) (:tokens ?ps)))))
 
@@ -100,8 +97,8 @@
              (test-tokenize "true?:foo/bar::foo/bat"))))
 
     (testing "Problems with comments?" ; ToDo: Currently cljs has multi-line /* comments */ turned off.
-         (is (= [{:line 1, :col 1, :tkn 1}
-                 {:tkn 2, :line 2, :col 20}
+         (is (= [{:line 1, :col 1,   :tkn 1}  ; This will be :col 1 only because of tokenize-head! (It should be :col 2)
+                 {:line 2, :col 20,  :tkn 2}
                  {:tkn ::par/eof}]
                 (test-tokenize
                  " 1       /*Foo*/
@@ -271,6 +268,7 @@
       (is (parse-ok? "$reduce([1..5], function($x,$y){$x + $y}, 100)"))
       (is (parse-ok? "$fn1($fn2($v).a.b)"))
       (is (parse-ok? "$sum($filter($v.InvoiceLine, function($v,$i,$a) { $v.Quantity < 0 }).Price.PriceAmount)"))
+      ; <=================================================
       #_(is (parse-ok? "$lookup({}, 'a') or 'no match'")) ; Currently NOT okay! (JSONata returns true on execution of this, BTW.)
 
       (is (parse-ok? "( $x := 1; $f($x); $g($x) )")))))
