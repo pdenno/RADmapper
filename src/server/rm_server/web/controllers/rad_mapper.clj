@@ -46,7 +46,7 @@
   (let [{:keys [ident-type ident-val request-objs]} (-> request :query-params keywordize-keys)
         request-objs (split request-objs #"\|")]
      (if (and ident-type ident-val request-objs)
-      (let [res (bi/$get [[ident-type ident-val] request-objs])]
+       (let [res (bi/$get [[ident-type ident-val] request-objs])]
         (response/ok res))
       (response/bad-request "Missing query args."))))
 

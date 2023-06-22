@@ -20,10 +20,12 @@
               [rad-mapper.codelib           :refer [codelib-atm]]
               [wkok.openai-clojure.api      :as openai]]
        :cljs [[ajax.core :refer [GET POST]]
+              [applied-science.js-interop :as j]
               [datascript.core           :as d]
               [datascript.pull-api       :as dp]
               ["nata-borrowed"           :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
               [goog.crypt.base64         :as jsb64]
+              [goog.object               :as gobj]
               [rad-mapper.promesa-config :as pm]])
    [cemerick.url                    :as url]
    [camel-snake-kebab.core          :as csk]
@@ -32,6 +34,7 @@
    [clojure.string                  :as str  :refer [index-of]]
    [clojure.walk                    :as walk :refer [keywordize-keys]]
    [promesa.core                    :as p]
+   [rad-mapper.evaluate             :as ev]
    [rad-mapper.query                :as qu]
    [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock]]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
@@ -147,13 +150,6 @@
 (defn !=       "not equal, need not be numbers" [x y] (not= (jflatten x) (jflatten y)))
 
 (declare $string)
-
-;;; ToDo: Get SCI dynamic variables working so that you don't need this!
-#_(def try-threading ^:sci/macro
-  (fn [_&form _&env body]
-    `(try (reset! bim/threading? true)
-          ~@body
-          (finally (reset! bim/threading? false)))))
 
 (defn thread
   "Apply the function to the object. This should be called with the dynamic variable *threading?* bound to true."
@@ -297,7 +293,7 @@
                 :else            nil)))
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
 
-(def value-step ^:sci/macro
+#_(def value-step ^:sci/macro
   (fn [_&form _&env body]
       `(-> (fn [& ignore#] ~body)
            (with-meta {:bi/step-type :bi/value-step :body '~body}))))
@@ -310,23 +306,23 @@
   ([k] (get-scoped @$ k))
   ([obj k] (get obj k)))
 
-(def primary ^:sci/macro
+#_(def primary ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [& ignore#] ~body)
          (with-meta {:bi/step-type :bi/primary}))))
 
-(def init-step ^:sci/macro
+#_(def init-step ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
 
-(def map-step ^:sci/macro
+#_(def map-step ^:sci/macro
   (fn [_&form _&env body]
     `(-> (fn [_x#] ~body)
          (with-meta {:bi/step-type :bi/map-step :body '~body}))))
 
 ;;; Implements the JSONata-like <test> ? <then-exp> <else-exp>."
-(def conditional ^:sci/macro
+#_(def conditional ^:sci/macro
   (fn [_&form _&env condition e1 e2]
     `(let [cond# ~condition
            answer# (if (fn? cond#) (cond#) cond#)]
@@ -1648,6 +1644,20 @@
            [_fname _opts]
            (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
+(def diag (atom nil))
+
+;;; ToDo: You need :fn/code to do this! (Add to query)
+#?(:cljs
+   (defn $get-add-fn
+     "If the out-props contains :fn/exe, then you need to ev/processRM :fn/src and add the resulting function."
+     [resp out-props]
+     (if (some #(= % "fn/exe") out-props) ; These use slash.
+       (let [src (get resp "fn_src")] ; These use underscore.
+         (reset! diag {:resp resp :out-props out-props :src src})
+         (assoc resp "fn_exe" (try (ev/processRM :ptag/exp src {:execute? true})
+                                   (catch :default _e "Did not compile!"))))
+       resp)))
+
 ;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
 ;;;  = (rad-mapper.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:schema/content])
 (defn $get
@@ -1669,7 +1679,7 @@
                     req-data {:params {:ident-type k
                                        :ident-val v
                                        :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                              :handler (fn [resp] (p/resolve! prom resp))
+                              :handler (fn [resp] (p/resolve! prom ($get-add-fn resp out-props)))
                               :error-handler (fn [{:keys [status status-text]}]
                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
                                                                         {:status status :status-text status-text})))
@@ -1677,25 +1687,30 @@
                 (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
                 prom))))))
 
+ #?(:clj
 (defn $put
   "Read a file of JSON or XML, creating a map."
   [[ident-type ident-val] obj]
-  #?(:clj
-     (if (= ident-type "library/fn")
-       (try (let [ns-obj (reduce-kv (fn [m k v] (assoc m (-> k (str/replace  #"_" "/") keyword) v)) {} obj)]
-              (d/transact codelib-atm [(into {:fn/name ident-val} ns-obj)]))
+  (if (= ident-type "library/fn")
+    (try (let [ns-obj (reduce-kv (fn [m k v] (assoc m (-> k (str/replace  #"_" "/") keyword) v)) {} obj)]
+           (d/transact codelib-atm [(into {:fn/name ident-val} ns-obj)])
+           true)
          (catch Throwable e (ex-info "$put to library failed." {:obj obj :message (.getMessage e)})))
-       (throw (ex-info "Only $put to library/fn currently supported." {:ident-type ident-type})))
-  :cljs
-      (let [prom (p/deferred)
-            req-data {:params {:ident-type ident-type :ident-val ident-val :obj obj}
-                      :handler (fn [resp] (p/resolve! prom resp))
-                      :error-handler (fn [{:keys [status status-text]}]
-                                       (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-put"
-                                                                {:status status :status-text status-text})))
-                      :timeout 5000}]
-                (POST (str svr-prefix "/api/graph-put") req-data) ; ToDo: use Martian.
-                prom)))
+    (throw (ex-info "Only $put to library/fn currently supported." {:ident-type ident-type})))))
+
+(:cljs
+(defn $put
+  "Call server for $put (an api/graph-put."
+  [[ident-type ident-val] obj]
+  (let [prom (p/deferred)
+        req-data {:params {:ident-type ident-type :ident-val ident-val :obj obj}
+                  :handler (fn [resp] (p/resolve! prom resp))
+                  :error-handler (fn [{:keys [status status-text]}]
+                                   (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-put"
+                                                            {:status status :status-text status-text})))
+                  :timeout 5000}]
+    (POST (str svr-prefix "/api/graph-put") req-data) ; ToDo: use Martian.
+    prom)))
 
 (defn rewrite-sheet-for-mapper
   "Reading a sheet returns a vector of maps in which the first map is assumed to

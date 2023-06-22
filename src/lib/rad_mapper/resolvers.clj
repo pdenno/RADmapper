@@ -9,10 +9,15 @@
    [datahike.pull-api   :as dp]
    [mount.core :as mount :refer [defstate]]
    [rad-mapper.util     :as util :refer [resolve-db-id]]
+   [rad-mapper.codelib  :refer [codelib-atm]]
    [taoensso.timbre     :as log]))
 
 ;;; I think generally speaking this has to be recompiled and (user/restart) to catch resolver updates.
+;;; It is okay if the output doesn't contain all of the :pco/output (try adding :fn/DNE)
+;;; It is okay if the query contains less than what is in :pco/output
+;;; It is NOT okay that the query contains something that is not returned; See codelib resolvers for a way around this.
 
+;;; ToDo: Get rid of this and 'connect-atm'. resolvers.clj is for any DB (so far schema and codelib).
 (def db-cfg-atm "Configuration map used for connecting to the db. It is set in core."  (atom nil))
 
 (defn connect-atm
@@ -54,7 +59,7 @@
     (cond-> (dp/pull @(connect-atm) '[*] ent)
       resolve? (resolve-db-id (connect-atm) filter-set))))
 
-;;;============================ Resolvers  =====================================
+;;; ====================== Schema-db resolvers ========================================================
 ;;; https://pathom3.wsscode.com/docs/resolvers/ :
 ;;; "So resolvers establish edges in the Pathom graph, allowing Pathom to traverse from some source data to some target data."
 ;;; [I don't think that the requires that the Pathom graph and the database have similar connectivity. You can do whatever
@@ -120,6 +125,34 @@
        (resolve-db-id (connect-atm) #{:db/id})
        :schema/content)})
 
+;;; ====================== Codelib resolvers  ========================================================
+(pco/defresolver codelib-fn-name->codelib-id
+  "Return the db/id for a codelib object. Subsequent queries can pull the properties."
+  [{:library/keys [fn]}]
+  {::pco/output [:db/id]}
+  {:db/id (d/q '[:find ?ent .
+                 :in $ ?fn-name
+                 :where [?ent :fn/name ?fn-name]]
+               @codelib-atm fn)})
+
+;;; (pathom-resolve {:library/fn 'schemaParentChild'} [:fn/name :fn/doc :fn/src])
+;;; It is okay if the output doesn't contain all of the :pco/output (try adding :fn/DNE)
+;;; It is okay if the query contains less than what is in :pco/output
+;;; It is NOT okay that the query contains something that is not returned.
+(pco/defresolver codelib-id->fn-props
+  "Return properties for a codelib object"
+  [{:db/keys [id]}]
+  {::pco/output [:fn/name :fn/src :fn/doc]}
+  (-> {:db/id id}
+      (resolve-db-id codelib-atm #{:db/id})))
+
+(pco/defresolver codelib-id->extra
+  "Return a placeholder for the :fn/exe property."
+  [{:db/keys [id]}]
+  {::pco/output [:fn/exe]}
+  {:fn/exe :resolvers/replace-me})
+
+;;; ====================== Miscellaneous resolvers ========================================================
 ;;; (pathom-resolve {:db/name :schema/db"} [:db/connection])
 (pco/defresolver db-connection
   "Return a keyword designating the schema database for use by clients."
@@ -186,6 +219,9 @@
   (reset! indexes (pci/register [list-id->list-content
                                  schema-name->schema-object
                                  schema-object->schema-props
+                                 codelib-fn-name->codelib-id
+                                 codelib-id->fn-props
+                                 codelib-id->extra
                                  db-connection
                                  current-system-time]))
   (pathom-resolve {} [:server/time])

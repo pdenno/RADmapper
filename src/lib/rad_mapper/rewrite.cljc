@@ -6,8 +6,6 @@
    [clojure.pprint                       :refer [cl-format]]
    [clojure.spec.alpha          :as s]
    [promesa.core                :as p]
-   [rad-mapper.builtin          :as bi]
-   [rad-mapper.builtin-macros   :as bim]
    [rad-mapper.query            :as qu]
    [rad-mapper.util             :as util :refer [dgensym! reset-dgensym! rewrite-meth qvar? unquote-qvars quote-qvars]]
    [rad-mapper.parse            :as par  :refer [builtin-fns]]
@@ -31,24 +29,24 @@
    :tk/false       false
    :op/or          'or
    :op/and         'and
-   :op/lt          'bi/lt
-   :op/gt          'bi/gt
-   :op/lteq        'bi/lteq
-   :op/gteq        'bi/gteq
-   :op/eq          'bi/eq
-   :op/neq         'bi/neq
-   :op/in          'bi/in
-   :op/thread      'bi/thread
-   :op/&           'bi/&
-   :op/concat-op   'bi/concat-op
-   :op/add         'bi/add
-   :op/subtract    'bi/subtract
-   :op/multiply    'bi/multiply
-   :op/%           'bi/%
-   :op/div         'bi/div
-   :op/get-step    'bi/get-step
-   :op/filter-step 'bi/filter-step
-   :op/reduce-step 'bi/reduce-step})
+   :op/lt          'rad-mapper.builtin/lt
+   :op/gt          'rad-mapper.builtin/gt
+   :op/lteq        'rad-mapper.builtin/lteq
+   :op/gteq        'rad-mapper.builtin/gteq
+   :op/eq          'rad-mapper.builtin/eq
+   :op/neq         'rad-mapper.builtin/neq
+   :op/in          'rad-mapper.builtin/in
+   :op/thread      'rad-mapper.builtin/thread
+   :op/&           'rad-mapper.builtin/&
+   :op/concat-op   'rad-mapper.builtin/concat-op
+   :op/add         'rad-mapper.builtin/add
+   :op/subtract    'rad-mapper.builtin/subtract
+   :op/multiply    'rad-mapper.builtin/multiply
+   :op/%           'rad-mapper.builtin/%
+   :op/div         'rad-mapper.builtin/div
+   :op/get-step    'rad-mapper.builtin/get-step
+   :op/filter-step 'rad-mapper.builtin/filter-step
+   :op/reduce-step 'rad-mapper.builtin/reduce-step})
 
 (defn rewrite [obj & keys]
   (cond (map? obj)                            (if-let [typ (:typ obj)] (rewrite-meth typ obj keys) obj)
@@ -77,10 +75,10 @@
   (letfn [(name-exp-pair [x]
             (binding [*assume-json-data?* true] ; This is for bi/jflatten, Rule 3.
               (cond (and (-> x :var :special?) (= "$" (-> x :var :jvar-name)))
-                    `(~(dgensym!) (bim/set-context! ~(-> x :init-val rewrite))),
+                    `(~(dgensym!) (rad-mapper.builtin-macros/set-context! ~(-> x :init-val rewrite))),
                     ;; ToDo: Is setting $$ a legit user activity?
                     (and (-> x :var :special?) (= "$$" (-> x :var :jvar-name)))
-                    `(~(dgensym!) (reset! bim/$$ ~(-> x :init-val rewrite))),
+                    `(~(dgensym!) (reset! rad-mapper.builtin-macros/$$ ~(-> x :init-val rewrite))),
                     :else
                     `(~(->> x :var rewrite)
                       ~(-> x :init-val rewrite)))))]
@@ -93,9 +91,9 @@
 
 (defrewrite :Jvar  [m]
   (cond (and (:special? m) (= "$" (:jvar-name m)))
-        '(bi/deref$)
+        '(rad-mapper.builtin/deref$)
         (and (:special? m) (= "$$" (:jvar-name m)))
-        `(deref bim/$$)
+        `(deref rad-mapper.builtin-macros/$$)
         :else (-> m :jvar-name symbol)))
 
 (def ^:dynamic *inside-delim?*
@@ -108,12 +106,12 @@
 
 (defrewrite :Field [m]
   (cond *inside-delim?* (:field-name m),
-        *inside-step?*  `(~'bi/get-scoped ~(:field-name m)), ; ToDo: different context than *inside-delim?*
-        :else `(~'bi/get-step  ~(:field-name m))))
+        *inside-step?*  `(~'rad-mapper.builtin/get-scoped ~(:field-name m)), ; ToDo: different context than *inside-delim?*
+        :else `(~'rad-mapper.builtin/get-step  ~(:field-name m))))
 
 (defrewrite :Qvar [m]
   (if *inside-step?*
-    `(~'bi/get-scoped '~(-> m :qvar-name symbol)),
+    `(~'rad-mapper.builtin/get-scoped '~(-> m :qvar-name symbol)),
     `'~(-> m :qvar-name symbol)))
 
 ;;; Java's regex doesn't recognize switches /g and /i; those are controlled by constants in java.util.regex.Pattern.
@@ -152,12 +150,12 @@
   (letfn [(cleanup [obj] ; :base-body is data; it should not contain get-scoped. ToDo: What else might it contains?
             (cond (map? obj)    (reduce-kv (fn [m k v] (assoc m (cleanup k) (cleanup v))) {} obj)
                   (vector? obj) (mapv cleanup obj)
-                  (seq? obj)    (if (= (first obj) 'bi/get-scoped) (second obj) obj)
+                  (seq? obj)    (if (= (first obj) 'rad-mapper.builtin/get-scoped) (second obj) obj)
                   :else obj))]
     (let [params    (-> m :params rewrite)
           base-body (-> m :body rewrite)
           order @key-order]
-      `(~'bi/express {:params      '~(remove map? params)
+      `(~'rad-mapper.builtin/express {:params      '~(remove map? params)
                       :options     '~(some #(when (map? %) %) params)
                       :base-body   ~(cleanup base-body)
                       :key-order   ~order}))))
@@ -193,14 +191,14 @@
     (if (builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
       (binding [*in-regex-fn?* (#{"$match" "$split" "$contains" "$replace"} fname)]
         `(~(symbol "bi" fname) ~@(binding [*inside-let?* false] (-> m :args rewrite))))
-      `(bi/fncall   {:func ~(symbol fname)
+      `(rad-mapper.builtin/fncall   {:func ~(symbol fname)
                      :args [~@(binding [*inside-let?* false] (-> m :args rewrite))]}))))
 
 (defrewrite :RegExp [m]
     (if *in-regex-fn?*
       (make-regex (:base m) (:flags m))
       (let [s (dgensym!)]
-        `(fn [~s] (bi/match-regex ~s ~(make-regex (:base m) (:flags m)))))))
+        `(fn [~s] (rad-mapper.builtin/match-regex ~s ~(make-regex (:base m) (:flags m)))))))
 
 (defrewrite :UniOpExp [m]
   `(~(-> m :uni-op str symbol)
@@ -213,7 +211,7 @@
   (if *assume-json-data?*
     `(with-meta
        ~(mapv rewrite (:exprs m))
-       {:bi/json-array? true})
+       {:rad-mapper.builtin/json-array? true})
     (mapv rewrite (:exprs m))))
 
 (defn dbs-from-qform
@@ -258,7 +256,7 @@
   (let [pats (->> m :patterns (filter #(= (:typ %) :QueryPattern)))]
     (if (or (not-any? #(:db %) pats) (every?  #(:db %) pats))
       (let [{:keys [where in pred-args qcall]} (rewrite-qform (:patterns|qcall m))]
-      `(~'bi/query
+      `(~'rad-mapper.builtin/query
         {:body ~(or qcall `(quote ~where))
          :in '~in
          :pred-args '~pred-args
@@ -291,7 +289,7 @@
   `(~(-> m :def rewrite) ~@(->> m :args (map rewrite))))
 
 (defrewrite :ConditionalExp [m]
-  `(bi/conditional ~(-> m :predicate rewrite)  ~(-> m :exp1 rewrite)  ~(-> m :exp2 rewrite)))
+  `(rad-mapper.builtin/conditional ~(-> m :predicate rewrite)  ~(-> m :exp1 rewrite)  ~(-> m :exp2 rewrite)))
 
 (defrewrite :OptionsMap [m]
   (-> (reduce (fn [res pair]
@@ -324,7 +322,7 @@
                  (= :op/get-step p2)
                  (map? p3) (= :ApplyFilter (:typ p3)))
             (recur (into res (vector p1
-                                     'bi/value-step
+                                     'rad-mapper.builtin/value-step
                                      {:typ :ValueStep :body (:body p3)}))
                    (->> svals (drop 3) vec))
             :else (recur (conj res p1)
@@ -350,15 +348,15 @@
                     (and (seq? form) (-> form first name keyword path-fn?)))
               form
               `(~sub ~form)))]
-    (into (-> (wrap-form? (first forms) 'bi/init-step) vector)
+    (into (-> (wrap-form? (first forms) 'rad-mapper.builtin/init-step) vector)
           (map #(if (and (= (first %) 'quote) (-> % second qvar?)) ; ToDo: Why this special condition for qvar, and not for Field?
-                  (wrap-form? % 'bi/get-step)                      ; Answer: Field uses *inside-step?* binding, which I'm trying to avoid.
-                  (wrap-form? % 'bi/map-step))                     ; (See ToDo at top of file.) This might be the way to get that done!
+                  (wrap-form? % 'rad-mapper.builtin/get-step)                      ; Answer: Field uses *inside-step?* binding, which I'm trying to avoid.
+                  (wrap-form? % 'rad-mapper.builtin/map-step))                     ; (See ToDo at top of file.) This might be the way to get that done!
                (rest forms)))))
 
 ;;; Path are created in gather-steps.
 (defrewrite :Path [m]
-  `(bi/run-steps
+  `(rad-mapper.builtin/run-steps
     ~@(binding [*inside-step?* false
                 *inside-delim?* false]
         (->> m
@@ -484,18 +482,18 @@
   (when (> (-> m :exps count) 1)
     (throw (ex-info "Primary with multiple expressions." {:exp m})))
   (binding [*inside-step?* true]
-    `(bi/primary  ~(-> m :exps first rewrite))))
+    `(rad-mapper.builtin/primary  ~(-> m :exps first rewrite))))
 
 (defrewrite :ApplyFilter [m]
   (reset-dgensym!)
   (let [sym (dgensym!)
         body (binding [*inside-step?* true] (-> m :body rewrite))]
-    `(bi/filter-step
-      (fn [~sym] (binding [bim/$ (atom ~sym)] ~body)))))
+    `(rad-mapper.builtin/filter-step
+      (fn [~sym] (binding [rad-mapper.builtin-macros/$ (atom ~sym)] ~body)))))
 
 (defrewrite :ValueStep [m]
   (let [body (binding [*inside-step?* true] (-> m :body rewrite))]
-    `(bi/value-step [~body])))
+    `(rad-mapper.builtin/value-step [~body])))
 
 (def spec-ops (-> par/binary-op? vals set)) ; ToDo: Not necessary?
 
@@ -511,7 +509,7 @@
   "Returns true if matches value-step."
   [bvec]
   (let [[_p1 p2 p3] bvec]
-    (and p3 (= p2 'bi/value-step))))
+    (and p3 (= p2 'rad-mapper.builtin/value-step))))
 
 ;;; Note: If support of filter-step non-compositional semantics is still "a thing" this is the place to fix it.
 (defn gather-steps ; ToDo: Should :reduce-step really be :path?=true ?
@@ -636,11 +634,11 @@
                                    (if (= pval prec)
                                      {:pos pos
                                       :form (let [op (-> ?omap :op symbol)]
-                                              (if (= op 'bi/thread) ; This allows us to not need a macro for threading
+                                              (if (= op 'rad-mapper.builtin/thread) ; This allows us to not need a macro for threading
                                                 (let [fn-arg (-> info :args (nth (inc pos)) first)]
-                                                  `(try (reset! bim/threading? true)
+                                                  `(try (reset! rad-mapper.builtin-macros/threading? true)
                                                         (~op ~(nth (:args info) (dec pos)) ~fn-arg)
-                                                        (finally (reset! bim/threading? false))))
+                                                        (finally (reset! rad-mapper.builtin-macros/threading? false))))
                                                 (list op
                                                       (nth (:args info) (dec pos))
                                                       (nth (:args info) (inc pos)))))}
@@ -663,25 +661,25 @@
 (def op-precedence-tbl ; lower :val means binds tighter.
   {'or               {:path? false :assoc :left :val 1000}
    'and              {:path? false :assoc :left :val 900}
-   'bi/lt            {:path? false :assoc :none :val 800}
-   'bi/gt            {:path? false :assoc :none :val 800}
-   'bi/lteq          {:path? false :assoc :none :val 800}
-   'bi/gteq          {:path? false :assoc :none :val 800}
-   'bi/eq            {:path? false :assoc :none :val 800}
-   'bi/neq           {:path? false :assoc :none :val 800}
-   'bi/in            {:path? false :assoc :none :val 700}
-   'bi/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
-   'bi/&             {:path? false :assoc :left :val 400} ; ToDo guessing
-   'bi/concat-op     {:path? false :assoc :left :val 400}
-   'bi/add           {:path? false :assoc :left :val 400}
-   'bi/subtract      {:path? false :assoc :left :val 400}
-   'bi/range         {:path? false :assoc :left :val 400} ; ToDo guessing
-   'bi/multiply      {:path? false :assoc :left :val 300}
-   'bi/%             {:path? false :assoc :left :val 300}
-   'bi/div           {:path? false :assoc :left :val 300}
-   'bi/get-step      {:path? true  :assoc :left :val 100}
-   'bi/filter-step   {:path? true  :assoc :left :val 100}
-   'bi/reduce-step   {:path? true  :assoc :left :val 100}})
+   'rad-mapper.builtin/lt            {:path? false :assoc :none :val 800}
+   'rad-mapper.builtin/gt            {:path? false :assoc :none :val 800}
+   'rad-mapper.builtin/lteq          {:path? false :assoc :none :val 800}
+   'rad-mapper.builtin/gteq          {:path? false :assoc :none :val 800}
+   'rad-mapper.builtin/eq            {:path? false :assoc :none :val 800}
+   'rad-mapper.builtin/neq           {:path? false :assoc :none :val 800}
+   'rad-mapper.builtin/in            {:path? false :assoc :none :val 700}
+   'rad-mapper.builtin/thread        {:path? false :assoc :left :val 700} ; ToDo guessing
+   'rad-mapper.builtin/&             {:path? false :assoc :left :val 400} ; ToDo guessing
+   'rad-mapper.builtin/concat-op     {:path? false :assoc :left :val 400}
+   'rad-mapper.builtin/add           {:path? false :assoc :left :val 400}
+   'rad-mapper.builtin/subtract      {:path? false :assoc :left :val 400}
+   'rad-mapper.builtin/range         {:path? false :assoc :left :val 400} ; ToDo guessing
+   'rad-mapper.builtin/multiply      {:path? false :assoc :left :val 300}
+   'rad-mapper.builtin/%             {:path? false :assoc :left :val 300}
+   'rad-mapper.builtin/div           {:path? false :assoc :left :val 300}
+   'rad-mapper.builtin/get-step      {:path? true  :assoc :left :val 100}
+   'rad-mapper.builtin/filter-step   {:path? true  :assoc :left :val 100}
+   'rad-mapper.builtin/reduce-step   {:path? true  :assoc :left :val 100}})
 
 (defn precedence [op]
   (if (contains? op-precedence-tbl op)

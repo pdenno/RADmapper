@@ -4,6 +4,7 @@
    [clojure.java.io     :as io]
    [datahike.api        :as d]
    [mount.core          :as mount :refer [defstate]]
+   [rad-mapper.libcode  :refer [library-code]]
    [taoensso.timbre     :as log]))
 
 (def db-cfg-atm "Configuration map used for connecting to the db. It is set in core."  (atom nil))
@@ -20,9 +21,9 @@
 (def db-schema
   "Defines the datahike schema for this database.
      :db/db.cardinality=many means value is a vector of values of some :db.type."
-  [#:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,    :ident :fn/name :unique :db.unique/identity}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :fn/src}
-   #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :fn/doc}])
+  [#:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/name :unique :db.unique/identity}
+   #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/src}
+   #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/doc}])
 
 (def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)
 (def db-dir "The directory containing schema DBs. Can't be set at compile time in Docker." nil)

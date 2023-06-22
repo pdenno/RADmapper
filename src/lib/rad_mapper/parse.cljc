@@ -11,12 +11,6 @@
    [rad-mapper.parse-macros :refer [defparse *debugging?* parse parse-dispatch]])
   #?(:cljs (:require-macros [rad-mapper.parse-macros :refer [defparse]])))
 
-;;; from utils.cljc
-(defn nspaces
-  "Return a string of n spaces."
-  [n]
-  (reduce (fn [s _] (str s " ")) "" (range n)))
-
 ;;; The 'parse state' (AKA pstate) is a map with keys:
 ;;;   :result    - the parse structure from the most recent call to (parse :<some-rule-tag> pstate)
 ;;;   :head      - current token, not yet consumed.
@@ -31,6 +25,14 @@
 
 ;;; ToDo:
 ;;;   - Rethink the lexer/parser dichotomy. See Lezer, for example. My continue-tag stuff and regex is pretty bad!
+
+;;; from utils.cljc
+(defn nspaces
+  "Return a string of n spaces."
+  [n]
+  (reduce (fn [s _] (str s " ")) "" (range n)))
+
+(def diag (atom nil))
 
 (util/config-log (if *debugging?* :debug :info))
 
@@ -78,7 +80,7 @@
 (def datetime-fns (fn-maps ["$fromMillis" "$millis" "$now" "$toMillis"]))
 (def higher-fns   (fn-maps ["$filter" "$map" "$reduce" "$sift" "$single"]))
 ;;; Non-JSONata functions
-(def rm-fns       (fn-maps ["$db" "$get" "$eIdent" "$getSpreadsheet" "$identities" "$pull" "$qIdent" "$llmExtract" "$llmMatch"]))
+(def rm-fns       (fn-maps ["$db" "$get" "$eIdent" "$getSpreadsheet" "$identities" "$pull" "$put" "$qIdent" "$llmExtract" "$llmMatch"]))
 
 (def builtin-fns (merge numeric-fns agg-fns boolean-fns array-fns string-fns object-fns datetime-fns higher-fns rm-fns))
 (def builtin? (-> builtin-fns keys (into ["$$" \$]) set))
@@ -363,8 +365,6 @@
     (-> str-lit :tkn :value str/split-lines last count inc)
     (+ col (-> str-lit :raw count))))
 
-(def diag (atom nil))
-
 (defn lex-new-lines
   "Return a map containing:
      :lines-before - the number of newlines in whitespace before this token,
@@ -437,7 +437,6 @@
              :else (recur (tokenize ps)))))))
 
 ;;; ============ Parser Utilities ============================================================
-(def diag (atom nil))
 (def report-pstate? "This is used for generating error messages. It is false for the exerciser." (atom false))
 
 (defn ps-throw
@@ -908,7 +907,10 @@
   (as-> ps ?ps
     (parse-list ?ps \( \) \; :ptag/exp)
     (assoc ?ps :result
-           {:typ (if (some #(= :JvarDecl (:typ %)) (:result ?ps))
+           {:typ (if (some #(let [typ (:typ %)]
+                              (or (= :JvarDecl typ)
+                                  (and (= :FnCall typ) (= "$put" (:fn-name %)))))
+                             (:result ?ps))
                    :CodeBlock
                    :Primary)
             :exps (:result ?ps)})))

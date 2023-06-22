@@ -7,10 +7,73 @@
 
 ;;; ($get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]])
 (def rm-examples
-  [{:name "So simple!"
+  [{:name "Get a library function"
+    :code "$get([['library/fn', 'schemaParentChild'],['fn/name', 'fn/doc', 'fn/src','fn/exe']])"}
+
+#_{:name "Fix this bug too"
+    :code "$shape := function($p, $spc) { $reduce($children($spc, $p),
+                      function($tree, $c)
+                         { $update($tree,
+                                   $p,
+                                   function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or \\'<data>\\')}) },
+                      {})};"}
+
+   {:name "partial solution"
+    :code "{'ProcessInvoice':
+    {'ApplicationArea':
+      {'CreationDateTime': '<creation-date-time-data>'},
+      'DataArea'       :
+      {'Invoice':
+        {'InvoiceLine':
+          {'BuyerParty':
+            {'Location': {'Address': {'BuildingNumber': $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'BuildingNumber'),
+                                                  'CityName'      : $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'City'),
+                                                  'CountryCode'   : '<replace-me>',
+                                                  'PostalCode'    : $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'Zipcode')
+                                                  'StreetName'    : $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'StreetName')}}}
+             'TaxIDSet': {'ID': '<id-data>'}},
+             'Item'    : {'ManufacturingParty': {'Name': '<name-data>'}}}},
+        'Process':      '<process-data>'}}"}
+
+   {:name "Fix this bug"
+   :code "($schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+ $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+ $pcQuery   := $get([['library/fn' , 'schemaParentChild'], ['fn/src', 'fn/exe']]).fn_exe;
+ $rootQuery := $get([['library/fn' , 'schemaRoots'],       ['fn/src', 'fn/exe']]).fn_exe;
+ $shape     := $get([['library/fn' , 'schemaShape'],       ['fn/src', 'fn/exe']]).fn_exe;
+
+ [$pcQuery, $rootQuery, $shape]
+)"}
+
+
+   {:name "Using library code"
+    :code "($schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+ $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+ $pcQuery   := $get([['library/fn' , 'schemaParentChild'], ['fn/src', 'fn/exe']]).fn_exe;
+ $rootQuery := $get([['library/fn' , 'schemaRoots'],       ['fn/src', 'fn/exe']]).fn_exe;
+ $shape     := $get([['library/fn' , 'schemaShape'],       ['fn/src', 'fn/exe']]).fn_exe;
+
+ $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.
+ $schema2PC    := $pcQuery($schema2);     // The first two return binding sets for {?parent x ?child y}
+ $schema1Roots := $rootQuery($schema1);   // The last two return binding sets for {?name} (of a root).
+ $schema2Roots := $rootQuery($schema2);
+
+ {'shape1' : $shape($schema1Roots.?name[0], $schema1PC),
+  'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
+)"}
+
+   {:name "Try (-1) : JSONata-like"
+    :code
+    "( // Ordinary JSONata-like expressions: get the names of the two schema in the LHS pane:
+  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content', 'schema/name']]);
+  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content', 'schema/name']]);
+  $q := query{[?e :schema_name ?name]};
+  $q($s1)  )"}
+
+   #_{:name "So simple!"
     :code "1 + 2"}
 
-   {:name "Try (0): Schema list"
+   #_{:name "Try (0): Schema list"
       :code "$get([['list/id', 'ccts/message-schema'], ['list/content']])"}
 
    {:name "Try (1): Small remote query"

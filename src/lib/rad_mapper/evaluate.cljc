@@ -8,8 +8,8 @@
     [clojure.string               :as str]
     [mount.core                   :refer [defstate]]
     [promesa.core                 :as p]
-    [rad-mapper.builtin           :as bi]
-    [rad-mapper.builtin-macros    :as bim]
+    ;[rad-mapper.builtin           :as bi]
+    ;[rad-mapper.builtin-macros    :as bim]
     [rad-mapper.parse-macros      :as pm]
     [rad-mapper.parse             :as par]
     [rad-mapper.rewrite           :as rew]
@@ -79,33 +79,75 @@
          (rad-mapper.builtin/reset-env)
          (rad-mapper.builtin/finalize ~(ni form))))))
 
-(def ctx
+;;; Having these here rather than rad-mapper.builtin allows this file to be required by builtin.
+;;; Thus we can do eval from inside builtin. That's only needed in special cases like
+;;; $get([['library/fn', 'schemaParentChild'],['fn/exe']])
+(def value-step ^:sci/macro
+  (fn [_&form _&env body]
+      `(-> (fn [& ignore#] ~body)
+           (with-meta {:bi/step-type :bi/value-step :body '~body}))))
+
+(def primary ^:sci/macro
+  (fn [_&form _&env body]
+    `(-> (fn [& ignore#] ~body)
+         (with-meta {:bi/step-type :bi/primary}))))
+
+(def init-step ^:sci/macro
+  (fn [_&form _&env body]
+    `(-> (fn [_x#] ~body)
+         (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
+
+(def map-step ^:sci/macro
+  (fn [_&form _&env body]
+    `(-> (fn [_x#] ~body)
+         (with-meta {:bi/step-type :bi/map-step :body '~body}))))
+
+;;; Implements the JSONata-like <test> ? <then-exp> <else-exp>."
+(def conditional ^:sci/macro
+  (fn [_&form _&env condition e1 e2]
+    `(let [cond# ~condition
+           answer# (if (fn? cond#) (cond#) cond#)]
+
+       (cond (or (and (fn? cond#) (cond#))
+                 (and (not (fn? cond#)) cond#))   (let [res# ~e1]
+                                                    (if (fn? res#) (res#) res#))
+             :else                                (let [res# ~e2]
+                                                    (if (fn? res#) (res#) res#))))))
+(def ctx (atom nil))
+
+(defn make-ctx! []
   (let [publics        (ns-publics 'rad-mapper.builtin)
         publics-m      (ns-publics 'rad-mapper.builtin-macros)
         bns            (sci/create-ns 'rad-mapper.builtin)
         bns-m          (sci/create-ns 'rad-mapper.builtin-macros)
-        pns            (sci/create-ns 'pprint-ns)
+        #_#_pns            (sci/create-ns 'pprint-ns)
         tns            (sci/create-ns 'timbre-ns)
         builtin-ns     (update-vals publics   #(sci/copy-var* % bns))
         builtin-m-ns   (update-vals publics-m #(sci/copy-var* % bns-m))
-        pprint-ns      {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
+        #_#_pprint-ns      {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
         timbre-ns      {'-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
                         '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}
         nspaces        {'rad-mapper.builtin               builtin-ns,
                         'rad-mapper.builtin-macros        builtin-m-ns,
                         'taoensso.timbre                  timbre-ns,
                         #_#_'clojure-pprint               pprint-ns}]
-    (sci/init
-     {:namespaces #?(:clj nspaces :cljs (merge nspaces scip/namespaces))  ; for promesa.core and promesa.protocols.
-      ; ToDo: SCI doesn't seem to want namespaced entries for macros. <=== See https://github.com/babashka/sci.configs/blob/main/src/sci/configs/funcool/promesa.cljs
-      :bindings  {'init-step  rad-mapper.builtin/init-step
-                  'map-step   rad-mapper.builtin/map-step
-                  'value-step rad-mapper.builtin/value-step
-                  'primary    rad-mapper.builtin/primary
-                  #_#_'thread     rad-mapper.builtin/thread}})))
+            (sci/init
+             {:namespaces #?(:clj nspaces :cljs (merge nspaces scip/namespaces))  ; for promesa.core and promesa.protocols.
+              ;; ToDo: SCI doesn't seem to want namespaced entries for macros. <=== See https://github.com/babashka/sci.configs/blob/main/src/sci/configs/funcool/promesa.cljs
+              :bindings  {'init-step    init-step
+                          'map-step     map-step
+                          'value-step   value-step
+                          'primary      primary
+                          'conditional  conditional}})))
+
+(defn ensure-ctx!
+  "If the context is not set, set it and return it."
+  []
+  (when-not @ctx (reset! ctx (make-ctx!)))
+  @ctx)
 
 (defn bim-var [sym]
-  (-> ctx :env deref :namespaces (get 'rad-mapper.builtin-macros) (get sym)))
+  (-> (ensure-ctx!) :env deref :namespaces (get 'rad-mapper.builtin-macros) (get sym)))
 
 ;;; To remain safe and sandboxed, SCI programs do not have access to Clojure vars, unless you explicitly provide that access.
 ;;; SCI has its own var type, distinguished from Clojure vars.
@@ -125,7 +167,7 @@
         (sci/binding [(bim-var '*threading?*) false]
           (sci/binding [sci/out *out*]
             (if run-sci?
-              (sci/eval-form ctx full-form)
+              (sci/eval-form (ensure-ctx!) full-form)
               #?(:clj (binding [*ns* (find-ns 'rad-mapper.builtin)]
                         (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
                              (catch Throwable e   ; Is this perhaps because I didn't have the alias for bi in builtin.cljc? No.
@@ -143,8 +185,8 @@
       (sci/binding [sci/out *out*]
         (sci/binding [(bim-var '$) nil]
           (sci/binding [(bim-var '*threading?*) false]
-            (sci/eval-form ctx form))))
-        (finally (util/config-log min-level)))))
+            (sci/eval-form (ensure-ctx!) form))))
+      (finally (util/config-log min-level)))))
 
 (declare processRM)
 
@@ -165,8 +207,6 @@
     (cl-format nil "(~A; ~A)" pdata pcode)))
 
 (declare pprint-obj)
-
-(defn hello [] :hello)
 
 (defn processRM
   "A top-level function for all phases of translation.
@@ -348,8 +388,6 @@
                   This is an atom so that it can be set by other libraries."
   (atom 120))
 
-;(def diag (atom :before-pprint-obj-reset))
-
 (defn pprint-obj
   "Pretty print the argument object.
    (This tries to print the content within the argument width, but because we assume
@@ -380,19 +418,3 @@
   :start
   (do
     (util/config-log :info)))
-
-
-(defn tryme []
-  (user-eval-devl
-   '(do
-      (rad-mapper.builtin/reset-env)
-      (rad-mapper.builtin/finalize
-       (promesa.core/let
-           [$x (cljs.core/with-meta ["a" "a" "b"] #:bi{:json-array? true})]
-         (rad-mapper.builtin/thread $x (cljs.core/binding [rad-mapper.builtin-macros/*threading?* true] (rad-mapper.builtin/$distinct))))))))
-
-(comment
-  (bi/reset-env)
-  (bi/finalize
-   (p/let [$x (with-meta ["a" "a" "b"] #:bi{:json-array? true})]
-     (bi/thread $x (binding [rad-mapper.builtin-macros/*threading?* true] (bi/$distinct))))))
