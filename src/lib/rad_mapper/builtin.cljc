@@ -5,6 +5,12 @@
    but are not available directly to the user except through the operators (e.g. the dot, and &
    respectively for navigation to a property and concatenation).
 
+   This is a big file in part because of Javascript's inability to allow the sorts of operations
+   on namespaces that are possible in Java/Clojure. Thus, for example when it was useful to
+   be able to call processRM, it had to be done here, not in something that :requires this,
+   because this file :requires pretty much all of rad-mapper.
+   Specifically, all the Small Clojure Interpreter stuff is done right here.
+
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:refer-clojure :exclude [loop])
   (:require
@@ -20,13 +26,11 @@
               [rad-mapper.codelib           :refer [codelib-atm]]
               [wkok.openai-clojure.api      :as openai]]
        :cljs [[ajax.core :refer [GET POST]]
-              [applied-science.js-interop :as j]
               [datascript.core           :as d]
               [datascript.pull-api       :as dp]
               ["nata-borrowed"           :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
               [goog.crypt.base64         :as jsb64]
-              [goog.object               :as gobj]
-              [rad-mapper.promesa-config :as pm]])
+              [rad-mapper.promesa-config :as scip]])
    [cemerick.url                    :as url]
    [camel-snake-kebab.core          :as csk]
    [clojure.spec.alpha              :as s]
@@ -34,13 +38,17 @@
    [clojure.string                  :as str  :refer [index-of]]
    [clojure.walk                    :as walk :refer [keywordize-keys]]
    [promesa.core                    :as p]
-   [rad-mapper.evaluate             :as ev]
+   [rad-mapper.parse                :as par]
+   [rad-mapper.parse-macros         :as pm]
    [rad-mapper.query                :as qu]
+   [rad-mapper.rewrite              :as rew]
+   [rad-mapper.rewrite-macros       :as rewm]
    [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock]]
+   [sci.core                        :as sci]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros       :as bim
     :refer [$ $$ set-context! defn* value-step-m primary-m init-step-m map-step-m
-            *threading?* threading? jflatten containerize containerize? container? flatten-except-json]])
+            threading? jflatten containerize containerize? container? flatten-except-json]])
   #?(:cljs (:require-macros [rad-mapper.builtin-macros]
                             [promesa.core :refer [loop]])) ; ToDo: probably not necessary.
    #?(:clj
@@ -117,7 +125,7 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-(def ^:dynamic *await-finalize* 15000)
+(def ^:dynamic *await-finalize* 45000) ; Sufficient for a tough LLM call.
 
 (defn finalize
   [obj]
@@ -125,7 +133,7 @@
             (cond (map? obj)              (let [m (meta obj)]
                                             (-> (reduce-kv (fn [m k v] (assoc m (fin k) (fin v))) {} obj) (with-meta m)))
                   (vector? obj)           (let [m (meta obj)] (-> (mapv fin obj) (with-meta m)))
-                  (p/promise? obj)        #?(:clj (p/await *await-finalize* obj) :cljs obj)
+                  (p/promise? obj)        #?(:clj (p/await obj *await-finalize*) :cljs obj)
                   :else                   obj))]
     (-> obj fin jflatten)))
 
@@ -152,7 +160,7 @@
 (declare $string)
 
 (defn thread
-  "Apply the function to the object. This should be called with the dynamic variable *threading?* bound to true."
+  "Apply the function to the object."
   [obj func]
   (log/info "func = " func)
   (if (p/promise? obj)
@@ -560,7 +568,6 @@
    (let [s (if (keyword? s) ; query-roles are allowed.
              (if (namespace s) (str (namespace s) "/" (name s)) (name s))
              s)
-         zippy (reset! diag {:pattern pattern :s s})
          matcher (re-matcher pattern s)
          result (c/loop [res []
                        adv 0
@@ -1644,8 +1651,7 @@
            [_fname _opts]
            (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
-(def diag (atom nil))
-
+(declare processRM)
 ;;; ToDo: You need :fn/code to do this! (Add to query)
 #?(:cljs
    (defn $get-add-fn
@@ -1654,7 +1660,7 @@
      (if (some #(= % "fn/exe") out-props) ; These use slash.
        (let [src (get resp "fn_src")] ; These use underscore.
          (reset! diag {:resp resp :out-props out-props :src src})
-         (assoc resp "fn_exe" (try (ev/processRM :ptag/exp src {:execute? true})
+         (assoc resp "fn_exe" (try (processRM :ptag/exp src {:execute? true})
                                    (catch :default _e "Did not compile!"))))
        resp)))
 
@@ -1664,6 +1670,7 @@
   "Read a file of JSON or XML, creating a map."
   ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
   ([spec opts]
+   (log/info "$get: spec = " spec)
    (cond (string? spec)    (read-local spec opts)
          (vector? spec)
          (let [[[k v] out-props] spec] ; [k v] is an ident in Fulcro parlance.
@@ -2657,3 +2664,380 @@ answer 2:
                             (p/rejected (ex-info "CLJS-AJAX error on /api/llm-extract" {:status status :status-text status-text})))})
     (log/info "$llmExtract returns promise" prom)
     prom)))
+
+;;;====================================================================================================================
+;;; Evaluation
+;;;====================================================================================================================
+(defn pretty-form
+  "Replace some namespaces with aliases for diagnostic legability."
+  [form]
+  (let [ns-alia {"rad-mapper.builtin"  "bi"
+                 "bi"                  "bi"
+                 "java.lang.Math"      "Math"}] ; ToDo: Make it more general. (Maybe "java.lang" since j.l.Exception too.)
+    (letfn [(ni [form]
+              (let [m (meta form)]
+                (cond (vector? form) (-> (->> form (map ni) doall vec) (with-meta m)),
+                      (seq? form)    (-> (->> form (map ni) doall) (with-meta m)),
+                      (map? form)    (-> (reduce-kv (fn [m k v] (assoc m k (ni v))) {} form) (with-meta m)),
+                      (symbol? form) (-> (if-let [ns (-> form namespace ns-alia)] (symbol ns (name form)) (symbol (name form)))
+                                         (with-meta m)),
+                      :else form)))]
+      (ni form))))
+
+(def macro-subs
+  "When rewriting produces any of the symbols corresponding to the keys of the map,
+   AND evaluation with Clojure eval is intended, use the corresponding value of the map."
+  {"conditional"   'rad-mapper.builtin-macros/conditional-m,
+   "init-step"     'rad-mapper.builtin-macros/init-step-m,
+   "map-step"      'rad-mapper.builtin-macros/map-step-m,
+   "primary"       'rad-mapper.builtin-macros/primary-m,
+   #_#_"try-threading" 'rad-mapper.builtin-macros/try-threading-m, ; ToDo: Get SCI dynamic variable working so you don't need this!
+   "value-step"    'rad-mapper.builtin-macros/value-step-m})
+
+(defn macro?
+  "Return a ns-qualified -macro symbol substituting for the argument symbol created from rewriting.
+   This is used where a macro is intended (i.e. when using clojure eval, not SCI, for the evaluation)."
+  [sym]
+  (let [n (name sym)]
+    (when (#{"rad-mapper.builtin" "bi"} (namespace sym))
+      (get macro-subs n))))
+
+(defn rad-form
+  "Walk the form replacing the namespace alias 'bi' with 'rad-mapper.builtin' except where the var is an :sci/macro.
+      - If it is an :sci/macro and running sci, drop the namespace altogether; sci doesn't like them.
+      - If it is an :sci/macro and not running sci, replace it with the corresponding macro.
+      - Wrap the form in code for multiple evaluation when it returns a primary fn."
+  [form sci?]
+  (let [ns-alia {"bi" "rad-mapper.builtin"}]
+    (letfn [(ni [form]
+              (cond (vector? form) (->> form (map ni) doall vec),
+                    (seq? form)    (->> form (map ni) doall),
+                    (map? form)    (->> (reduce-kv (fn [m k v] (assoc m k (ni v))) {} form) doall)
+                    (symbol? form) (cond (and sci? (macro? form))        (-> form name symbol) ; SCI doesn't like ns-qualified.
+                                         (macro? form)                   (macro? form)         ; Not sci; use a real macro named <x>-m.
+                                         :else                           (if-let [nsa (-> form namespace ns-alia)]
+                                                                           (->> form name (symbol nsa))
+                                                                           form)),
+                    :else form))]
+      `(do
+         (rad-mapper.builtin/reset-env)
+         (rad-mapper.builtin/finalize ~(ni form))))))
+
+;;; Having these here rather than rad-mapper.builtin allows this file to be required by builtin.
+;;; Thus we can do eval from inside builtin. That's only needed in special cases like
+;;; $get([['library/fn', 'schemaParentChild'],['fn/exe']])
+(def value-step ^:sci/macro
+  (fn [_&form _&env body]
+      `(-> (fn [& ignore#] ~body)
+           (with-meta {:bi/step-type :bi/value-step :body '~body}))))
+
+(def primary ^:sci/macro
+  (fn [_&form _&env body]
+    `(-> (fn [& ignore#] ~body)
+         (with-meta {:bi/step-type :bi/primary}))))
+
+(def init-step ^:sci/macro
+  (fn [_&form _&env body]
+    `(-> (fn [_x#] ~body)
+         (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
+
+(def map-step ^:sci/macro
+  (fn [_&form _&env body]
+    `(-> (fn [_x#] ~body)
+         (with-meta {:bi/step-type :bi/map-step :body '~body}))))
+
+;;; Implements the JSONata-like <test> ? <then-exp> <else-exp>."
+(def conditional ^:sci/macro
+  (fn [_&form _&env condition e1 e2]
+    `(let [cond# ~condition
+           answer# (if (fn? cond#) (cond#) cond#)]
+
+       (cond (or (and (fn? cond#) (cond#))
+                 (and (not (fn? cond#)) cond#))   (let [res# ~e1]
+                                                    (if (fn? res#) (res#) res#))
+             :else                                (let [res# ~e2]
+                                                    (if (fn? res#) (res#) res#))))))
+(def ctx (let [publics        (ns-publics 'rad-mapper.builtin)
+               publics-m      (ns-publics 'rad-mapper.builtin-macros)
+               bns            (sci/create-ns 'rad-mapper.builtin)
+               bns-m          (sci/create-ns 'rad-mapper.builtin-macros)
+               #_#_pns            (sci/create-ns 'pprint-ns)
+               tns            (sci/create-ns 'timbre-ns)
+               builtin-ns     (update-vals publics   #(sci/copy-var* % bns))
+               builtin-m-ns   (update-vals publics-m #(sci/copy-var* % bns-m))
+               #_#_pprint-ns      {'cl-format (sci/copy-var* #'clojure.pprint/cl-format pns)}
+               timbre-ns      {'-log!     (sci/copy-var* #'taoensso.timbre/-log! tns)
+                               '*config*  (sci/copy-var* #'taoensso.timbre/*config* tns)}
+               nspaces        {'rad-mapper.builtin               builtin-ns,
+                               'rad-mapper.builtin-macros        builtin-m-ns,
+                               'taoensso.timbre                  timbre-ns,
+                               #_#_'clojure-pprint               pprint-ns}]
+           (sci/init
+            {:namespaces #?(:clj nspaces :cljs (merge nspaces scip/namespaces))  ; for promesa.core and promesa.protocols.
+             ;; ToDo: SCI doesn't seem to want namespaced entries for macros. <=== See https://github.com/babashka/sci.configs/blob/main/src/sci/configs/funcool/promesa.cljs
+             :bindings  {'init-step    init-step
+                         'map-step     map-step
+                         'value-step   value-step
+                         'primary      primary
+                         'conditional  conditional}})))
+
+;;; To remain safe and sandboxed, SCI programs do not have access to Clojure vars, unless you explicitly provide that access.
+;;; SCI has its own var type, distinguished from Clojure vars.
+(defn user-eval
+  "Evaluate the argument form."
+  [full-form opts]
+  (let [min-level (util/default-min-log-level)
+        run-sci?   (or (util/cljs?) (:sci? opts))]
+    (when (or (:debug-eval? opts)  ; I'm suppressing this in run-sci?/cljs. Need to investigate taoensso.timbre/*config* #{"*"} :debug.
+              (and (not run-sci?) (= min-level :debug)))
+      (util/config-log :info) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox).
+      (log/info (cl-format nil "*****  Running ~S *****" (if run-sci? "SCI" "eval")))
+      (-> full-form pretty-form pprint))
+    (try
+      ;;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
+      ;(sci/binding [bim/$ nil] ; <==== I get from SCI: "Error: Can't dynamically bind non-dynamic var [object Object]" yet this IS ^:dynamic.
+        (sci/binding [sci/out *out*]
+          (if run-sci?
+            (sci/eval-form ctx full-form)
+            #?(:clj (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
+                         (catch Throwable e   ; Is this perhaps because I didn't have the alias for bi in builtin.cljc? No.
+                           (ex-info "Failure in clojure.eval:" {:error e})))
+               :cljs :never-happens)))
+      (finally (util/config-log min-level)))))
+
+(defn user-eval-devl
+  "Evaluate the argument form. For use in REPL. Form is anything executable in ctx."
+  [form]
+  (let [min-level (util/default-min-log-level)]
+    (util/config-log :info) ; ToDo: :debug level doesn't work with cljs (including SCI sandbox). Use println for now.
+    (log/info (cl-format nil "*****  Running SCI *****"))
+    (try
+      (sci/binding [sci/out *out*] ; Would want bim/$ here too. (See above)
+        (sci/eval-form ctx form))
+      (finally (util/config-log min-level)))))
+
+(declare processRM)
+
+(defn combine-code-and-data
+  "Return a new problem for use with processRM consisting of the argument data and code.
+   This is typically used with the exerciser, where the user has the opportunity to
+   specify data in a separate editor window."
+  [code data]
+  (let [pdata (as-> data ?d ; Remove last \; to test parsing of data. "(<assign>; <assign>; <assign>)"
+                (str/trim ?d)
+                (let [last-ix (-> ?d count dec)]
+                  (if (= \; (get ?d last-ix))
+                    (subs ?d 0 last-ix)
+                    ?d)))
+        [_ code-body] (re-matches #"(?s)\s*\((.+)\)\s*" code) ; Remove surrounding \( ... \) if any (could just be one expression).
+        pcode (or code-body code)]
+    (processRM :ptag/jvar-decls (cl-format nil "(~A)" pdata)) ; Will throw if not okay.
+    (cl-format nil "(~A; ~A)" pdata pcode)))
+
+(declare pprint-obj)
+
+(defn processRM
+  "A top-level function for all phases of translation.
+   parse-string, rewrite, and execute, but with controls to quit before doing all of these, debugging etc.
+   With no opts it returns the parse structure without debug output."
+  ([tag code] (processRM tag code {}))
+  ([tag code opts]
+   (assert (every? #(#{:user-data :rewrite? :executable? :execute? :sci? :debug-eval?
+                       :debug-parse? :debug-rewrite? :pprint?} %)
+                   (keys opts)))
+   (let [code         (if-let [udata (-> opts :user-data not-empty)]
+                       (combine-code-and-data code udata)
+                       code)
+         execute?    (or (:pprint? opts) (:execute? opts))
+         rewrite?    (or (:pprint? opts) (:execute? opts) (:executable? opts) (:rewrite? opts))
+         executable? (or (:pprint? opts) (:execute? opts) (:executable? opts))
+         sci?        (or (:sci? opts) (util/cljs?))
+         ps-atm (atom nil)] ; An atom just to deal with :clj with-open vs :cljs.
+     (binding [rewm/*debugging?* (:debug-rewrite? opts)
+               pm/*debugging?*   (:debug-parse? opts)]
+       ;; Note that s/check-asserts = true can produce non-JSONata like behavior by means of
+       ;; throwing an error where JSONata might just return ** No Match **
+       (if (or rewm/*debugging?* pm/*debugging?*) (s/check-asserts true) (s/check-asserts false))
+       #?(:clj  (with-open [rdr (-> code char-array clojure.java.io/reader)]
+                  (as-> (par/make-pstate rdr) ?ps
+                    (pm/parse tag ?ps)
+                    (dissoc ?ps :line-seq) ; dissoc so you can print it.
+                    (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                    (reset! ps-atm ?ps)))
+          :cljs (as-> (par/make-pstate code) ?ps
+                  (pm/parse tag ?ps)
+                  (assoc ?ps :parse-status (if (-> ?ps :tokens empty?) :ok :premature-end))
+                  (reset! ps-atm ?ps)))
+       (case (:parse-status @ps-atm)
+         :premature-end (log/error "Parse ended prematurely")
+         :ok (cond-> {:typ :toplevel :top (:result @ps-atm)}
+               (not rewrite?)      (:top)
+               rewrite?            (rew/rewrite)
+               executable?         (rad-form sci?)
+               execute?            (user-eval opts)
+               (:pprint? opts)     pprint-obj))))))
+
+(defn indent-additional-lines
+  "Indent every line but the first by the amount indicated by indent."
+  [s indent]
+  (let [spaces (util/nspaces indent)
+        [one & others] (str/split-lines s)]
+    (cl-format nil "~A~{~%~A~}"
+               one
+               (map #(str spaces %) others))))
+
+(def name-order
+  "The values here are listed in the order in which they should appear."
+  {"schema"      ["name" "shortname" "type" "sdo" "spec" "version" "subversion" "topic" "pathname" "content"]
+   "model"       ["name" "elementDef" "elementRef" "complexType" "sequence" "union" "extension"]
+   "element"     ["name" "ref" "id" "sequence" "complexType" "simpleType"]
+   "complexType" ["name" "id"]
+   "codeList"    ["name" "id" "terms" "restriction" "union"]})
+
+(def ns-order
+  "This is the order that things should be presented when they have different namespaces.
+   after these nspaces, it is alphabetical (so that 'xsd' is towards the end."
+  ["schema" "element" "model" "codeList" "complexType" "component"  "cct" "attribute" "has"])
+
+;;;==========  Pretty printing. This is unrelated to the above uses of the term pretty-print. ====================
+;;; Maybe forget this and try json.stringify? / (json/pprint obj)
+;;; The functions for pprint each return a string that may have line breaks.
+;;; The string starts with no spaces, the spaces to place after a line-break are passed in as "ident"
+;;; The map and vector functions add indentation to the values, which may themselves be multi-line.
+(defn sort-map
+  "Sort maps so that
+    - '*/name' comes first, xsd/* comes last, */documentation comes next to last.
+    - schema/* stuff is ordered by schema/name, schema/type ... with schema/content last."
+  [m]
+  (letfn [(compare-names [ns x y]
+            (if-let [v (get name-order ns)]
+              (let [xi (as-> (.indexOf v x) ?i (if (neg? ?i) nil ?i))
+                    yi (as-> (.indexOf v y) ?i (if (neg? ?i) nil ?i))]
+                (cond (and xi yi)  (if (< xi yi) -1 +1)
+                      xi           -1
+                      yi           +1
+                      :else        (compare x y)))
+              (compare x y)))
+          (compare-namespaces [x y]
+              (let [xi (as-> (.indexOf ns-order x) ?i (if (neg? ?i) nil ?i))
+                    yi (as-> (.indexOf ns-order y) ?i (if (neg? ?i) nil ?i))]
+                (cond (and xi yi)  (if (< xi yi) -1 +1)
+                      xi           -1
+                      yi           +1
+                      :else        (compare x y))))
+          (compar [x y]
+            (let [nsp-x (if (or (symbol? x) (keyword? x)) (namespace x) "")
+                  nsp-y (if (or (symbol? y) (keyword? y)) (namespace y) "")
+                  name-x (name x)
+                  name-y (name y)]
+              (cond (and nsp-x nsp-y)           (if (= nsp-x nsp-y)
+                                                  (compare-names nsp-x name-x name-y)
+                                                  (compare-namespaces nsp-x nsp-y))
+                    nsp-x                       -1
+                    nsp-y                       +1
+                    :else                       (compare name-x name-y))))]
+    (into (sorted-map-by compar) m)))
+
+(defn sort-obj
+  "Recursively sort the maps in the given object.
+   Everything else, of course, is left alone."
+  [obj]
+  (cond (map? obj)      (->> obj (reduce-kv (fn [m k v] (assoc m k (sort-obj v))) {}) sort-map)
+        (vector? obj)   (mapv sort-obj obj)
+        :else           obj))
+
+(defn pprint-map
+  "Print a map:
+     (1) If it all fits within width minus indent, print it that way.
+     (2) If the longest key/value it fits within width minus indent, print it with keys and values on the same line,
+     (3) If it does not fit, print the value on a second line, with additional indentation relative to its key.
+  - ident is the column in which this object can start printing.
+  - width is column beyond which print should not appear."
+  [obj indent width]
+  (cond (empty? obj) "{}",
+        (= obj {"db_connection" "_rm_schema-db"}) "<<connection>>",
+        :else (let [kv-pairs (reduce-kv (fn [m k v] ; Here we get the 'dense' size; later calculate a new rest-start
+                                          (let [kk (pprint-obj k :width width)
+                                                vv (pprint-obj v :width width)]
+                                            (conj m {:k kk :v vv
+                                                     :k-len (count kk)
+                                                     :v-len (->> vv str/split-lines (map count) (apply max))})))
+                                        []
+                                        obj)
+                    max-key (apply max (map :k-len kv-pairs)) ; We will line them all up with the widest.
+                    max-val (apply max (map :v-len kv-pairs))]
+                (if (>= (- width indent) (+ (apply + (map :k-len kv-pairs)) (apply + (map :v-len kv-pairs)) (* (count kv-pairs) 3)))
+                  ;; (1) The map fits on one line.
+                  (cl-format nil "{~{~A: ~A~^, ~}}" (interleave (map :k kv-pairs) (map :v kv-pairs)))
+                  ;; It doesn't fit on one line.
+                  (let [indent-spaces (util/nspaces indent)
+                        key-strs (into (-> kv-pairs first :k str vector)
+                                       (map #(str indent-spaces (:k %) (util/nspaces (- max-key (:k-len %)))) (rest kv-pairs)))
+                        ;; Values may have line breaks, each line but the first needs the indent plus the max-key
+                        val-strs (mapv #(indent-additional-lines (:v %) (+ indent 2)) kv-pairs)]
+                    (if (<= (+ max-key max-val) (- width indent))
+                      ;; (2) It fits. The values are made to line up with the entry with the longest key.
+                      (cl-format nil "{~{~A: ~A~^,~% ~}}" ; one space after ~% because starts with a '{'
+                                 (interleave key-strs val-strs))
+                      ;; (3) Too wide; break into two lines for each k/v pair.
+                      ;;     Now all the values need to be indented
+                      ;;     The cl-format indents the values a few spaces relative to their key.
+                      (cl-format nil "{~{~A:~%  ~A~^,~%  ~}}"
+                                 (interleave
+                                  key-strs
+                                  (map #(str indent-spaces %) val-strs)))))))))
+
+(defn pprint-vec
+  "Return a string representing vector:
+    If it all fits on one line within width minus indent, the returned string contains now newlines.
+    Else each element is on a new-line. (In fact, the elements themselves can run multiple lines.
+    The first element no indentation, other are preceded by indent spaces."
+  [obj indent width]
+  (let [query-form? (-> obj meta :query-form?)
+        elem-objs (reduce (fn [res elem]
+                            (let [s (pprint-obj elem :width width :indent indent)]
+                              (conj res {:val s :len (->> s str/split-lines (map count) (apply max))})))
+                          [] obj)]
+    (if (>= (- width indent) (+ (apply + (map :len elem-objs)) (* (count elem-objs) 2))) ; All on one line?
+      (if query-form?
+        (cl-format nil "[~{~A~^ ~}]"  (map :val elem-objs))
+        (cl-format nil "[~{~A~^, ~}]" (map :val elem-objs)))
+      ;; Not printable on one line, so every line but the first need the indent.
+      ;; And the values might be multi-line; every line but the first needs the indent.
+      (let [spaces (util/nspaces indent)
+            elems (->> elem-objs (map :val) (map #(indent-additional-lines % indent)))
+            val-strs (into (-> elems first vector)
+                           (->> elems rest (map #(str spaces %))))]
+        (if query-form?
+          (cl-format nil "[~{~A~^~% ~}]" val-strs)
+          (cl-format nil "[~{~A~^,~% ~}]" val-strs))))))
+
+(def print-width "Number of characters that can be comfortably fit on a line.
+                  This is an atom so that it can be set by other libraries."
+  (atom 120))
+
+(defn pprint-obj
+  "Pretty print the argument object.
+   (This tries to print the content within the argument width, but because we assume
+    that there is a horizontal scrollbar, it doesn't work too hard at it!)
+     - width: the character length of the total area we have to work with.
+     - indent: a number of space characters per nesting level,
+     - depth: the number of nesting levels.
+     - start: a number of characters to indent owing to where this object starts because of key for which it is a value."
+  [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
+  (let [strg (atom "")]
+    (letfn [(pp [obj]
+              (cond (p/promise? obj) obj
+                    (map? obj)     (swap! strg #(str % (pprint-map obj indent width)))
+                    (vector? obj)  (swap! strg #(str % (pprint-vec obj indent width)))
+                    (string? obj)  (swap! strg #(str %  "'" obj "'"))
+                    (keyword? obj) (if-let [ns (namespace obj)]
+                                     (swap! strg #(str %  "'" ns "/" (name obj) "'"))
+                                     (swap! strg #(str %  "'" (name obj) "'")))
+                    (fn? obj)      (swap! strg #(str %  "<<function>>"))
+                    :else          (swap! strg #(str % obj))))]
+      (cond-> obj
+        (p/promise? obj) (p/then #(pprint-obj %)), ; ToDo: I expected this to work for core.cljs; it doesn't.
+        (map? obj) sort-obj,
+        (vector? obj) sort-obj,
+        true pp))))

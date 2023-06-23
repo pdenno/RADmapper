@@ -1,6 +1,6 @@
 (ns exerciser-app.rm-mode.parser
   (:require
-   [rad-mapper.evaluate :as ev]
+   [rad-mapper.builtin :as bi]
    ["@lezer/highlight" :as highlight :refer [tags]]
    ["@codemirror/language" :as language :refer [LRLanguage LanguageSupport]]
    ["lezer-clojure" :as lezer-clj]
@@ -45,10 +45,10 @@
             :RegExp (.-regexp tags)}))
 
 (defn parse ; Not used!
-  "Wrapper over ev/processRM"
+  "Wrapper over bi/processRM"
   [text]
   (try
-    (ev/processRM :ptag/exp text)
+    (bi/processRM :ptag/exp text)
     (catch :default _e "...")))
 
 (def parser lezer-clj/parser)

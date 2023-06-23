@@ -19,7 +19,7 @@
    [exerciser-app.util :as util]
    [helix.core :as helix :refer [defnc $ <>]]
    [helix.hooks :as hooks]
-   [rad-mapper.evaluate :as ev]
+   [rad-mapper.builtin :as bi]
    [rad-mapper.util :as rutil :refer [timeout-info invalidate-timeout-info]]
    ["react-dom/client" :as react-dom]
    ["react-router-dom" :as router :refer [useSearchParams]]
@@ -64,7 +64,7 @@
                                      :style {:multiline true}}]}}})))
 
 (defn run-code
-  "ev/processRM the source, returning a string that is either the result of processing
+  "bi/processRM the source, returning a string that is either the result of processing
    or the error string that processing produced."
   [source]
   (log/info "run-code: running some code")
@@ -72,7 +72,7 @@
     (let [user-data (get-user-data)
           ;_zippy (log/info "******* For RM eval: CODE = \n" code)
           ;_zippy (log/info "******* For RM eval: DATA = \n" user-data)
-          result (try (ev/processRM :ptag/exp code  {:pprint? true :execute? true :sci? true :user-data user-data})
+          result (try (bi/processRM :ptag/exp code  {:pprint? true :execute? true :sci? true :user-data user-data})
                       (catch js/Error e {:failure (str "Error: " (.-message e))}))]
       result)))
 

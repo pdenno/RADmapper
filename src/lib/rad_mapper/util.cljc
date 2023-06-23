@@ -8,6 +8,7 @@
    [clojure.pprint               :refer [cl-format]]
    [clojure.string               :as str]
    [clojure.walk                 :as walk :refer [postwalk]]
+   [mount.core                   :refer [defstate]]
    #?(:clj  [datahike.db.utils  :refer [db?]]
       :cljs [datascript.core    :refer [db?]])
    #?(:clj  [datahike.pull-api    :as dp]
@@ -423,3 +424,7 @@
 ;;; --- rewrite
 (defn rewrite-dispatch [tag _ & _] tag)
 (defmulti rewrite-meth #'rewrite-dispatch)
+
+(defstate logging
+  :start
+  (do (config-log :info)))

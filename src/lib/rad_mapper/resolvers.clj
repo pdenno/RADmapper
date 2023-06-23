@@ -9,13 +9,16 @@
    [datahike.pull-api   :as dp]
    [mount.core :as mount :refer [defstate]]
    [rad-mapper.util     :as util :refer [resolve-db-id]]
-   [rad-mapper.codelib  :refer [codelib-atm]]
+   [rad-mapper.codelib  :as codelib]
    [taoensso.timbre     :as log]))
 
-;;; I think generally speaking this has to be recompiled and (user/restart) to catch resolver updates.
+;;; I think, generally speaking, this has to be recompiled and (user/restart) to catch resolver updates.
 ;;; It is okay if the output doesn't contain all of the :pco/output (try adding :fn/DNE)
 ;;; It is okay if the query contains less than what is in :pco/output
 ;;; It is NOT okay that the query contains something that is not returned; See codelib resolvers for a way around this.
+;;; A new introduced in Pathom3 is the abiltiy to call the resolvers as functions.
+;;;   For example, (schema-name->schema-object {:schema/name "urn:oagis-10.8.4:Nouns:Quote"}) ==> #:db{:id 36505}
+;;;                (codelib-fn-name->codelib-id {:library/fn "addOne"}) ==> #:db{:id 4}
 
 ;;; ToDo: Get rid of this and 'connect-atm'. resolvers.clj is for any DB (so far schema and codelib).
 (def db-cfg-atm "Configuration map used for connecting to the db. It is set in core."  (atom nil))
@@ -133,7 +136,7 @@
   {:db/id (d/q '[:find ?ent .
                  :in $ ?fn-name
                  :where [?ent :fn/name ?fn-name]]
-               @codelib-atm fn)})
+               @(codelib/connect-atm) fn)})
 
 ;;; (pathom-resolve {:library/fn 'schemaParentChild'} [:fn/name :fn/doc :fn/src])
 ;;; It is okay if the output doesn't contain all of the :pco/output (try adding :fn/DNE)
@@ -144,7 +147,7 @@
   [{:db/keys [id]}]
   {::pco/output [:fn/name :fn/src :fn/doc]}
   (-> {:db/id id}
-      (resolve-db-id codelib-atm #{:db/id})))
+      (resolve-db-id (codelib/connect-atm) #{:db/id})))
 
 (pco/defresolver codelib-id->extra
   "Return a placeholder for the :fn/exe property."

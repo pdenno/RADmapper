@@ -2,16 +2,16 @@
   (:require ["@codemirror/view" :as view]
             [applied-science.js-interop :as j]
             [clojure.string :as str]
-            [rad-mapper.evaluate :as ev]
+            [rad-mapper.builtin :as bi]
             [exerciser-app.rm-mode.extensions.eval-region :as eval-region]
             [taoensso.timbre :as log :refer-macros [info debug log]]))
 
 ;;; ToDo: This does the parsing again. Should I care?
-(defn eval-string
+#_(defn eval-string
   [source]
   (when-some [code (not-empty (str/trim source))]
     (log/info "eval-string: code = " code)
-    (try {:result "***This result***"} ;(ev/processRM :ptag/exp code {:execute? true :sci? true})}
+    (try {:result "***This result***"} ;(bi/processRM :ptag/exp code {:execute? true :sci? true})}
          (catch js/Error e
             {:error (str (.-message e))}))))
 

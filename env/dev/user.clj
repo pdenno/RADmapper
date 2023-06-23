@@ -9,7 +9,7 @@
    [clojure.tools.namespace.repl :as tools-ns :refer [disable-reload! refresh clear set-refresh-dirs]]
    [expound.alpha :as expound]
    [mount.core :as mount]
-   [rad-mapper.evaluate] ; for mount
+   [rad-mapper.builtin] ; for mount
    [lambdaisland.classpath.watch-deps :as watch-deps]      ;; hot loading for deps
    [rm-server.core :refer [server]] ; for mount
    [taoensso.timbre :as log]))

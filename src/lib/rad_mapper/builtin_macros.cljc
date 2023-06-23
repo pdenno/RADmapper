@@ -127,22 +127,14 @@
          (-> (p/all [~@args]) (p/then (fn [[~@args]] ~@body)))
          (do ~@body)))))
 
-(def ^:dynamic *threading?* "Set in bi/thread and used in defn* macro to decide whether to use the context variable $ or return a partial." false)
 (def threading? "Set in bi/thread and used in defn* macro to decide whether to use the context variable $ or return a partial." (atom false))
-
-#_(defmacro try-threading-m
-  [body]
-  `(try (reset! bim/threading? true)
-        ~@body
-        (finally (reset! bim/threading? false))))
 
 (defmacro defn*
   "Define two function arities using the body:
      (1) the ordinary one, that has the usual arguments for the built-in, and,
      (2) a function where the missing argument will be assumed to be the context variable, $.
    The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
-   doc-string is required.
-  The one that is short args checks for *threading?* and might return a partial."
+   doc-string is required."
   [fn-name doc-string [& params] & body]
   (let [param-map (zipmap params (map #(symbol nil (name %)) params))
         abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
@@ -168,37 +160,6 @@
               (~fn-name- ~@abbrv-args))) ; This one has a @$ in it somewhere (see above).
            ([~@(vals param-map)]
             (~fn-name- ~@(vals param-map))))))))
-
-;;; ToDo: I'm keeping this around because it "didn't need the declares" and I haven't tested it with
-;;; the improvement above (p/catch). It might be better than above.
-#_(defmacro defn*
-  "Define two function arities using the body:
-     (1) the ordinary one, that has the usual arguments for the built-in, and,
-     (2) a function where the missing argument will be assumed to be the context variable, $.
-   The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
-   doc-string is required.
-  The one that is short args checks for *threading* and might return a partial."
-  [fn-name doc-string [& params] & body]
-  (let [param-map (zipmap params (map #(symbol nil (name %)) params))
-        abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
-        abbrv-args (mapv #(if (str/ends-with? (str %) "_") '@$ %) (vals param-map))
-        fn-name (symbol nil (name fn-name))]
-    (letfn [(rewrite [x]
-              (cond (seq? x)    (map  rewrite x)
-                    (vector? x) (mapv rewrite x)
-                    (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
-                    :else (get param-map x x)))]
-    `(defn ~fn-name ~doc-string
-       (~abbrv-params
-        (if *threading?*
-          (partial ~fn-name ~@abbrv-params)
-          (~fn-name ~@abbrv-args))) ; This one has a @$ in it somewhere (see above).
-       ([~@(vals param-map)]
-        (let [res# (do ~@(rewrite body))]
-          (cond (p/promise? res#) (p/then res# #(if (seq? %) (doall %) %))
-                (seq? res#) (doall res#)
-                :else res#)))))))
-
 
 (defmacro value-step-m
   [body]

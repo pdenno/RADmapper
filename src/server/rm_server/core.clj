@@ -5,12 +5,11 @@
    [clojure.java.io :as io]
    [clojure.string]
    [mount.core :as mount :refer [defstate]]
-   [rad-mapper.evaluate]                                    ; for mount
    [rad-mapper.resolvers :refer [schema-atm]]               ; for mount
    [rad-mapper.paillier  :refer [api-key]]                  ; for mount
+   [rad-mapper.util :refer [logging]]                        ; for mount
    [rm-server.exerciser-saves :refer [exerciser-saves-atm]] ; for mount
    [rm-server.web.handler :refer [app]]                     ; for mount
-   [rm-server.util :refer [util-state]]                     ; for mount
    [ring.adapter.jetty :as jetty]
    [taoensso.timbre :as log])
   (:gen-class))

@@ -8,7 +8,11 @@
 ;;; ($get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]])
 (def rm-examples
   [{:name "Get a library function"
-    :code "$get([['library/fn', 'schemaParentChild'],['fn/name', 'fn/doc', 'fn/src','fn/exe']])"}
+    :code "$get([['library/fn', 'addOne'],['fn/name', 'fn/doc', 'fn/src','fn/exe']])"}
+
+   {:name "Use a library function"
+    :code "( $addOne := $get([['library/fn', 'addOne'],['fn/name', 'fn/doc', 'fn/src','fn/exe']]).fn_exe;
+  $addOne(3) );"}
 
 #_{:name "Fix this bug too"
     :code "$shape := function($p, $spc) { $reduce($children($spc, $p),

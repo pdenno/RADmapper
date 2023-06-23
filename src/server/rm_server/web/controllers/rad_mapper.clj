@@ -4,7 +4,6 @@
    [clojure.walk          :as walk :refer [keywordize-keys]]
    [promesa.core          :as p]
    [rad-mapper.builtin    :as bi]
-   [rad-mapper.evaluate   :as ev]
    [rad-mapper.resolvers  :refer [connect-atm]]
    [rm-server.exerciser-saves :as user-saves]
    [ring.util.http-response :as response]
@@ -26,7 +25,7 @@
   [{{{:keys [code data]} :body} :parameters}]
   (if code
     (try
-      (let [res (ev/processRM :ptag/exp code {:pprint? true :user-data data})]
+      (let [res (bi/processRM :ptag/exp code {:pprint? true :user-data data})]
         (log/info "=== Result of" code "is" res)
         (response/ok {:result res}))
       (catch Exception e
@@ -60,7 +59,7 @@
   [{{{:keys [ident-type ident-val obj]} :body} :parameters}]
   (log/info "Call to graph-put")
   (if (and ident-type ident-val obj)
-    (let [res (bi/$put [[ident-type ident-val] obj])]
+    (let [res (bi/$put [ident-type ident-val] obj)]
       (response/ok res))
     (response/bad-request "Missing args.")))
 
@@ -70,8 +69,7 @@
   (log/info "llm-match: src =" src "tar =" tar)
   (if (and src tar)
     (let [p (p/deferred)]
-      (future (p/resolve! p (bi/$llmMatch src tar))
-              #_(p/resolve! p (do (Thread/sleep 10000) {:result (str "Test: " (Date. (System/currentTimeMillis)))})))
+      (future (p/resolve! p (bi/$llmMatch src tar)))
       (let [res (p/await p 45000)]
         (if (nil? res)
           (do
@@ -87,8 +85,7 @@
     (log/info "llm-extract: source =" source "seek =" seek)
     (if (and source seek)
       (let [p (p/deferred)]
-        (future (p/resolve! p (bi/$llmExtract source seek))
-                #_(p/resolve! p (do (Thread/sleep 10000) {:result (str "Test: " (Date. (System/currentTimeMillis)))})))
+        (future (p/resolve! p (bi/$llmExtract source seek)))
         (let [res (p/await p 20000)]
           (if (nil? res)
             (do

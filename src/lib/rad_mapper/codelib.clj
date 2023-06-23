@@ -36,6 +36,7 @@
     (d/create-database @db-cfg-atm)
     (let [conn (d/connect @db-cfg-atm)]
       (d/transact conn db-schema)
+      ;(d/transact conn library-code)
       (log/info "Created schema DB " conn)
       conn)))
 
@@ -55,7 +56,7 @@
        (str base-dir "/databases/code-lib")
        (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/code-lib")})))))
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
-                      :rebuild-db? false ; <=======================
+                      :rebuild-db? true ; <=======================
                       :schema-flexibility :write})
   (create-db!)
   (connect-atm))
