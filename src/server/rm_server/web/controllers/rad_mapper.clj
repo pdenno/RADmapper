@@ -45,8 +45,9 @@
   (let [{:keys [ident-type ident-val request-objs]} (-> request :query-params keywordize-keys)
         request-objs (split request-objs #"\|")]
      (if (and ident-type ident-val request-objs)
-       (let [res (bi/$get [[ident-type ident-val] request-objs])]
-        (response/ok res))
+       (-> (bi/$get [ident-type ident-val] request-objs)
+           (dissoc "fn_exe")
+           response/ok)
       (response/bad-request "Missing query args."))))
 
 (defn graph-put
@@ -56,10 +57,11 @@
      - ident-val    : a string, that is the value of a lookup-id.
      - request-objs : a string of elements separated by '|' that will be keywordized to the 'sdb' ns,
                       for example, 'foo|bar' ==> [:sdb/foo :sdb/bar]."
-  [{{{:keys [ident-type ident-val obj]} :body} :parameters}]
+  [{{{:keys [put-ident-type put-ident-val put-obj]} :body} :parameters}]
   (log/info "Call to graph-put")
-  (if (and ident-type ident-val obj)
-    (let [res (bi/$put [ident-type ident-val] obj)]
+  (if (and put-ident-type put-ident-val put-obj)
+    (let [res (bi/$put [put-ident-type put-ident-val] put-obj)]
+      (log/info "graph-put: res =" res)
       (response/ok res))
     (response/bad-request "Missing args.")))
 

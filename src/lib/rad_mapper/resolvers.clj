@@ -2,6 +2,7 @@
   "Resolvers for use on the schema db (created with a different system)."
   (:require
    [clojure.java.io :as io]
+   [clojure.string  :as str]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.interface.eql :as p.eql]
@@ -71,29 +72,33 @@
 ;;; Resolvers are functions and can be called with ONE ARG, the IDENT:
 ;;; For example (list-id->list-content {:list/id :ccts/message-schema})
 
-;;; Currently this only returns lists of schema, but (changing the :pco/output???) I think it could return lists of anything.
-;;; (pathom-resolve {:list/id :ccts/message-schema} [:list/content])
-;;; (list-id->list-content {:list/id :ccts/message-schema})
+
+;;; Note that only if the ident-val has a underscore in it does this convert to keyword.
+;;; That is to allow idents like [:library/fn "addOne"].
+;;; (list-id->list-content {:list/id 'ccts/message-schema})
 (pco/defresolver list-id->list-content
   "This resolver returns lists."
   [{:keys [list/id]}]
   {::pco/output [:list/content]}
-  (let [schema-type? (set (d/q '[:find [?type ...] :where [_ :schema/type  ?type]] @(connect-atm)))
-        id (keyword id)
-        res (cond (schema-type? id)
-              (->>
-               (d/q '[:find ?name
-                      :in $ ?schema-type
-                      :keys schema/name
-                      :where
-                      [?ent :schema/name  ?name]
-                      [?ent :schema/type  ?schema-type]]
-                    @(connect-atm) (keyword id))
-               (map :schema/name)
-               sort
-               vec
-               not-empty))]
-    {:list/content res}))
+  (let [schema-types (d/q '[:find [?type ...] :where [_ :schema/type  ?type]] @(connect-atm))]
+    (if (= "lists" id) ; Get all the lists
+      {:list/content (into ["library/fn"] schema-types)}
+      (let [schema-type? (set schema-types)
+            id (if (str/index-of id "_") (util/rm-id->clj-key id) id)
+            res (cond (schema-type? id)
+                      (->>
+                       (d/q '[:find ?name
+                              :in $ ?schema-type
+                              :keys schema/name
+                              :where
+                              [?ent :schema/name  ?name]
+                            [?ent :schema/type  ?schema-type]]
+                            @(connect-atm) (keyword id))
+                       (map :schema/name)
+                       sort
+                       vec
+                       not-empty))]
+        {:list/content res}))))
 
 ;;; (pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Quote"} [:db/id])
 (pco/defresolver schema-name->schema-object
@@ -187,10 +192,12 @@
 
    outputs: a vector of properties (the :pco/outputs of resolvers) that are sought."
   [ident-map outputs]
-  (try (log/info "Pathom3 resolve: ident-map = " ident-map " outputs= " outputs)
-       (catch Exception _e
-         (throw (ex-info "schema database has not been initialized." {}))))
-  (p.eql/process @indexes ident-map outputs))
+  (log/info "Pathom3 resolve: ident-map = " ident-map " outputs= " outputs)
+  (try (let [res (p.eql/process @indexes ident-map outputs)]
+         (log/info "Pathom3 returns:" res)
+         res)
+       (catch Exception e
+         (throw (ex-info "pathom-resolve: " {:msg (.getMessage e)})))))
 
 ;;; ===== Starting and stopping =================================
 (def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)

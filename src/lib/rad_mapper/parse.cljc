@@ -175,10 +175,12 @@
                                                       (str raw \\ quote-char)
                                                       (str res quote-char))
           (empty? chars)                      (let [ps (get-more ps)]
-                                                (recur ps
-                                                       (:string-block ps)
-                                                       raw
-                                                       res))
+                                                (if (-> ps :string-block empty?)
+                                                  (throw (ex-info "unbalanced quoted string" {:string s}))
+                                                  (recur ps
+                                                         (:string-block ps)
+                                                         raw
+                                                         res)))
           :else                                (recur (update ps :string-block #(subs % 1))
                                                       (rest chars)
                                                       (str raw (-> chars first))

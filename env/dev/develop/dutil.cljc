@@ -4,7 +4,7 @@
    [clojure.pprint :refer [pprint]]
    #?(:clj   [datahike.pull-api      :as dp]
       :cljs  [datascript.pull-api    :as dp])
-   [rad-mapper.evaluate              :as ev]
+   [rad-mapper.builtin               :as bi]
    [taoensso.timbre                  :as log]
    [develop.dutil-util                   :as duu :refer [diag remove-meta clean-form nicer-sym run]]
    #?(:clj [develop.dutil-macros         :refer [run-test]]))
@@ -65,15 +65,15 @@
 (defn run-rew
   "Run, but with :rewrite? true."
   [exp]
-  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) duu/remove-meta duu/nicer-sym))
+  (-> (bi/processRM :ptag/exp exp {:rewrite? true}) duu/remove-meta duu/nicer-sym))
 
 (defn examine [exp]
-  (-> (ev/processRM :ptag/exp exp {:rewrite? true})
-      (ev/rad-form nil)
+  (-> (bi/processRM :ptag/exp exp {:rewrite? true})
+      (bi/rad-form nil)
       nicer))
 
 (defn examine- [exp]
-  (-> (ev/processRM :ptag/exp exp {:rewrite? true}) nicer-))
+  (-> (bi/processRM :ptag/exp exp {:rewrite? true}) nicer-))
 
 ;;; Adapted from owl-db-tools/resolve-obj, which uses :resource/iri as keys exclusively.
 (defn resolve-tree

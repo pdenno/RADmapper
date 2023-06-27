@@ -67,9 +67,6 @@
           $qfn := query{[?e :schema/name ?name]};
           $qfn($db) )")
 
-(def example-process-rm-2
-"{'a' : {'b' : {'c' : 30, 'f' : 3}}}.a.b.(c + f)")
-
 ;;; processRM
 (s/def ::code (st/spec {:spec string?
                         :name "code"
@@ -86,7 +83,7 @@
 (s/def ::src (st/spec {:spec map?
                        :name "src"
                        :description "Source schema (e.g. JSON) for matching."
-                       :json-schema/default example-src}))
+                       :json-schema/default example-src})) ; (Despite the name, give it a clojure map.)
 (s/def ::tar (st/spec {:spec map?
                        :name "tar"
                        :description "Target schema (e.g. JSON) for matching."
@@ -133,8 +130,22 @@
 (s/def ::graph-query-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
 (s/def ::graph-query-response map?)
 
-(s/def ::graph-put-request (s/keys :req-un [::ident-type ::ident-val ::obj]))
 
+;;; graph-put ($put)
+(s/def ::put-ident-type (st/spec {:spec string?
+                                  :name "ident-type"
+                                  :description "The type recognized in some database."
+                                  :json-schema/default "library/fn"}))
+(s/def ::put-ident-val (st/spec {:spec string?
+                                 :name "ident-val"
+                                 :description "The uniqueness property of the object being stored."
+                                 :json-schema/default "addTwo"}))
+(s/def ::put-obj (st/spec {:spec map?
+                           :name "object"
+                           :description "Some object for which there is schema definitions for all its properties."
+                           :json-schema/default {"fn_name" "addTwo", "fn_src" "function($x){$x + 2}" "fn_doc" "Add 2 to arg"}}))
+(s/def ::graph-put-request (s/keys :req-un [::put-ident-type ::put-ident-val ::put-obj]))
+(s/def ::graph-put-response string?)
 
 ;;; =========== Pages (just homepage, thus far.)  =======
 (def selmer-opts {:custom-resource-path (io/resource "html")})
@@ -191,7 +202,7 @@
     ["/graph-put"
      {:post {:summary "Write to a graph DB similar to $put()."
              :parameters {:body ::graph-put-request}
-             :responses {200 {:body boolean?}}
+             :responses {200 {:body ::graph-put-response}}
              :handler rm/graph-put}}]
 
     ["/datalog-query"
@@ -212,7 +223,7 @@
             :handler rm/healthcheck}}]]])
 
 (def options
-  {;:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs
+  {;:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs  <=========================================== For debugging!
    :validate spec/validate ;; enable spec validation for route data
    :reitit.spec/wrap spell/closed ;; strict top-level validation  (error reported if you don't have the last two interceptors)
    :exception pretty/exception
@@ -225,7 +236,7 @@
                          ;; content-negotiation
                          (muuntaja/format-negotiate-interceptor)
                          ;; encodeing response body                ; This one will take :body object (e.g. a map) and return ad java.io.ByteArrayInputStream
-                         (muuntaja/format-response-interceptor)    ; Nothing past here reports anything trough print-context-diffs.
+                         (muuntaja/format-response-interceptor)    ; Nothing past here reports anything through print-context-diffs.
                          ;; exception handling
                          (exception/exception-interceptor)
                          ;; decoding request body

@@ -25,6 +25,11 @@
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
+(defn exception?
+  [x]
+  #?(:clj  (instance? clojure.lang.ExceptionInfo x)
+     :cljs (instance? cljs.core.ExceptionInfo x)))
+
 (defn db-atm? [o] (db? o))
 
 ;;; ToDo: Why is SCI able to use this? Util isn't a sci-used ns.
@@ -51,7 +56,7 @@
 (defn json-pprint
   "Return the object as a pretty-printed string.
    These ignore namespaces (e.g. of keyword keys) so if those are to
-   be preserved, the keys should be handled beforehand. See string-keys below"
+   be preserved, the keys should be handled beforehand. See clj-key->rm-id below"
   [obj]
   #?(:clj  (with-out-str (json/pprint obj))
      :cljs (js/JSON.stringify (clj->js obj) nil 2)))
@@ -87,13 +92,24 @@
                   :else obj))]
     (qq form)))
 
-(defn string-keys
+(defn clj-key->rm-id
   "Walk the object replacing its keys with strings. Where the original key
    is namespaced, the string used is <namespace>.<name>; roughly what JSON would be." ; ToDo: Really? "."
   [obj]
-  (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (string-keys k) (string-keys v))) {} obj)
-        (vector? obj)    (mapv string-keys obj)
+  (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (clj-key->rm-id k) (clj-key->rm-id v))) {} obj)
+        (vector? obj)    (mapv clj-key->rm-id obj)
         (keyword? obj)   (if-let [ns (namespace obj)] (str ns "_" (name obj)) (name obj))
+        :else            obj))
+
+;;; ToDo: Do I really want deep translation?
+(defn rm-id->clj-key
+  "Walk the object replacing string keys with keywords. If the string has a _ in it, the
+   resulting keyword is namespaced where the namespace name is the text before the first _ and the
+   keyword name is the text after that _."
+  [obj]
+  (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (rm-id->clj-key k) (if (map? v) (rm-id->clj-key v) v))) {} obj)
+        (vector? obj)    (mapv rm-id->clj-key obj)
+        (string? obj)    (-> obj (str/replace-first #"\_" "/") keyword)
         :else            obj))
 
 ;;; ToDo: The problem with output to log/debug might have to do with *err* not defined in cljs.

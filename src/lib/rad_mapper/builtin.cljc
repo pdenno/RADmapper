@@ -22,8 +22,8 @@
               [datahike.api                 :as d]
               [datahike.pull-api            :as dp]
               [muuntaja.core                :as m]
-              [rad-mapper.resolvers         :refer [pathom-resolve connect-atm]]
-              [rad-mapper.codelib           :refer [codelib-atm]]
+              [rad-mapper.resolvers         :as schema :refer [pathom-resolve]]
+              [rad-mapper.codelib           :as codelib]
               [wkok.openai-clojure.api      :as openai]]
        :cljs [[ajax.core :refer [GET POST]]
               [datascript.core           :as d]
@@ -43,7 +43,7 @@
    [rad-mapper.query                :as qu]
    [rad-mapper.rewrite              :as rew]
    [rad-mapper.rewrite-macros       :as rewm]
-   [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock]]
+   [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock exception? rm-id->clj-key]]
    [sci.core                        :as sci]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros       :as bim
@@ -166,7 +166,7 @@
   (if (p/promise? obj)
     (-> obj
         (p/then #(func %))
-        (p/catch #(throw (ex-info (str "In bi/thread: " %) {:obj obj :func func :err %}))))
+        (p/catch #(ex-info (str "In bi/thread: " %) {:obj obj :func func :err %})))
     (try
       (func obj)
       (catch #?(:clj Exception :cljs :default) e
@@ -248,7 +248,7 @@
           (cond (number? prix)     (fbody prix)
                 (p/promise? prix)  (-> prix
                                        (p/then #(fbody %))
-                                       (p/catch #(throw (ex-info (str "In bi/filter-step: " %) {:prix prix :err %}))))
+                                       (p/catch #(ex-info (str "In bi/filter-step: " %) {:prix prix :err %})))
                 :else              (fbody prix))))) ; Not sure this one happens!
       (with-meta {:bi/step-type :bi/filter-step})))
 
@@ -290,7 +290,7 @@
                         :else @$)]
           (cond (p/promise? obj) (-> obj
                                      (p/then #(get-step %))
-                                     (p/catch #(throw (ex-info (str "In bi/get-step: " %) {:k k :err %}))))
+                                     (p/catch #(ex-info (str "In bi/get-step: " %) {:k k :err %})))
                 (map? obj)       (get obj k)
                 (vector? obj)    (->> obj
                                       containerize
@@ -395,7 +395,7 @@
     (-> args
         p/all
         (p/then #(apply func %))
-        (p/catch #(throw (ex-info (str "In bi/fncall: " %) {:args args :func func :err %}))))
+        (p/catch #(ex-info (str "In bi/fncall: " %) {:args args :func func :err %})))
     (apply func args)))
 
 ;;;--------------------------- JSONata built-in functions ------------------------------------
@@ -1040,7 +1040,7 @@
     (if (p/promise? nums_) ; ToDo: Make the defn* macro do this!
       (-> nums_
           (p/then sum)
-          (p/catch #(throw (ex-info (str "In bi/$sum: " %) {:nums nums_ :err %}))))
+          (p/catch #(ex-info (str "In bi/$sum: " %) {:nums nums_ :err %})))
       (sum nums_))))
 
 ;;; $sqrt
@@ -1149,7 +1149,7 @@
   (if (p/promise? arr_)
     (-> arr_
         (p/then #(sort-internal % fun))
-        (p/catch #(throw (ex-info (str "In bi/sort-internal: " %) {:arr_ arr_ :fun fun :err %}))))
+        (p/catch #(ex-info (str "In bi/sort-internal: " %) {:arr_ arr_ :fun fun :err %})))
      (do (s/assert ::vector arr_)
          (s/assert ::fn fun)
          (vec (sort fun arr_)))))
@@ -1645,7 +1645,7 @@
              (-> (case (or (get opts "type") type "xml")
                    "json" (-> fname slurp json/read-str)
                    "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-                   "edn"  (-> fname slurp util/read-str #_util/string-keys))
+                   "edn"  (-> fname slurp util/read-str #_util/clj-key->rm-id))
                  set-context!)))
    :cljs (defn read-local
            [_fname _opts]
@@ -1653,64 +1653,68 @@
 
 (declare processRM)
 ;;; ToDo: You need :fn/code to do this! (Add to query)
-#?(:cljs
-   (defn $get-add-fn
-     "If the out-props contains :fn/exe, then you need to ev/processRM :fn/src and add the resulting function."
-     [resp out-props]
-     (if (some #(= % "fn/exe") out-props) ; These use slash.
-       (let [src (get resp "fn_src")] ; These use underscore.
-         (reset! diag {:resp resp :out-props out-props :src src})
-         (assoc resp "fn_exe" (try (processRM :ptag/exp src {:execute? true})
-                                   (catch :default _e "Did not compile!"))))
-       resp)))
+(defn compile-rm
+  "Return the object produced by rad-mapper compiling the argument string."
+  [src]
+  (log/info "compile-rm: src =" src)
+  (try (processRM :ptag/exp src {:execute? true})
+       (catch #?(:clj Throwable :cljs :default) e
+         (ex-info "compile-rm: Did not compile!" {:src src :err e}))))
 
 ;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
 ;;;  = (rad-mapper.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:schema/content])
 (defn $get
   "Read a file of JSON or XML, creating a map."
-  ([spec] ($get spec {})) ; For Javascript-style optional params; see https://tinyurl.com/3sdwysjs
-  ([spec opts]
-   (log/info "$get: spec = " spec)
-   (cond (string? spec)    (read-local spec opts)
-         (vector? spec)
-         (let [[[k v] out-props] spec] ; [k v] is an ident in Fulcro parlance.
-           #?(:clj (let [ident-map {(keyword k) v} ; ident-map
-                         outputs   (mapv #(let [[bad? ns nam] (re-matches #"(.+)/(.+)" %)]
-                                            (when-not (and ns nam)
-                                              (throw (ex-info "$get output ids should have be namespace <text>/<text>" {:given bad?})))
-                                            (keyword ns nam))
-                                         out-props)]
-                     (-> (pathom-resolve ident-map outputs) util/string-keys))
-              :cljs
-              (let [prom (p/deferred)
-                    req-data {:params {:ident-type k
-                                       :ident-val v
-                                       :request-objs (cl-format nil "~{~A~^|~}" out-props)}
-                              :handler (fn [resp] (p/resolve! prom ($get-add-fn resp out-props)))
-                              :error-handler (fn [{:keys [status status-text]}]
-                                               (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                                        {:status status :status-text status-text})))
-                              :timeout 5000}]
-                (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
-                prom))))))
+  ([spec] (if (string? spec)
+            (read-local spec {})
+            ($get spec {})))
+  ([[ident-type ident-val] out-props]
+   (log/info "$get: ident-type = " ident-type "ident-val = " ident-val "out-props =" out-props)
+   (let [lib-fn?  (= "library_fn" ident-type)
+         wants-exe? (some #(= % "fn_exe") out-props)
+         wants-src? (some #(= % "fn_src") out-props)
+         new-props (if (and lib-fn? wants-exe? (not wants-src?)) (conj out-props "fn_src") out-props)] ; Need src to compile!
+     #?(:clj ; the ident-val is never a keyword. See resolvers.clj for things like ($put ["list_id", "ccts_message-schema"], ["list_content"])
+        (as-> (pathom-resolve {(rm-id->clj-key ident-type) ident-val} (rm-id->clj-key new-props)) ?x
+          (if (and lib-fn? wants-exe?) (assoc ?x :fn/exe (compile-rm (:fn/src ?x))) ?x) ; ToDo: This is wasted if call is from CLJS.
+          (if (not wants-src?) (dissoc ?x :fn/src) ?x)
+          (util/clj-key->rm-id ?x))
+        :cljs (let [prom (p/deferred)
+                          req-data {:params {:ident-type ident-type
+                                             :ident-val ident-val
+                                             :request-objs (cl-format nil "~{~A~^|~}" new-props)}
+                                    :handler (fn [resp] (p/resolve! prom resp))
+                                    :error-handler (fn [{:keys [status status-text]}]
+                                                     (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                                              {:status status :status-text status-text})))
+                                    :timeout 5000}]
+                      (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
+                      (-> prom
+                          (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
+                          (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
+                          (p/then #(util/clj-key->rm-id %))
+                          (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props :new-props}))))))))
 
  #?(:clj
 (defn $put
   "Read a file of JSON or XML, creating a map."
   [[ident-type ident-val] obj]
-  (if (= ident-type "library/fn")
-    (try (let [ns-obj (reduce-kv (fn [m k v] (assoc m (-> k (str/replace  #"_" "/") keyword) v)) {} obj)]
-           (d/transact codelib-atm [(into {:fn/name ident-val} ns-obj)])
-           true)
+  (log/info "$put: ident-type = " ident-type "ident-val =" ident-val "obj = " obj)
+  (if (= ident-type "library_fn")
+    (try (let [ns-obj (reduce-kv (fn [m k v] (assoc m (rm-id->clj-key k) v)) {} obj)]
+           (log/info "$put: ns-obj ="  ns-obj)
+           (d/transact (codelib/connect-atm) [(into {:fn/name ident-val} ns-obj)])
+           "success")
          (catch Throwable e (ex-info "$put to library failed." {:obj obj :message (.getMessage e)})))
-    (throw (ex-info "Only $put to library/fn currently supported." {:ident-type ident-type})))))
+    (throw (ex-info "Only $put to library_fn currently supported." {:ident-type ident-type})))))
 
-(:cljs
+#?(:cljs
 (defn $put
-  "Call server for $put (an api/graph-put."
+  "Call server for $put (an api/graph-put call)."
   [[ident-type ident-val] obj]
+  (log/info "$put: ident-type = " ident-type "ident-val =" ident-val "obj = " obj)
   (let [prom (p/deferred)
-        req-data {:params {:ident-type ident-type :ident-val ident-val :obj obj}
+        req-data {:params {:put-ident-type ident-type :put-ident-val ident-val :put-obj obj}
                   :handler (fn [resp] (p/resolve! prom resp))
                   :error-handler (fn [{:keys [status status-text]}]
                                    (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-put"
@@ -1863,7 +1867,7 @@
     (let [db-atms
           ;; CLJ can also be called with $db := $get([['db/name', 'schemaDB'], ['db/connection']]);
           (if (= {"db_connection" "_rm_schema-db"} (first data|dbs))
-            [(connect-atm)]
+            [(schema/connect-atm)]
             (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs))]
       (query-fn-aux db-atms body in pred-args {} options)))))
 
@@ -2870,12 +2874,17 @@ answer 2:
                   (reset! ps-atm ?ps)))
        (case (:parse-status @ps-atm)
          :premature-end (log/error "Parse ended prematurely")
-         :ok (cond-> {:typ :toplevel :top (:result @ps-atm)}
-               (not rewrite?)      (:top)
-               rewrite?            (rew/rewrite)
-               executable?         (rad-form sci?)
-               execute?            (user-eval opts)
-               (:pprint? opts)     pprint-obj))))))
+         :ok (let [res (cond-> {:typ :toplevel :top (:result @ps-atm)}
+                         (not rewrite?)      (:top)
+                         rewrite?            (rew/rewrite)
+                         executable?         (rad-form sci?)
+                         execute?            (user-eval opts))]
+               (as-> res ?res
+                 (if (p/promise? ?res)
+                   (-> ?res
+                       (p/then #(if (:pprint? opts) (pprint-obj %) %))
+                       (p/catch #(str "Error processing code: " (str %))))
+                   (if (:pprint? opts) (pprint-obj ?res) ?res)))))))))
 
 (defn indent-additional-lines
   "Indent every line but the first by the amount indicated by indent."
@@ -3028,16 +3037,21 @@ answer 2:
   (let [strg (atom "")]
     (letfn [(pp [obj]
               (cond (p/promise? obj) obj
-                    (map? obj)     (swap! strg #(str % (pprint-map obj indent width)))
-                    (vector? obj)  (swap! strg #(str % (pprint-vec obj indent width)))
-                    (string? obj)  (swap! strg #(str %  "'" obj "'"))
-                    (keyword? obj) (if-let [ns (namespace obj)]
-                                     (swap! strg #(str %  "'" ns "/" (name obj) "'"))
-                                     (swap! strg #(str %  "'" (name obj) "'")))
-                    (fn? obj)      (swap! strg #(str %  "<<function>>"))
-                    :else          (swap! strg #(str % obj))))]
+                    (map? obj)       (swap! strg #(str % (pprint-map obj indent width)))
+                    (vector? obj)    (swap! strg #(str % (pprint-vec obj indent width)))
+                    (string? obj)    (swap! strg #(str %  "'" obj "'"))
+                    (keyword? obj)   (if-let [ns (namespace obj)]
+                                       (swap! strg #(str %  "'" ns "/" (name obj) "'"))
+                                       (swap! strg #(str %  "'" (name obj) "'")))
+                    (fn? obj)        (swap! strg #(str %  "<<Function>>"))
+                    (exception? obj) (swap! strg #(str % (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
+                                                                    (ex-message obj) (ex-data obj)))),
+                    :else            (swap! strg #(str % obj))))]
       (cond-> obj
-        (p/promise? obj) (p/then #(pprint-obj %)), ; ToDo: I expected this to work for core.cljs; it doesn't.
+        (p/promise? obj) (-> (p/then #(pprint-obj %))
+                             (p/catch #(swap! strg  (fn [s] (str s (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
+                                                                              (ex-message %) (ex-data %))))))) ; ToDo: p/finally here?
         (map? obj) sort-obj,
         (vector? obj) sort-obj,
-        true pp))))
+        true pp))
+    @strg))

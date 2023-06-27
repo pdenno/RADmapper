@@ -5,22 +5,25 @@
 (defn get-example [name]
   (some #(when (= name (:name %)) %) rm-examples))
 
-;;; ($get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"]])
+;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
-  [{:name "Get a library function"
-    :code "$get([['library/fn', 'addOne'],['fn/name', 'fn/doc', 'fn/src','fn/exe']])"}
+  [{:name "All the lists"
+    :code "( // For any of the things returned, you can ask for $get(['list_id', '<that type>'] ['list_content'])
+
+  $allLists := $get(['list_id', 'lists'], ['list_content']) )"}
+
+   {:name "Store a library function"
+    :code "$put(['library_fn', 'addTwo'],
+     {'fn_name' : 'addTwo',
+      'fn_doc'  : 'Add two to the argument',
+      'fn_src'  : 'function($x){$x + 1}'})"}
+
+   {:name "Get a library function"
+    :code "$get(['library_fn', 'addOne'],['fn_name', 'fn_doc', 'fn_src','fn_exe'])"}
 
    {:name "Use a library function"
-    :code "( $addOne := $get([['library/fn', 'addOne'],['fn/name', 'fn/doc', 'fn/src','fn/exe']]).fn_exe;
+    :code "( $addOne := $get(['library_fn', 'addOne'],['fn_name', 'fn_doc', 'fn_src', 'fn_exe']).fn_exe;
   $addOne(3) );"}
-
-#_{:name "Fix this bug too"
-    :code "$shape := function($p, $spc) { $reduce($children($spc, $p),
-                      function($tree, $c)
-                         { $update($tree,
-                                   $p,
-                                   function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or \\'<data>\\')}) },
-                      {})};"}
 
    {:name "partial solution"
     :code "{'ProcessInvoice':
@@ -39,23 +42,12 @@
              'Item'    : {'ManufacturingParty': {'Name': '<name-data>'}}}},
         'Process':      '<process-data>'}}"}
 
-   {:name "Fix this bug"
-   :code "($schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
- $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
- $pcQuery   := $get([['library/fn' , 'schemaParentChild'], ['fn/src', 'fn/exe']]).fn_exe;
- $rootQuery := $get([['library/fn' , 'schemaRoots'],       ['fn/src', 'fn/exe']]).fn_exe;
- $shape     := $get([['library/fn' , 'schemaShape'],       ['fn/src', 'fn/exe']]).fn_exe;
-
- [$pcQuery, $rootQuery, $shape]
-)"}
-
-
    {:name "Using library code"
-    :code "($schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
- $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
- $pcQuery   := $get([['library/fn' , 'schemaParentChild'], ['fn/src', 'fn/exe']]).fn_exe;
- $rootQuery := $get([['library/fn' , 'schemaRoots'],       ['fn/src', 'fn/exe']]).fn_exe;
- $shape     := $get([['library/fn' , 'schemaShape'],       ['fn/src', 'fn/exe']]).fn_exe;
+    :code "($schema1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
+ $schema2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content']);
+ $pcQuery   := $get(['library_fn' , 'schemaParentChild'], ['fn_src', 'fn_exe']).fn_exe;
+ $rootQuery := $get(['library_fn' , 'schemaRoots'],       ['fn_src', 'fn_exe']).fn_exe;
+ $shape     := $get(['library_fn' , 'schemaShape'],       ['fn_src', 'fn_exe']).fn_exe;
 
  $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.
  $schema2PC    := $pcQuery($schema2);     // The first two return binding sets for {?parent x ?child y}
@@ -69,40 +61,40 @@
    {:name "Try (-1) : JSONata-like"
     :code
     "( // Ordinary JSONata-like expressions: get the names of the two schema in the LHS pane:
-  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content', 'schema/name']]);
-  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content', 'schema/name']]);
+  $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content', 'schema_name']);
+  $s2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content', 'schema_name']);
   $q := query{[?e :schema_name ?name]};
   $q($s1)  )"}
 
    #_{:name "So simple!"
     :code "1 + 2"}
 
-   #_{:name "Try (0): Schema list"
-      :code "$get([['list/id', 'ccts/message-schema'], ['list/content']])"}
+   {:name "Try (0): Schema list"
+      :code "$get(['list_id', 'ccts_message-schema'], ['list_content'])"}
 
    {:name "Try (1): Small remote query"
-    :code "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
-  $qfn := query{[?e :schema/name ?name] [?e :schema/sdo ?sdo]};
+    :code "( $db  := $get(['db_name', 'schemaDB'], ['db_connection']);
+  $qfn := query{[?e :schema_name ?name] [?e :schema_sdo ?sdo]};
   $qfn($db).?sdo ~> $distinct() ~> $sort()
    )"}
 
    {:name "Try (2) : Simple get"
-    :code "( $schema := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+    :code "( $schema := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
            $schema )"}
 
    {:name "Try (3) : JSONata-like"
     :code
     "( // Ordinary JSONata-like expressions: get the names of the two schema in the LHS pane:
-  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content', 'schema/name']]);
-  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content', 'schema/name']]);
+  $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content', 'schema_name']);
+  $s2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content', 'schema_name']);
 
 [$s1, $s2].`schema_name` )"}
 
    {:name "Try (4) : Simplest query"
     :code
 "(
-  $x := {'element/name' : 'foo'};
-  $qf := query{[?x :element/name ?name]};
+  $x := {'element_name' : 'foo'};
+  $qf := query{[?x :element_name ?name]};
   $qf($x)
 )"}
 
@@ -114,8 +106,8 @@
   // We could also just call the query on either $s1 or $s2, of course,
   // or don't create the $db and just call $qf with [$s1, $s2].
 
-  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/name', 'schema/content']]);
-  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/name', 'schema/content']]);
+  $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_name', 'schema_content']);
+  $s2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_name', 'schema_content']);
 
  $db := [$s1, $s2];
  $qf := query{[?x :schema_name ?name]};
@@ -128,34 +120,34 @@
   // Remember: query and express are function defining.
   // If you run the following you just get <<function>>
 
-  query{[?x :model/elementDef ?ed]}
+  query{[?x :model_elementDef ?ed]}
 )"}
 
-   {:name "Try (6):  query :model/elementDef"
+   {:name "Try (6):  query :model_elementDef"
     :code
     "(
   // This example queries for all the element definitions.
-  // The :model/elementDefs are objects (things inside curly brackets)
+  // The :model_elementDefs are objects (things inside curly brackets)
   // so the are represented by a unique integer (entity IDs).
   // They aren't too interesting; just used to navigate through the nested structure.
   // Note that the entity ID are small numbers because we aren't running RM in the server.
   // The only entities we know about are the ones in the LHS pane.
 
- $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+ $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
  $qf := query{[?x :model_elementDef ?ed]};
  $qf($s1)
 )"}
 
 
-   {:name "Try (7): Towards goal: query :element/name"
+   {:name "Try (7): Towards goal: query :element_name"
     :code
     "(
   // We'll start working towards something useful with the two schema.
   // In the next few examples, we'll discover how they differ.
   // Let's start by listing  all the element names in each schema.
 
-  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
-  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+  $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
+  $s2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content']);
   $qf := query{[?x :element_name ?name]};
 
   {'schema 1': $qf($s1),
@@ -171,12 +163,12 @@
   // 'model/sequence' is supposed to be the general notion of a sequence of things.
   // There are probably a few patterns in the schema data for getting parent/child relationships.
   // For this data, however, there is only one pattern;
-  // it starts with :model/sequence and ends with :element/name.
+  // it starts with :model_sequence and ends with :element_name.
   // We could use datalog rules to catch pattern... it is on my ToDo list.
   // With this pattern with might just do $query{(parentChild ?parent ?child)}.
 
-  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
-  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+  $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
+  $s2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content']);
   $qf := query{[?x :element_name ?parent]
                [?x :element_complexType ?cplx1]
                [?cplx1 :model_sequence ?def]      // The pattern 'starts over again'.
@@ -194,11 +186,11 @@
   // we generated in (5), where we were just pulling out :element/name, wherever it occurs.
   // Of course this is because root elements don't have parents.
   // I suppose there are two patterns in the schema for picking off roots:
-  // (1) :schema/content ->                    :model/elementDef -> :element/name.
-  // (2) :schema/content -> :model/sequence -> :model/elementDef -> :element/name.
+  // (1) :schema_content ->                    :model_elementDef -> :element_name.
+  // (2) :schema_content -> :model_sequence -> :model_elementDef -> :element_name.
 
-  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
-  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+  $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
+  $s2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content']);
 
   $qf1 := query{[?c :schema_content ?e]      // pattern 1
                 [?e :model_elementDef ?d]
@@ -223,11 +215,11 @@
   // we generated in (5), where we were just pulling out :element/name, wherever it occurs.
   // Of course this is because root elements don't have parents.
   // I suppose there are two patterns in the schema for picking off roots:
-  // (1) :schema/content ->                    :model/elementDef -> :element/name.
-  // (2) :schema/content -> :model/sequence -> :model/elementDef -> :element/name.
+  // (1) :schema_content ->                    :model_elementDef -> :element_name.
+  // (2) :schema_content -> :model_sequence -> :model_elementDef -> :element_name.
 
-  $s1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
-  $s2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+  $s1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
+  $s2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content']);
   $qfRoots := query{[?c :schema_content ?e]      // pattern 1
                     [?e :model_elementDef ?d]
                     [?d :element_name ?name]};
@@ -242,8 +234,8 @@
    {:name "Try (10): Shape "
     :code
    "(
-  $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
-  $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+  $schema1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
+  $schema2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content']);
 
   $pcQuery := query{[?x     :element_name        ?parent] // pc = 'parent/child'
                     [?x     :element_complexType ?cplx1]
@@ -278,8 +270,8 @@
    {:name "Try (11): LLM match"
     :code
    "(
-  $schema1 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
-  $schema2 := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema/content']]);
+  $schema1 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema_content']);
+  $schema2 := $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_2'], ['schema_content']);
 
   $pcQuery := query{[?x     :element_name        ?parent] // pc = 'parent/child'
                     [?x     :element_complexType ?cplx1]

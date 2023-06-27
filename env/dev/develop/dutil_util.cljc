@@ -1,7 +1,7 @@
 (ns develop.dutil-util
   "Tools for repl-based exploration of RADmapper code"
   (:require
-   [rad-mapper.evaluate :as ev]))
+   [rad-mapper.builtin :as bi]))
 
 (defn remove-meta
   "Remove metadata from an object and its substructure.
@@ -36,7 +36,7 @@
       (ni form))))
 
 (defn nicer-sym
-  "Forms coming back from ev/processRM have symbols prefixed by clojure.core
+  "Forms coming back from bi/processRM have symbols prefixed by clojure.core
    and other namespaces. On the quoted form in testing, I'd rather not see this.
    This takes away those namespace prefixes."
   [form]
@@ -49,7 +49,7 @@
    removes any metadata from value returned and its substructure."
   [exp & {:keys [rewrite? debug-parse? debug-eval? keep-meta? sci?]}]
   (let [execute? (not rewrite?)]
-    (cond->> (ev/processRM
+    (cond->> (bi/processRM
               :ptag/exp exp
               {:rewrite? rewrite?
                :execute? execute?

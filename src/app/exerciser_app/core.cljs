@@ -74,6 +74,7 @@
           ;_zippy (log/info "******* For RM eval: DATA = \n" user-data)
           result (try (bi/processRM :ptag/exp code  {:pprint? true :execute? true :sci? true :user-data user-data})
                       (catch js/Error e {:failure (str "Error: " (.-message e))}))]
+      (log/info "run-code returns result = " result)
       result)))
 
 (j/defn eval-cell

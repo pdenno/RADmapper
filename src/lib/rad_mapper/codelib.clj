@@ -25,6 +25,7 @@
    #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/src}
    #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/doc}])
 
+;;; ToDo: Don't really need these. See stbd.db.
 (def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)
 (def db-dir "The directory containing schema DBs. Can't be set at compile time in Docker." nil)
 
@@ -36,7 +37,7 @@
     (d/create-database @db-cfg-atm)
     (let [conn (d/connect @db-cfg-atm)]
       (d/transact conn db-schema)
-      ;(d/transact conn library-code)
+      (d/transact conn library-code)
       (log/info "Created schema DB " conn)
       conn)))
 

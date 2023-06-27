@@ -1,7 +1,7 @@
 (ns rad-mapper.builtin-test
   "Test built-in functions"
   (:require
-   [ajax.core :refer [GET]]
+   [ajax.core :refer [GET POST]]
    [clojure.test :refer [deftest is testing]]
    [develop.dutil :refer [examine]] ; Useful in debugging
    [develop.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
@@ -793,6 +793,50 @@
              []
              @test-results))
 
+(def svr-prefix "http://localhost:3000")
+(deftest api-calls
+  (testing "http GET and POST to rad_mapper API."
+    (testing "Testing simple GET (health)"
+      (is (= #{:time :up-since}
+             (let [p (p/deferred)]
+               (GET (str svr-prefix "/api/health")
+                    {:params {}
+                     :handler (fn [resp] (p/resolve! p resp))
+                     :error-handler (fn [{:keys [status status-text]}]
+                                      (ex-info "CLJS-AJAX error on /api/health"
+                                               {:status status :status-text status-text}))
+                     :timeout 5000})
+               (-> p (p/await 5000) keys set)))))
+    (testing "Testing $get([[library_fn 'addOne'] ['fn_src', 'fn_doc']]) through http GET."
+      (is (= {"fn_src" "function($x){$x + 1}",
+              "fn_doc" "Add one to the (numeric) argument. This is just for testing, of course."}
+             (let [p (p/deferred)]
+               (GET (str svr-prefix "/api/graph-query")
+                    {:params {:ident-type "library_fn"
+                              :ident-val "addOne"
+                              :request-objs "fn_src|fn_doc"}
+                     :handler (fn [resp] (p/resolve! p resp))
+                     :error-handler (fn [{:keys [status status-text]}]
+                                      (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                            {:status status :status-text status-text})))
+                     :timeout 5000})
+               (p/await p 5000)))))
+    (testing "Testing $put of a library function."
+      (is (= true
+             (let [prom (p/deferred)
+                   req-data {:params {:put-ident-type "library_fn"
+                                      :put-ident-val "addTwo"
+                                      :put-obj {"fn_name"  "addTwo",
+                                                "fn_doc"   "Add two to the argument",
+                                                "fn_src"   "function($x){$x + 1}"}}
+                             :handler (fn [resp] (p/resolve! prom resp))
+                             :error-handler (fn [{:keys [status status-text]}]
+                                              (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-put"
+                                                                       {:status status :status-text status-text})))
+                             :timeout 5000}]
+               (POST (str svr-prefix "/api/graph-put") req-data) ; ToDo: use Martian.
+               (p/await! prom 5000)))))))
+
 (defn smatch-test []
   (-> (run
    "(
@@ -921,3 +965,9 @@
        "TaxIDSet" {"ID" "<data>"}}}},
     "Process" "<data>"},
    "ApplicationArea" {"CreationDateTime" "<data>"}}})
+
+(defn tryme []
+  (bi/$put ["library/fn" "addTwo"]
+           {"fn_name" "addTwo"
+            "fn_doc" "Add 2 to the argument."
+            "fn_src" "function($x){$x + 2}"}))
