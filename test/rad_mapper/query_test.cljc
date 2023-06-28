@@ -9,7 +9,6 @@
    ;;  #?(:clj [owl-db-tools.resolvers :refer [pull-resource]])
    #?(:cljs [cljs.reader])
    [rad-mapper.builtin            :as bi]
-   [rad-mapper.evaluate           :as ev]
    [rad-mapper.query              :as qu]
    [rad-mapper.util               :as util]
    [develop.dutil :refer [run-rew]]
@@ -449,7 +448,7 @@
     ;; I just check the type because the actual DB can't be tested for equality.
     #?(:clj
     (is (= datahike.db.DB
-           (do (ev/run-rew
+           (do (bi/run-rew
                 "($ := $newContext() ~> $addSource($read('data/testing/owl-example.edn'), 'owl-data');))"
                (-> @bi/$ :sources (get "owl-data") type))))))
 
@@ -899,7 +898,7 @@
    :express-body-reduce-type2          (express-body-reduce-type2)})
 
 (defn parse-test-not-here []
-  (ev/processRM :ptag/query-patterns
+  (bi/processRM :ptag/query-patterns
   "[$DBb ?e2 :id    ?id]       /* Match on ID. */
    [$DBa ?e1 :name  $name]     /* Parametric on name */
    [$DBa ?e1 :name  ?name]     /* So that we capture name */"
@@ -987,7 +986,7 @@
                :redex/user-key "name",
                :redex/ek-val ?name,
                :redex/more [#:redex{:bData--?name|bData [:redex/express-key ?name "bData"], :user-key "bData", :val ?bData}]}
-             (-> (ev/processRM :ptag/exp "express(){{'name': key(?name), 'bData': ?bData}}" {:rewrite? true})
+             (-> (bi/processRM :ptag/exp "express(){{'name': key(?name), 'bData': ?bData}}" {:rewrite? true})
                  second ; first is call to bi/express.
                  :base-body
                  unquote-body
@@ -998,7 +997,7 @@
       (is (= '#:redex{:user-key ?name,
                       :?name--?name [:redex/express-key ?name],
                       :obj [#:redex{:user-key "bData", :bData--?name|bData [:redex/express-key ?name "bData"], :val ?bData}]}
-             (-> (ev/processRM :ptag/exp "express{{?name : {'bData' : ?bData}}}" {:rewrite? true})
+             (-> (bi/processRM :ptag/exp "express{{?name : {'bData' : ?bData}}}" {:rewrite? true})
                  second
                  :base-body
                  unquote-body
@@ -1009,7 +1008,7 @@
       (is (= '#:redex{:more
                       [#:redex{:user-key "name", :name--name [:redex/express-key "name"], :val ?name}
                        #:redex{:user-key "bData", :bData--bData [:redex/express-key "bData"], :val ?bData}]}
-             (-> (ev/processRM :ptag/exp "express{{'name' : ?name, 'bData' : ?bData}}" {:rewrite? true})
+             (-> (bi/processRM :ptag/exp "express{{'name' : ?name, 'bData' : ?bData}}" {:rewrite? true})
                  second
                  :base-body
                  unquote-body
@@ -1067,13 +1066,13 @@
    $bSets := $qFn($data);
    $eFn   := express{$eIdent($data)};
    $reduce($bSets, $eFn) )"
-             (ev/pprint-obj data)))
+             (bi/pprint-obj data)))
 
 (deftest query-identity
   (testing "Testing $qIdent"
     (testing "Testing generation of the query forms"
     (is (= '[[?e1 :id ?v1] [?e1 :aAttr ?e2] [?e2 :aval ?v2] [?e2 :cval ?e3] [?e3 :cc-val ?v3] [?e1 :bAttr ?e4] [?e4 :bval ?v4]]
-           (ev/processRM :ptag/exp
+           (bi/processRM :ptag/exp
                          "$qIdent({'id' : [123, 456],
                                    'aAttr' : {'aval'  : 'A-value',
                                               'cval' : {'cc-val': 'C-value'}},
@@ -1146,6 +1145,6 @@
 ;;; A rule is a named group of clauses that can be plugged into the :where section of your query.
 ;;; For example, here is a rule from the Seattle example dataset that tests whether a community is a twitter feed
 (defn tryme []
-  (ev/processRM :ptag/exp
+  (bi/processRM :ptag/exp
                 "rule{(twitter? ?c)
                       [?c :community/type :community.type/twitter]}"))

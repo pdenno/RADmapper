@@ -75,30 +75,31 @@
 
 ;;; Note that only if the ident-val has a underscore in it does this convert to keyword.
 ;;; That is to allow idents like [:library/fn "addOne"].
-;;; (list-id->list-content {:list/id 'ccts/message-schema})
+;;; (list-id->list-content {:list/id :ccts/message-schema})
 (pco/defresolver list-id->list-content
   "This resolver returns lists."
   [{:keys [list/id]}]
   {::pco/output [:list/content]}
+  (log/info "id = " id)
   (let [schema-types (d/q '[:find [?type ...] :where [_ :schema/type  ?type]] @(connect-atm))]
-    (if (= "lists" id) ; Get all the lists
-      {:list/content (into ["library/fn"] schema-types)}
-      (let [schema-type? (set schema-types)
-            id (if (str/index-of id "_") (util/rm-id->clj-key id) id)
-            res (cond (schema-type? id)
-                      (->>
-                       (d/q '[:find ?name
-                              :in $ ?schema-type
-                              :keys schema/name
-                              :where
-                              [?ent :schema/name  ?name]
-                            [?ent :schema/type  ?schema-type]]
-                            @(connect-atm) (keyword id))
-                       (map :schema/name)
-                       sort
-                       vec
-                       not-empty))]
-        {:list/content res}))))
+    (cond  (= "lists" id)           {:list/content (into ["library_fn"] schema-types)}
+           (= "library_fn" id)      {:list/content (d/q '[:find [?name ...] :where [?ent :fn/name ?name]] @(codelib/connect-atm))}
+           :else (let [schema-type? (set schema-types)
+                       id (if (str/index-of id "_") (util/rm-id->clj-key id) id)
+                       res (cond (schema-type? id)
+                                 (->>
+                                  (d/q '[:find ?name
+                                         :in $ ?schema-type
+                                         :keys schema/name
+                                         :where
+                                         [?ent :schema/name  ?name]
+                                         [?ent :schema/type  ?schema-type]]
+                                       @(connect-atm) (keyword id))
+                                  (map :schema/name)
+                                  sort
+                                  vec
+                                  not-empty))]
+                   {:list/content res}))))
 
 ;;; (pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Quote"} [:db/id])
 (pco/defresolver schema-name->schema-object

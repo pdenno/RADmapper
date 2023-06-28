@@ -1665,35 +1665,46 @@
 ;;;  = (rad-mapper.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:schema/content])
 (defn $get
   "Read a file of JSON or XML, creating a map."
-  ([spec] (if (string? spec)
-            (read-local spec {})
-            ($get spec {})))
-  ([[ident-type ident-val] out-props]
-   (log/info "$get: ident-type = " ident-type "ident-val = " ident-val "out-props =" out-props)
-   (let [lib-fn?  (= "library_fn" ident-type)
-         wants-exe? (some #(= % "fn_exe") out-props)
-         wants-src? (some #(= % "fn_src") out-props)
-         new-props (if (and lib-fn? wants-exe? (not wants-src?)) (conj out-props "fn_src") out-props)] ; Need src to compile!
-     #?(:clj ; the ident-val is never a keyword. See resolvers.clj for things like ($put ["list_id", "ccts_message-schema"], ["list_content"])
-        (as-> (pathom-resolve {(rm-id->clj-key ident-type) ident-val} (rm-id->clj-key new-props)) ?x
-          (if (and lib-fn? wants-exe?) (assoc ?x :fn/exe (compile-rm (:fn/src ?x))) ?x) ; ToDo: This is wasted if call is from CLJS.
-          (if (not wants-src?) (dissoc ?x :fn/src) ?x)
-          (util/clj-key->rm-id ?x))
-        :cljs (let [prom (p/deferred)
-                          req-data {:params {:ident-type ident-type
-                                             :ident-val ident-val
-                                             :request-objs (cl-format nil "~{~A~^|~}" new-props)}
-                                    :handler (fn [resp] (p/resolve! prom resp))
-                                    :error-handler (fn [{:keys [status status-text]}]
-                                                     (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                                              {:status status :status-text status-text})))
-                                    :timeout 5000}]
-                      (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
-                      (-> prom
-                          (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
-                          (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
-                          (p/then #(util/clj-key->rm-id %))
-                          (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props :new-props}))))))))
+  [ident|file-string other]
+  (if (string? ident|file-string)
+    ;; It is a local file access. ToDo: Should I even allow this? Not really supported today. Needs work/thought.
+    (let [file-string ident|file-string
+          opts other]
+      (read-local file-string opts))
+    ;; It is a DB get with
+    (let [[ident-type ident-val] ident|file-string
+          out-props other
+          lib-fn?  (= "library_fn" ident-type)
+          wants-exe? (some #(= % "fn_exe") out-props)
+          wants-src? (some #(= % "fn_src") out-props)
+          new-props (if (and lib-fn? wants-exe? (not wants-src?)) (conj out-props "fn_src") out-props)] ; Need src to compile!
+      #?(:clj
+         ;; Conversion to keywords is always done close to pathom.
+         ;; ident-val is not coerced here because it need not be a key (e.g. 'addOne').
+         ;; ident-val may be coerced in the resolver, as needed.
+         ;; See resolvers.clj for things like ($put ["list_id", "ccts_message-schema"], ["list_content"])
+         (let [ident-type (rm-id->clj-key ident-type)
+               new-props  (rm-id->clj-key new-props)]
+           (log/info "$get: ident-type = " ident-type "ident-val = " ident-val "new-props =" new-props)
+           (as-> (pathom-resolve {ident-type ident-val} new-props) ?x
+             (if (and lib-fn? wants-exe?) (assoc ?x :fn/exe (compile-rm (:fn/src ?x))) ?x) ; ToDo: This is wasted if call is from CLJS.
+             (if (not wants-src?) (dissoc ?x :fn/src) ?x)
+             (util/clj-key->rm-id ?x)))
+         :cljs (let [prom (p/deferred)
+                     req-data {:params {:ident-type ident-type
+                                        :ident-val ident-val
+                                        :request-objs (cl-format nil "~{~A~^|~}" new-props)}
+                               :handler (fn [resp] (p/resolve! prom resp))
+                               :error-handler (fn [{:keys [status status-text]}]
+                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
+                                                                         {:status status :status-text status-text})))
+                               :timeout 5000}]
+                 (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
+                 (-> prom
+                     (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
+                     (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
+                     (p/then #(util/clj-key->rm-id %))
+                     (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props :new-props}))))))))
 
  #?(:clj
 (defn $put
@@ -2955,6 +2966,8 @@ answer 2:
         (vector? obj)   (mapv sort-obj obj)
         :else           obj))
 
+;;; ToDo: Consider the idea of creating an intermediate object in which all the parts are serialized. THEN print that.
+;;;       I think that gets around a lot of the weirdness and duplication here.
 (defn pprint-map
   "Print a map:
      (1) If it all fits within width minus indent, print it that way.
@@ -2963,7 +2976,11 @@ answer 2:
   - ident is the column in which this object can start printing.
   - width is column beyond which print should not appear."
   [obj indent width]
-  (cond (empty? obj) "{}",
+  (cond (empty? obj) "{}", ; This is okay because we never come here from pprint-map.
+        (p/promise? obj) (-> obj
+                             (p/then #(pprint-obj %))
+                             (p/catch #(cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
+                                                  (ex-message %) (ex-data %))))
         (= obj {"db_connection" "_rm_schema-db"}) "<<connection>>",
         :else (let [kv-pairs (reduce-kv (fn [m k v] ; Here we get the 'dense' size; later calculate a new rest-start
                                           (let [kk (pprint-obj k :width width)
@@ -3036,12 +3053,15 @@ answer 2:
   [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
   (let [strg (atom "")]
     (letfn [(pp [obj]
-              (cond (p/promise? obj) obj
+              (cond (p/promise? obj) (-> obj
+                                         (p/then #(swap! strg (fn [s] (str s (pprint-obj %)))))
+                                         (p/catch #(swap! strg  (fn [s] (str s (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
+                                                                              (ex-message %) (ex-data %)))))))
                     (map? obj)       (swap! strg #(str % (pprint-map obj indent width)))
                     (vector? obj)    (swap! strg #(str % (pprint-vec obj indent width)))
                     (string? obj)    (swap! strg #(str %  "'" obj "'"))
                     (keyword? obj)   (if-let [ns (namespace obj)]
-                                       (swap! strg #(str %  "'" ns "/" (name obj) "'"))
+                                       (swap! strg #(str %  "'" ns "_" (name obj) "'"))
                                        (swap! strg #(str %  "'" (name obj) "'")))
                     (fn? obj)        (swap! strg #(str %  "<<Function>>"))
                     (exception? obj) (swap! strg #(str % (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"

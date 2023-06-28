@@ -214,11 +214,12 @@
 
 (defn read-eol-comment
   "Return a token object:
-   {:tkn :eol-comment :ws ws :raw <// string to the end of the line>} :value <string to the end of the line>}."
+   {:tkn :eol-comment :ws ws :raw <// string to the end of the line>} :value <string to the end of the line>}.
+   ws is whitespce in front of the token."
   [st ws]
   (let [line (-> st str/split-lines first)
         ws (-> ws str/split-lines first)
-        line (subs line (count ws))
+        ;;line (subs line (count ws)) ; ToDo: Huh? what is this for?
         [raw text] (re-matches #"//(.*)$" line)]
     {:tkn {:typ :EOL-comment :text text} :raw raw :ws ws}))
 
@@ -247,7 +248,7 @@
 
 (defn read-long-syntactic
   "Return a map containing a :tkn and :raw string for 'long syntactic' lexemes,
-   which include arbitray query vars and roles too."
+   which include arbitray query vars and roles too. Whitespace ws, is in front of token."
   [pstate st ws]
   (let [pstate (dissoc pstate :one-token)
         len (count st)
@@ -318,7 +319,7 @@
   (when *debugging-tokenizer?* (println (cl-format nil "-----> string-block = ~S " (:string-block pstate))))
   (let [string-block (:string-block pstate)
         line (:line pstate) ; line is just for error reporting.
-        ws (whitesp string-block)
+        ws (whitesp string-block) ; whitespace in front of the token
         s (subs string-block (count ws))
         c (-> s first)
         pstate
