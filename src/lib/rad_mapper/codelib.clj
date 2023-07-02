@@ -38,7 +38,7 @@
     (let [conn (d/connect @db-cfg-atm)]
       (d/transact conn db-schema)
       (d/transact conn library-code)
-      (log/info "Created schema DB " conn)
+      (log/info "Created codelib DB " conn)
       conn)))
 
 (defn init-db

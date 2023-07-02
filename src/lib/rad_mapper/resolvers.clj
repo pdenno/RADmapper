@@ -195,7 +195,7 @@
   [ident-map outputs]
   (log/info "Pathom3 resolve: ident-map = " ident-map " outputs= " outputs)
   (try (let [res (p.eql/process @indexes ident-map outputs)]
-         (log/info "Pathom3 returns:" res)
+         (log/info "Pathom3 returns:" (-> res str (subs 0 40) (str "...")))
          res)
        (catch Exception e
          (throw (ex-info "pathom-resolve: " {:msg (.getMessage e)})))))

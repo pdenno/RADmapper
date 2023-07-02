@@ -5,12 +5,13 @@
    [mount.core :as mount :refer [defstate]]
    [muuntaja.core :as m]
    [rm-server.web.controllers.rad-mapper :as rm]
+   [rad-mapper.builtin :as bi]
    [ring.middleware.defaults :as defaults]
    [ring.middleware.cors :refer [wrap-cors]]
    [ring.middleware.session.cookie :as cookie]
    [reitit.ring :as ring]
    [ring.middleware.anti-forgery :refer [*anti-forgery-token*]]
-   [ring.util.http-response :refer [content-type ok]]
+   [ring.util.http-response :as response :refer [content-type ok]]
    [reitit.http :as http]
    [reitit.coercion.spec]
    [reitit.swagger :as swagger]
@@ -130,7 +131,6 @@
 (s/def ::graph-query-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
 (s/def ::graph-query-response map?)
 
-
 ;;; graph-put ($put)
 (s/def ::put-ident-type (st/spec {:spec string?
                                   :name "ident-type"
@@ -198,6 +198,12 @@
             :parameters {:query ::graph-query-request}
             :responses {200 {:body ::graph-query-response}}
             :handler rm/graph-query}}]
+
+    #_["/fake-get"
+     {:get {:summary "Use this in testing calls to $get. It runs a REST call in CLJ. Useful, for example to test pprint-obj/promises."
+            :parameters {:query map?}
+            :responses {200 {:body map?}}
+            :handler (fn [_] (response/ok {"abc" 123}))}}]
 
     ["/graph-put"
      {:post {:summary "Write to a graph DB similar to $put()."

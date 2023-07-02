@@ -125,15 +125,13 @@
 
 (defn singlize [v] (if (vector? v) v (vector v)))
 
-(def ^:dynamic *await-finalize* 45000) ; Sufficient for a tough LLM call.
-
 (defn finalize
   [obj]
   (letfn [(fin [obj]
             (cond (map? obj)              (let [m (meta obj)]
                                             (-> (reduce-kv (fn [m k v] (assoc m (fin k) (fin v))) {} obj) (with-meta m)))
                   (vector? obj)           (let [m (meta obj)] (-> (mapv fin obj) (with-meta m)))
-                  (p/promise? obj)        #?(:clj (p/await obj *await-finalize*) :cljs obj)
+                  (p/promise? obj)        (util/await-promise obj)
                   :else                   obj))]
     (-> obj fin jflatten)))
 
@@ -1661,8 +1659,6 @@
        (catch #?(:clj Throwable :cljs :default) e
          (ex-info "compile-rm: Did not compile!" {:src src :err e}))))
 
-;;; (bi/$get [["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema/content"]])
-;;;  = (rad-mapper.resolvers/pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Invoice"} [:schema/content])
 (defn $get
   "Read a file of JSON or XML, creating a map."
   [ident|file-string other]
@@ -2849,7 +2845,7 @@ answer 2:
     (processRM :ptag/jvar-decls (cl-format nil "(~A)" pdata)) ; Will throw if not okay.
     (cl-format nil "(~A; ~A)" pdata pcode)))
 
-(declare pprint-obj)
+(declare pprint-obj pprint-top)
 
 (defn processRM
   "A top-level function for all phases of translation.
@@ -2890,12 +2886,7 @@ answer 2:
                          rewrite?            (rew/rewrite)
                          executable?         (rad-form sci?)
                          execute?            (user-eval opts))]
-               (as-> res ?res
-                 (if (p/promise? ?res)
-                   (-> ?res
-                       (p/then #(if (:pprint? opts) (pprint-obj %) %))
-                       (p/catch #(str "Error processing code: " (str %))))
-                   (if (:pprint? opts) (pprint-obj ?res) ?res)))))))))
+               (if (:pprint? opts) (pprint-top res) res)))))))
 
 (defn indent-additional-lines
   "Indent every line but the first by the amount indicated by indent."
@@ -2976,11 +2967,7 @@ answer 2:
   - ident is the column in which this object can start printing.
   - width is column beyond which print should not appear."
   [obj indent width]
-  (cond (empty? obj) "{}", ; This is okay because we never come here from pprint-map.
-        (p/promise? obj) (-> obj
-                             (p/then #(pprint-obj %))
-                             (p/catch #(cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
-                                                  (ex-message %) (ex-data %))))
+  (cond (empty? obj) "{}",
         (= obj {"db_connection" "_rm_schema-db"}) "<<connection>>",
         :else (let [kv-pairs (reduce-kv (fn [m k v] ; Here we get the 'dense' size; later calculate a new rest-start
                                           (let [kk (pprint-obj k :width width)
@@ -3051,27 +3038,51 @@ answer 2:
      - depth: the number of nesting levels.
      - start: a number of characters to indent owing to where this object starts because of key for which it is a value."
   [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
-  (let [strg (atom "")]
-    (letfn [(pp [obj]
-              (cond (p/promise? obj) (-> obj
-                                         (p/then #(swap! strg (fn [s] (str s (pprint-obj %)))))
-                                         (p/catch #(swap! strg  (fn [s] (str s (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
-                                                                              (ex-message %) (ex-data %)))))))
-                    (map? obj)       (swap! strg #(str % (pprint-map obj indent width)))
-                    (vector? obj)    (swap! strg #(str % (pprint-vec obj indent width)))
-                    (string? obj)    (swap! strg #(str %  "'" obj "'"))
-                    (keyword? obj)   (if-let [ns (namespace obj)]
-                                       (swap! strg #(str %  "'" ns "_" (name obj) "'"))
-                                       (swap! strg #(str %  "'" (name obj) "'")))
-                    (fn? obj)        (swap! strg #(str %  "<<Function>>"))
-                    (exception? obj) (swap! strg #(str % (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
-                                                                    (ex-message obj) (ex-data obj)))),
-                    :else            (swap! strg #(str % obj))))]
-      (cond-> obj
-        (p/promise? obj) (-> (p/then #(pprint-obj %))
-                             (p/catch #(swap! strg  (fn [s] (str s (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
-                                                                              (ex-message %) (ex-data %))))))) ; ToDo: p/finally here?
-        (map? obj) sort-obj,
-        (vector? obj) sort-obj,
-        true pp))
-    @strg))
+  ;;(log/info "pprint-obj: obj = " obj)
+  (letfn [(pp [obj accum]
+            (cond (string? obj)    (str accum  "'" obj "'")
+                  (number? obj)    (str accum obj)
+                  (map? obj)       (str accum (pprint-map obj indent width))
+                  (vector? obj)    (str accum (pprint-vec obj indent width))
+                  (keyword? obj)   (if-let [ns (namespace obj)]
+                                     (str accum "'" ns "_" (name obj) "'")
+                                     (str accum "'" (name obj) "'"))
+                  (fn? obj)        (str accum "<<Function>>")
+                  (exception? obj) (str accum (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
+                                                         (ex-message obj) (ex-data obj))),
+                  :else            (str accum obj)))]
+    (as-> obj ?o
+      (if (map? ?o)                 (sort-obj ?o) ?o)
+      (if (vector? ?o)              (sort-obj ?o) ?o)
+      (reset! diag (pp ?o "")))))
+
+(defn resolved-obj
+  "Replace the promises in an object with their resolution.
+   This function expects a object where all the promises are fulfilled."
+  [obj]
+  (letfn [(ro [x]
+            (cond (map? x)       (reduce-kv (fn [m k v] (assoc m (ro k) (ro v))) {} x)
+                  (vector? x)    (mapv #(ro %) x)
+                  (p/promise? x) (p/extract x)
+                  :else          x))]
+    (ro obj)))
+
+(defn pprint-top
+  "Top-level of pretty printing. Collect all the promises in the object.
+   when they are all resolved (p/all), call pprint-top again with all those objects resolved.
+   Of course, promises might resolve to promises, so print-top recursively calls itself
+   until no promises left."
+  [obj]
+  (let [proms (atom [])]
+    (letfn [(cproms [x] (cond
+                          (map? x)       (doseq [[k v] (seq x)]
+                                           (if (p/promise? k) (swap! proms conj k) (cproms k))
+                                           (if (p/promise? v) (swap! proms conj v) (cproms v)))
+                          (vector? x)    (doseq [elem x] (if (p/promise? elem) (swap! proms conj elem) (cproms elem)))
+                          (p/promise? x) (swap! proms conj x)))]
+      (cproms obj)
+      (if (empty? @proms)
+        (pprint-obj obj)
+        (-> (p/all @proms)
+            (p/then (fn [_] (-> obj resolved-obj pprint-top)))
+            (p/catch #(log/info "Error in evaluation:" %)))))))

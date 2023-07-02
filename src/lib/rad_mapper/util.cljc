@@ -14,6 +14,7 @@
    #?(:clj  [datahike.pull-api    :as dp]
       :cljs [datascript.pull-api  :as dp])
    #?(:clj [rad-mapper.paillier  :refer [api-key]])
+   #?(:clj [promesa.core                 :as p])
    [taoensso.timbre              :as log]))
 
 ;;; ================== CLJ/CLJS/SCI Interop =========================
@@ -29,6 +30,13 @@
   [x]
   #?(:clj  (instance? clojure.lang.ExceptionInfo x)
      :cljs (instance? cljs.core.ExceptionInfo x)))
+
+(def ^:dynamic *await-finalize* 45000) ; Sufficient for a tough LLM call.
+
+(defn await-promise
+  [obj]
+  #?(:clj (p/await obj *await-finalize*)
+     :cljs (do #_(log/warn "Awaiting on CLJS.") obj)))
 
 (defn db-atm? [o] (db? o))
 

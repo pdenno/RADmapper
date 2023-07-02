@@ -7,10 +7,13 @@
 
 ;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
-  [{:name "All the lists"
-    :code "( // For any of the things returned, you can ask for $get(['list_id', '<that type>'] ['list_content'])
-
-  $allLists := $get(['list_id', 'lists'], ['list_content']) )"}
+  [{:name "Use of $get"
+    :code
+    "{'1: Lists of lists'    : $get(['list_id', 'lists'],               ['list_content']),                        // Any of the values of 'list of lists can be used.
+ '2: Library functions' : $get(['list_id', 'library_fn'],          ['list_content']),                        // This is one such example.
+ '3: CCT schema'        : $get(['list_id', 'ccts_message-schema'], ['list_content']),                        // A list of all the ccts message schema.
+ '4: A specific schema' : $get(['schema_name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'],
+                                                                   ['schema_content'])}                         // One such schema."}
 
    {:name "Store a library function"
     :code "$put(['library_fn', 'addTwo'],
@@ -68,9 +71,6 @@
 
    #_{:name "So simple!"
     :code "1 + 2"}
-
-   {:name "Try (0): Schema list"
-      :code "$get(['list_id', 'ccts_message-schema'], ['list_content'])"}
 
    {:name "Try (1): Small remote query"
     :code "( $db  := $get(['db_name', 'schemaDB'], ['db_connection']);
