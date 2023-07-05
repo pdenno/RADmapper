@@ -15,7 +15,6 @@
   (:refer-clojure :exclude [loop])
   (:require
    [clojure.core :as c]
-   [ajax.core :refer [GET POST]]
    #?@(:clj  [[clojure.data.json            :as json]
               [clojure.data.codec.base64    :as b64]
               [dk.ative.docjure.spreadsheet :as ss]
@@ -1643,64 +1642,64 @@
              (-> (case (or (get opts "type") type "xml")
                    "json" (-> fname slurp json/read-str)
                    "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
-                   "edn"  (-> fname slurp util/read-str #_util/clj-key->rm-id))
+                   "edn"  (-> fname slurp util/read-str util/clj-key->rm-id))
                  set-context!)))
    :cljs (defn read-local
            [_fname _opts]
            (throw (ex-info "$get() from the browser requires a graph query argument." {}))))
 
 (declare processRM)
-;;; ToDo: You need :fn/code to do this! (Add to query)
 (defn compile-rm
   "Return the object produced by rad-mapper compiling the argument string."
   [src]
   (log/info "compile-rm: src =" src)
-  (try (processRM :ptag/exp src {:execute? true})
+  (try (reset! diag (processRM :ptag/exp src {:execute? true}))
        (catch #?(:clj Throwable :cljs :default) e
+         (reset! diag e)
          (ex-info "compile-rm: Did not compile!" {:src src :err e}))))
 
 (defn $get
   "Read a file of JSON or XML, creating a map."
   [ident|file-string other]
-  (if (string? ident|file-string)
-    ;; It is a local file access. ToDo: Should I even allow this? Not really supported today. Needs work/thought.
-    (let [file-string ident|file-string
-          opts other]
-      (read-local file-string opts))
-    ;; It is a DB get with
-    (let [[ident-type ident-val] ident|file-string
-          out-props other
-          lib-fn?  (= "library_fn" ident-type)
-          wants-exe? (some #(= % "fn_exe") out-props)
-          wants-src? (some #(= % "fn_src") out-props)
-          new-props (if (and lib-fn? wants-exe? (not wants-src?)) (conj out-props "fn_src") out-props)] ; Need src to compile!
-      #?(:clj
-         ;; Conversion to keywords is always done close to pathom.
-         ;; ident-val is not coerced here because it need not be a key (e.g. 'addOne').
-         ;; ident-val may be coerced in the resolver, as needed.
-         ;; See resolvers.clj for things like ($put ["list_id", "ccts_message-schema"], ["list_content"])
-         (let [ident-type (rm-id->clj-key ident-type)
-               new-props  (rm-id->clj-key new-props)]
-           (log/info "$get: ident-type = " ident-type "ident-val = " ident-val "new-props =" new-props)
-           (as-> (pathom-resolve {ident-type ident-val} new-props) ?x
-             (if (and lib-fn? wants-exe?) (assoc ?x :fn/exe (compile-rm (:fn/src ?x))) ?x) ; ToDo: This is wasted if call is from CLJS.
-             (if (not wants-src?) (dissoc ?x :fn/src) ?x)
-             (util/clj-key->rm-id ?x)))
-         :cljs (let [prom (p/deferred)
-                     req-data {:params {:ident-type ident-type
-                                        :ident-val ident-val
-                                        :request-objs (cl-format nil "~{~A~^|~}" new-props)}
-                               :handler (fn [resp] (p/resolve! prom resp))
-                               :error-handler (fn [{:keys [status status-text]}]
-                                                (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-query"
-                                                                         {:status status :status-text status-text})))
-                               :timeout 5000}]
-                 (GET (str svr-prefix "/api/graph-query") req-data) ; ToDo: use Martian.
-                 (-> prom
-                     (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
-                     (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
-                     (p/then #(util/clj-key->rm-id %))
-                     (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props :new-props}))))))))
+  (cond (string? ident|file-string)                           (let [file-string ident|file-string
+                                                                    opts other]
+                                                                (read-local file-string opts)),
+        (and (vector? ident|file-string)
+             (= ident|file-string ["db_name" "schemaDB"]))    {"db_connection" "_rm_schema-db"},
+
+        :else   ;; It is a DB get.
+        (let [[ident-type ident-val] ident|file-string
+              out-props other
+              lib-fn?  (= "library_fn" ident-type)
+              wants-exe? (some #(= % "fn_exe") out-props)
+              wants-src? (some #(= % "fn_src") out-props)
+              new-props (if (and lib-fn? wants-exe? (not wants-src?)) (conj out-props "fn_src") out-props)] ; Need src to compile!
+          #?(:clj
+             ;; Conversion to keywords is always done close to pathom.
+             ;; ident-val is not coerced here because it need not be a key (e.g. 'addOne').
+             ;; ident-val may be coerced in the resolver, as needed.
+             ;; See resolvers.clj for things like ($put ["list_id", "ccts_message-schema"], ["list_content"])
+             (let [ident-type (keyword ident-type)
+                   new-props  (mapv keyword new-props)]
+               (log/info "$get: ident-type = " ident-type "ident-val = " ident-val "new-props =" new-props)
+               (as-> (pathom-resolve {ident-type ident-val} new-props) ?x
+                 (update-keys ?x name)
+                 (if (and lib-fn? wants-exe?) (assoc ?x "fn_exe" (compile-rm (get ?x "fn_src"))) ?x) ; ToDo: This is wasted if call is from CLJS.
+                 (if (not wants-src?) (dissoc ?x "fn_src") ?x)))
+             :cljs (let [prom (p/deferred)
+                         req-data {:params {:ident-type ident-type
+                                            :ident-val ident-val
+                                            :request-objs (cl-format nil "~{~A~^|~}" new-props)}
+                                   :handler (fn [resp] (p/resolve! prom resp))
+                                   :error-handler (fn [{:keys [status status-text]}]
+                                                    (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-get"
+                                                                             {:status status :status-text status-text})))
+                                   :timeout 5000}]
+                     (GET (str svr-prefix "/api/graph-get") req-data) ; ToDo: use Martian.
+                     (-> prom
+                         (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
+                         (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
+                         (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props new-props}))))))))
 
  #?(:clj
 (defn $put
@@ -1708,9 +1707,9 @@
   [[ident-type ident-val] obj]
   (log/info "$put: ident-type = " ident-type "ident-val =" ident-val "obj = " obj)
   (if (= ident-type "library_fn")
-    (try (let [ns-obj (reduce-kv (fn [m k v] (assoc m (rm-id->clj-key k) v)) {} obj)]
-           (log/info "$put: ns-obj ="  ns-obj)
-           (d/transact (codelib/connect-atm) [(into {:fn/name ident-val} ns-obj)])
+    (try (let [ident-type (keyword ident-type)
+               obj (update-keys obj keyword)]
+           (d/transact (codelib/connect-atm) [(into {:fn_name ident-val} obj)])
            "success")
          (catch Throwable e (ex-info "$put to library failed." {:obj obj :message (.getMessage e)})))
     (throw (ex-info "Only $put to library_fn currently supported." {:ident-type ident-type})))))
@@ -1872,7 +1871,7 @@
   (fn [& data|dbs]
     ;(log/info "data|dbs =" data|dbs)
     (let [db-atms
-          ;; CLJ can also be called with $db := $get([['db/name', 'schemaDB'], ['db/connection']]);
+          ;; CLJ can also be called with $db := $get([['db_name', 'schemaDB'], ['db_connection']]);
           (if (= {"db_connection" "_rm_schema-db"} (first data|dbs))
             [(schema/connect-atm)]
             (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs))]
@@ -1911,7 +1910,7 @@
         (let [param-subs (zipmap params args)] ; the closure.
           (-> (fn [& data|dbs]
                 (let [db-atms (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs)]
-                  (swap! diag #(-> % (assoc :body body) (assoc :pred-args pred-args) (assoc :param-subs param-subs)))
+                  ;;(swap! diag #(-> % (assoc :body body) (assoc :pred-args pred-args) (assoc :param-subs param-subs)))
                   (query-fn-aux db-atms body in pred-args param-subs options)))
               (with-meta {:bi/fn-type :query-fn
                           :bi/expected-arg-cnt (max 1 (->> body ; ToDo: Is this right?
@@ -1934,10 +1933,10 @@
    Example usage (of the second sort):
 
   ( $data := $newContext() ~> $addSource($get('data/testing/owl-example.edn'));
-    $q := query($type){[?class :rdf/type            $type]
-                       [?class :resource/iri        ?class-iri]
-                       [?class :resource/namespace  ?class-ns]
-                       [?class :resource/name       ?class-name]};
+    $q := query($type){[?class :rdf_type            $type]
+                       [?class :resource_iri        ?class-iri]
+                       [?class :resource_namespace  ?class-ns]
+                       [?class :resource_name       ?class-name]};
     $q($data,'owl/Class') )"
   [{:keys [body in pred-args params options]}]
   (if (empty? params)
@@ -2312,7 +2311,7 @@
      ;; What the data indicates is that "more than one thing can have a :redex/ROOT". Hard to argue with that!
      (let [root-eids (d/q '[:find [?ref ...] :where [?top :redex/ROOT ?ref]] @db-atm)
            pre-clean (mapv #(util/resolve-db-id {:db/id %} db-atm #{:db/id}) root-eids)]
-       (swap! diag #(-> % (assoc :root-eids root-eids) (assoc :db-atm db-atm) (assoc :pre-clean pre-clean)))
+       ;;(swap! diag #(-> % (assoc :root-eids root-eids) (assoc :db-atm db-atm) (assoc :pre-clean pre-clean)))
        (redex-data-cleanup pre-clean (-> efn meta :bi/key-order) full-schema (-> efn meta :bi/reduce-body))))))
 
 ;;;---- not express ------------
@@ -3058,7 +3057,7 @@ answer 2:
 
 (defn resolved-obj
   "Replace the promises in an object with their resolution.
-   This function expects a object where all the promises are fulfilled."
+   This function expects an object where all the promises are fulfilled."
   [obj]
   (letfn [(ro [x]
             (cond (map? x)       (reduce-kv (fn [m k v] (assoc m (ro k) (ro v))) {} x)

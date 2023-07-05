@@ -562,21 +562,21 @@
       (run-test  "{'a' : 1, 'b' : 2}.($x := 3)" 3))
 
     #?(:clj (testing "advancing context variable on apply-map."
-              (run-test "( $:= $get('data/testing/jsonata/try.json');
+              (run-test "( $ := $get('data/testing/jsonata/try.json');
                    Account.Order.Product.(Price*Quantity) )"
                         [68.9, 21.67, 137.8, 107.99])))
     #?(:clj (testing "like the try.jsonata page"
-              (run-test "( $:= $get('data/testing/jsonata/try.json');
+              (run-test "( $ := $get('data/testing/jsonata/try.json');
                    $sum(Account.Order.Product.(Price*Quantity)) )"
                         336.36)))))
 
 (deftest some-async
   (testing "testing some async capabilities"
     (testing "testing threading (not async per se but...)"
-      (run-test "( $db  := $get([['db/name', 'schemaDB'], ['db/connection']]);
+      (run-test "( $db  := $get([['db_name', 'schemaDB'], ['db_connection']]);
                    $qfn := query{[?e :schema/name ?name] [?e :schema/sdo ?sdo]};
                    $qfn($db).?sdo ~> $distinct() ~> $sort() )"
-                [:cefact :etsi :oagi :oasis :qif :w3c]))))
+                [:cefact :etsi :niem :oagi :oasis :qif :w3c]))))
 
 #_(deftest nyi
   (testing "NYI:"
@@ -966,8 +966,20 @@
     "Process" "<data>"},
    "ApplicationArea" {"CreationDateTime" "<data>"}}})
 
-(defn tryme []
+#_(defn tryme []
   (bi/$put ["library/fn" "addTwo"]
            {"fn_name" "addTwo"
             "fn_doc" "Add 2 to the argument."
             "fn_src" "function($x){$x + 2}"}))
+
+(defn tryme-1 []
+  (rad-mapper.builtin/run-steps
+   (rad-mapper.builtin/init-step (bi/$get ["library_fn" "addOne"] ["fn_exe"]))
+   (rad-mapper.builtin/get-step "fn_exe")))
+
+(defn tryme []
+  (rad-mapper.builtin/reset-env)
+  (rad-mapper.builtin/finalize
+   (rad-mapper.builtin/run-steps
+    (rad-mapper.builtin-macros/init-step-m (rad-mapper.builtin/$get ["library_fn" "addOne"] ["fn_exe"]))
+    (rad-mapper.builtin/get-step "fn_exe"))))

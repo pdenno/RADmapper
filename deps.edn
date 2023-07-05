@@ -8,7 +8,7 @@
            dk.ative/docjure                    {:mvn/version "1.19.0"}   ; spreadsheets
            datascript/datascript               {:mvn/version "1.4.2"}
            funcool/promesa                     {:mvn/version "11.0.671"}
-           io.replikativ/datahike              {:mvn/version "0.6.1538"}
+           io.replikativ/datahike              {:mvn/version "0.6.1542"}
            mount/mount                         {:mvn/version "0.1.17"}
            net.clojars.wkok/openai-clojure     {:mvn/version "0.6.0"}
            org.babashka/sci                    {:mvn/version "0.7.39"}

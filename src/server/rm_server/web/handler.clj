@@ -5,7 +5,6 @@
    [mount.core :as mount :refer [defstate]]
    [muuntaja.core :as m]
    [rm-server.web.controllers.rad-mapper :as rm]
-   [rad-mapper.builtin :as bi]
    [ring.middleware.defaults :as defaults]
    [ring.middleware.cors :refer [wrap-cors]]
    [ring.middleware.session.cookie :as cookie]
@@ -115,7 +114,7 @@
 (s/def ::datalog-request (s/keys :req-un [::qforms]))
 (s/def ::datalog-response vector?) ; A vector of maps (binding sets).
 
-;;; graph-query ($get)
+;;; graph-get($get)
 (s/def ::ident-type (st/spec {:spec string?
                               :name "ident-type"
                               :description "The type of the unique identifier from which the query is based."
@@ -128,8 +127,8 @@
                                 :name "request-objs"
                                 :description "A collection of (vertical bar, e.g. '|')-separated properties sought for the identified object."
                                 :json-schema/default "schema/content"}))
-(s/def ::graph-query-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
-(s/def ::graph-query-response map?)
+(s/def ::graph-get-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
+(s/def ::graph-get-response map?)
 
 ;;; graph-put ($put)
 (s/def ::put-ident-type (st/spec {:spec string?
@@ -193,11 +192,11 @@
             :responses {200 {:body ::llm-extract-response}}
             :handler rm/llm-extract}}]
 
-    ["/graph-query"
+    ["/graph-get"
      {:get {:summary "Make a graph query similar to $get()."
-            :parameters {:query ::graph-query-request}
-            :responses {200 {:body ::graph-query-response}}
-            :handler rm/graph-query}}]
+            :parameters {:query ::graph-get-request}
+            :responses {200 {:body ::graph-get-response}}
+            :handler rm/graph-get}}]
 
     #_["/fake-get"
      {:get {:summary "Use this in testing calls to $get. It runs a REST call in CLJ. Useful, for example to test pprint-obj/promises."

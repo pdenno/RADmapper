@@ -33,17 +33,17 @@
         (-> (response/found "/") (assoc :flash {:errors {:unknown (.getMessage e)}}))))
     (response/bad-request "No code provided.")))
 
-(defn graph-query
-  "Make a graph query (currently only to data managed by this server).
+(defn graph-get
+  "Do $get (currently only to data managed by this server).
    Query parameters:
      - ident-type   : a namespaced string such as 'schema/name'.
      - ident-val    : a string, that is the value of a lookup-id.
      - request-objs : a string of elements separated by '|' that will be keywordized to the 'sdb' ns,
                       for example, 'foo|bar' ==> [:sdb/foo :sdb/bar]."
   [request]
-  (log/info "Call to graph-query")
   (let [{:keys [ident-type ident-val request-objs]} (-> request :query-params keywordize-keys)
         request-objs (split request-objs #"\|")]
+    (log/info "Call to graph-get: ident-type = " ident-type "ident-val =" ident-val "request-objs =" request-objs)
      (if (and ident-type ident-val request-objs)
        (-> (bi/$get [ident-type ident-val] request-objs)
            (dissoc "fn_exe")
@@ -51,7 +51,7 @@
       (response/bad-request "Missing query args."))))
 
 (defn graph-put
-  "Make a graph query (currently only to data managed by this server).
+  "Do $put (currently only to data managed by this server).
    Query parameters:
      - ident-type   : a namespaced string such as 'schema/name'.
      - ident-val    : a string, that is the value of a lookup-id.

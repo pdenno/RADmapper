@@ -41,10 +41,12 @@
     (d/connect @db-cfg-atm)
     (log/warn "There is no saved-code DB to connect to.")))
 
+(def rebuild-db? "Don't keep this on the db-cfg map" true)
+
 (defn create-db!
   "Create the database if :rebuild? is true, otherwise just set the connection atom, conn."
   []
-  (when (:rebuild-db? @db-cfg-atm)
+  (when rebuild-db?
     (when (d/database-exists? @db-cfg-atm) (d/delete-database @db-cfg-atm))
     (d/create-database @db-cfg-atm)
     (let [conn (d/connect @db-cfg-atm)]
@@ -90,7 +92,7 @@
        (str base-dir "/databases/exerciser-saves")
        (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/exerciser-saves")})))))
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
-                      :rebuild-db? false ; <=======================
+                      :keep-history? false
                       :schema-flexibility :write})
   (connect-atm))
 

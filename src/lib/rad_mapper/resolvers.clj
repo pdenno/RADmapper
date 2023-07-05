@@ -70,104 +70,99 @@
 ;;;  you need to get the data. See my comment in the function pathom-resolve.]
 ;;;
 ;;; Resolvers are functions and can be called with ONE ARG, the IDENT:
-;;; For example (list-id->list-content {:list/id :ccts/message-schema})
+;;; For example (list-id->list-content {:list_id :ccts_messageSchema})
 
 
 ;;; Note that only if the ident-val has a underscore in it does this convert to keyword.
 ;;; That is to allow idents like [:library/fn "addOne"].
-;;; (list-id->list-content {:list/id :ccts/message-schema})
+;;; (res/list-id->list-content {:list_id :cct_messageSchema})
 (pco/defresolver list-id->list-content
   "This resolver returns lists."
-  [{:keys [list/id]}]
-  {::pco/output [:list/content]}
-  (log/info "id = " id)
-  (let [schema-types (d/q '[:find [?type ...] :where [_ :schema/type  ?type]] @(connect-atm))]
-    (cond  (= "lists" id)           {:list/content (into ["library_fn"] schema-types)}
-           (= "library_fn" id)      {:list/content (d/q '[:find [?name ...] :where [?ent :fn/name ?name]] @(codelib/connect-atm))}
+  [{:keys [list_id]}]
+  {::pco/output [:list_content]}
+  (log/info "id = " list_id)
+  (let [schema-types (d/q '[:find [?type ...] :where [_ :schema_type  ?type]] @(connect-atm))]
+    (cond  (= "lists" list_id)      {:list_content (into ["library_fn"] schema-types)}
+           (= "library_fn" list_id) {:list_content (d/q '[:find [?name ...] :where [?ent :fn_name ?name]] @(codelib/connect-atm))}
            :else (let [schema-type? (set schema-types)
-                       id (if (str/index-of id "_") (util/rm-id->clj-key id) id)
-                       res (cond (schema-type? id)
+                       ;;id (if (str/index-of id "_") (util/rm-id->clj-key id) id)
+                       res (cond (schema-type? list_id)
                                  (->>
                                   (d/q '[:find ?name
                                          :in $ ?schema-type
-                                         :keys schema/name
+                                         :keys schema_name
                                          :where
-                                         [?ent :schema/name  ?name]
-                                         [?ent :schema/type  ?schema-type]]
-                                       @(connect-atm) (keyword id))
-                                  (map :schema/name)
+                                         [?ent :schema_name  ?name]
+                                         [?ent :schema_type  ?schema-type]]
+                                       @(connect-atm) (keyword list_id))
+                                  (map :schema_name)
                                   sort
                                   vec
                                   not-empty))]
-                   {:list/content res}))))
+                   {:list_content res}))))
 
-;;; (pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Quote"} [:db/id])
+;;; (pathom-resolve {:schema_name "urn:oagis-10.8.4:Nouns:Quote"} [:db/id])
+;;; (schema-name->schema-object {:schema_name "urn:oagis-10.8.4:Nouns:Quote"})
 (pco/defresolver schema-name->schema-object
   "Return the db/id for a whole schema-object.
    Subsequent queries (e.g. schema-objec->schema-props) can pull from this whatever else is needed."
-  [{:schema/keys [name]}]
+  [{:keys [schema_name]}]
   {::pco/output [:db/id]}
-  {:db/id (d/q '[:find ?ent .
-                 :in $ ?schema-name
-                 :where [?ent :schema/name ?schema-name]]
-               @(connect-atm) name)})
+  (let [res (d/q '[:find ?ent .
+                   :in $ ?schema-name
+                   :where [?ent :schema_name ?schema-name]]
+                 @(connect-atm) schema_name)]
+    (if res
+      {:db/id res}
+      (throw (ex-info "No such schema: " {:schema_name schema_name})))))
 
-;;; This one doesn't work. It can't see the output map because of the let, but I thought that
-;;; just having :pco/output as I do would be sufficient. Nope.
-;;; (pathom-resolve {:schema/name "urn:oagis-10.8.4:Nouns:Quote"} [:schema/content])
-#_(pco/defresolver schema-object->schema-props
- "Returns various things given a schema db/id."
- [{:db/keys [id]}]
-  {:pco/output [:schema/content #_:schema/spec]}
-  (log/info "schema-object->schema-props")
-  (let [sobj (resolve-db-id {:db/id id} (connect-atm) #{:db/id})]
-    {:schema/content (:schema/content sobj)
-     #_#_:schema/spec    (:schema/spec sobj)}))
-
-;;; This one works because it can see the output map.
+;;; (pathom-resolve {:schema_name "urn:oagis-10.8.4:Nouns:Quote"} [:schema_content])
+;;; (schema-object->schema-props #:db{:id 36517})
 (pco/defresolver schema-object->schema-props
  "Returns various things given a schema db/id."
  [{:db/keys [id]}]
-  {:pco/output [:schema/content #_:schema/spec]}
-  {:schema/content
+  {:pco/output [:schema_content]}
+  {:schema_content
    (-> {:db/id id}
        (resolve-db-id (connect-atm) #{:db/id})
-       :schema/content)})
+       :schema_content)})
+
 
 ;;; ====================== Codelib resolvers  ========================================================
+;;; (pathom-resolve {:library_fn "addOne"} [:db/id])
 (pco/defresolver codelib-fn-name->codelib-id
   "Return the db/id for a codelib object. Subsequent queries can pull the properties."
-  [{:library/keys [fn]}]
+  [{:keys [library_fn]}]
   {::pco/output [:db/id]}
   {:db/id (d/q '[:find ?ent .
                  :in $ ?fn-name
-                 :where [?ent :fn/name ?fn-name]]
-               @(codelib/connect-atm) fn)})
+                 :where [?ent :fn_name ?fn-name]]
+               @(codelib/connect-atm) library_fn)})
 
-;;; (pathom-resolve {:library/fn 'schemaParentChild'} [:fn/name :fn/doc :fn/src])
+;;; (pathom-resolve {:library_fn "addOne"} [:fn_name :fn_doc :fn_src])
 ;;; It is okay if the output doesn't contain all of the :pco/output (try adding :fn/DNE)
 ;;; It is okay if the query contains less than what is in :pco/output
 ;;; It is NOT okay that the query contains something that is not returned.
 (pco/defresolver codelib-id->fn-props
   "Return properties for a codelib object"
   [{:db/keys [id]}]
-  {::pco/output [:fn/name :fn/src :fn/doc]}
+  {::pco/output [:fn_name :fn_src :fn_doc]}
   (-> {:db/id id}
       (resolve-db-id (codelib/connect-atm) #{:db/id})))
 
 (pco/defresolver codelib-id->extra
   "Return a placeholder for the :fn/exe property."
   [{:db/keys [id]}]
-  {::pco/output [:fn/exe]}
-  {:fn/exe :resolvers/replace-me})
+  {::pco/output [:fn_exe]}
+  {:fn_exe :resolvers/replace-me})
 
 ;;; ====================== Miscellaneous resolvers ========================================================
-;;; (pathom-resolve {:db/name :schema/db"} [:db/connection])
+;;; (pathom-resolve {:db_name "schema_db"} [:db_connection])
 (pco/defresolver db-connection
   "Return a keyword designating the schema database for use by clients."
   [{:db/keys [name]}]
   {:pco/out [:db/connection]}
-  {:db/connection :_rm/schema-db})
+  {:db/connection :_rm/schema-db}) ; Not :db_connection, I think. They'll never see it.
 
 ;;; Nice thing about pathom (relative to GraphQL) is that you don't have to start at the root.
 ;;; This has nothing to do with ::pco/input; you can add it to a query anywhere.
@@ -178,7 +173,7 @@
 
 (def indexes (atom nil))
 
-;;; (pathom-resolve {:list/id :ccts/message-schema} [:schema/name])
+;;; (pathom-resolve {:list/id :ccts_messageSchema} [:schema_name])
 (defn pathom-resolve
   "Uses the indexes to respond to a query.
    ident-map: a single-key map:
@@ -194,8 +189,11 @@
    outputs: a vector of properties (the :pco/outputs of resolvers) that are sought."
   [ident-map outputs]
   (log/info "Pathom3 resolve: ident-map = " ident-map " outputs= " outputs)
-  (try (let [res (p.eql/process @indexes ident-map outputs)]
-         (log/info "Pathom3 returns:" (-> res str (subs 0 40) (str "...")))
+  (try (let [res (p.eql/process @indexes ident-map outputs)
+             #_#_debug-str (str res) ; ToDo this is wasteful and should go away.
+             #_#_len (count debug-str)
+             #_#_es-str (subs debug-str 0 (min 40 len))]
+         #_(log/info "Pathom3 returns:" res-str)
          res)
        (catch Exception e
          (throw (ex-info "pathom-resolve: " {:msg (.getMessage e)})))))
@@ -221,7 +219,7 @@
        (str base-dir "/databases/schema")
        (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/schema")})))))
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
-                      :rebuild-db? false
+                      :keep-history? false ; Not clear that I'd have to respecify this, right?
                       :schema-flexibility :write})
   (connect-atm))
 

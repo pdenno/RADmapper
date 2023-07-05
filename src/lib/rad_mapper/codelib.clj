@@ -21,18 +21,19 @@
 (def db-schema
   "Defines the datahike schema for this database.
      :db/db.cardinality=many means value is a vector of values of some :db.type."
-  [#:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/name :unique :db.unique/identity}
-   #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/src}
-   #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn/doc}])
+  [#:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn_name :unique :db.unique/identity}
+   #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn_src}
+   #:db{:cardinality :db.cardinality/one, :valueType :db.type/string, :ident :fn_doc}])
 
 ;;; ToDo: Don't really need these. See stbd.db.
 (def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)
 (def db-dir "The directory containing schema DBs. Can't be set at compile time in Docker." nil)
+(def rebuild-db? "Don't keep this on the db-cfg map." true)
 
 (defn create-db!
   "Create the database if :rebuild? is true, otherwise return nil."
   []
-  (when (:rebuild-db? @db-cfg-atm)
+  (when rebuild-db?
     (when (d/database-exists? @db-cfg-atm) (d/delete-database @db-cfg-atm))
     (d/create-database @db-cfg-atm)
     (let [conn (d/connect @db-cfg-atm)]
@@ -57,7 +58,7 @@
        (str base-dir "/databases/code-lib")
        (throw (ex-info "Directory not found:" {:dir (str base-dir "/databases/code-lib")})))))
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
-                      :rebuild-db? true ; <=======================
+                      :keep-history? false ; <=================== Debatable.
                       :schema-flexibility :write})
   (create-db!)
   (connect-atm))
