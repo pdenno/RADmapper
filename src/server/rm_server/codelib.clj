@@ -1,22 +1,14 @@
-(ns rad-mapper.codelib
+(ns rm-server.codelib
   "Manage a library of RADmapper code."
   (:require
    [clojure.java.io     :as io]
    [datahike.api        :as d]
    [mount.core          :as mount :refer [defstate]]
-   [rad-mapper.libcode  :refer [library-code]]
+   [rm-server.sutil     :refer [register-db]]
+   [rm-server.libcode   :refer [library-code]]
    [taoensso.timbre     :as log]))
 
 (def db-cfg-atm "Configuration map used for connecting to the db. It is set in core."  (atom nil))
-
-(defn connect-atm
-  "Set the var rad-mapper.db-util/conn by doing a d/connect.
-   Return a connection atom."
-  []
-  (when-let [db-cfg @db-cfg-atm]
-    (if (d/database-exists? db-cfg)
-      (d/connect db-cfg)
-      (log/warn "There is no DB to connect to."))))
 
 (def db-schema
   "Defines the datahike schema for this database.
@@ -61,7 +53,8 @@
                       :keep-history? false ; <=================== Debatable.
                       :schema-flexibility :write})
   (create-db!)
-  (connect-atm))
+  (register-db :codelib @db-cfg-atm)
+  @db-cfg-atm)
 
-(defstate codelib-atm
+(defstate codelib-cfg
   :start (init-db))

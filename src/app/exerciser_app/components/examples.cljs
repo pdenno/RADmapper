@@ -11,14 +11,14 @@
 ;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
   [
- {:name "Uses of $get"
+   _{:name "Uses of $get"
     :code
     "{'1: Lists of lists'    : $get(['list_id', 'lists'],               ['list_content']),                        // Any of the values of 'list of lists can be used.
  '2: Library functions' : $get(['list_id', 'library_fn'],          ['list_content']),                        // This is one such example.
  '3: A DB connection'   : $get(['db_name', 'schemaDB'], ['db_connection']),                                  // This so you can do arbitrary query calls.
  '4: CCT schema'        : $get(['list_id', 'cct_messageSchema'], ['list_content']),                         // A list of all the ccts message schema.
  '5: A specific schema' : $get(['schema_name', 'urn:oagi-10.:elena.2023-02-09.ProcessInvoice-BC_1'],
-                                                                   ['schema_content'])}                      // One such schema."} ; <================= Add db_connection as an example.
+                                                                   ['schema_content'])}                      // One such schema."}
 
    {:name "Store a library function"
     :code "$put(['library_fn', 'addTwo'],

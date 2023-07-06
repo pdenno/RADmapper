@@ -1,4 +1,4 @@
-(ns rad-mapper.libcode
+(ns rm-server.libcode
   "A collection of library functions to be pre-loaded into the codelib DB.")
 
 (def library-code

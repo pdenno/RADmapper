@@ -1,16 +1,15 @@
-(ns rad-mapper.resolvers
+(ns rm-server.resolvers
   "Resolvers for use on the schema db (created with a different system)."
   (:require
    [clojure.java.io :as io]
-   [clojure.string  :as str]
    [com.wsscode.pathom3.connect.indexes :as pci]
    [com.wsscode.pathom3.connect.operation :as pco]
    [com.wsscode.pathom3.interface.eql :as p.eql]
    [datahike.api        :as d]
    [datahike.pull-api   :as dp]
-   [mount.core :as mount :refer [defstate]]
-   [rad-mapper.util     :as util :refer [resolve-db-id]]
-   [rad-mapper.codelib  :as codelib]
+   [mount.core          :as mount :refer [defstate]]
+   [rad-mapper.util     :as util :refer  [resolve-db-id]]
+   [rm-server.sutil     :as sutil :refer [register-db connect-atm]]
    [taoensso.timbre     :as log]))
 
 ;;; I think, generally speaking, this has to be recompiled and (user/restart) to catch resolver updates.
@@ -24,15 +23,6 @@
 ;;; ToDo: Get rid of this and 'connect-atm'. resolvers.clj is for any DB (so far schema and codelib).
 (def db-cfg-atm "Configuration map used for connecting to the db. It is set in core."  (atom nil))
 
-(defn connect-atm
-  "Set the var rad-mapper.db-util/conn by doing a d/connect.
-   Return a connection atom."
-  []
-  (when-let [db-cfg @db-cfg-atm]
-    (if (d/database-exists? db-cfg)
-      (d/connect db-cfg)
-      (log/warn "There is no DB to connect to."))))
-
 ;;;=========================== Schema Operations (useful by themselves and in resolvers) ==================
 ;;; (list-schemas :sdo :oagi)
 (defn list-schemas
@@ -45,7 +35,7 @@
                       :where
                       [?s :schema/name ?n]
                       [?s :schema/sdo ?sdo]]
-                    @(connect-atm) sdo)]
+                    @(connect-atm :schema) sdo)]
     (cond->> result
       true (map :schema/name)
       sort? sort
@@ -59,9 +49,9 @@
   (when-let [ent  (d/q '[:find ?ent .
                          :in $ ?schema-name
                          :where [?ent :schema/name ?schema-name]]
-                       @(connect-atm) schema-name)]
-    (cond-> (dp/pull @(connect-atm) '[*] ent)
-      resolve? (resolve-db-id (connect-atm) filter-set))))
+                       @(connect-atm :schema) schema-name)]
+    (cond-> (dp/pull @(connect-atm :schema) '[*] ent)
+      resolve? (resolve-db-id (connect-atm :schema) filter-set))))
 
 ;;; ====================== Schema-db resolvers ========================================================
 ;;; https://pathom3.wsscode.com/docs/resolvers/ :
@@ -81,11 +71,10 @@
   [{:keys [list_id]}]
   {::pco/output [:list_content]}
   (log/info "id = " list_id)
-  (let [schema-types (d/q '[:find [?type ...] :where [_ :schema_type  ?type]] @(connect-atm))]
+  (let [schema-types (d/q '[:find [?type ...] :where [_ :schema_type  ?type]] @(connect-atm :schema))]
     (cond  (= "lists" list_id)      {:list_content (into ["library_fn"] schema-types)}
-           (= "library_fn" list_id) {:list_content (d/q '[:find [?name ...] :where [?ent :fn_name ?name]] @(codelib/connect-atm))}
+           (= "library_fn" list_id) {:list_content (d/q '[:find [?name ...] :where [?ent :fn_name ?name]] @(connect-atm :codelib))}
            :else (let [schema-type? (set schema-types)
-                       ;;id (if (str/index-of id "_") (util/rm-id->clj-key id) id)
                        res (cond (schema-type? list_id)
                                  (->>
                                   (d/q '[:find ?name
@@ -94,7 +83,7 @@
                                          :where
                                          [?ent :schema_name  ?name]
                                          [?ent :schema_type  ?schema-type]]
-                                       @(connect-atm) (keyword list_id))
+                                       @(connect-atm :schema) (keyword list_id))
                                   (map :schema_name)
                                   sort
                                   vec
@@ -111,7 +100,7 @@
   (let [res (d/q '[:find ?ent .
                    :in $ ?schema-name
                    :where [?ent :schema_name ?schema-name]]
-                 @(connect-atm) schema_name)]
+                 @(connect-atm :schema) schema_name)]
     (if res
       {:db/id res}
       (throw (ex-info "No such schema: " {:schema_name schema_name})))))
@@ -124,9 +113,8 @@
   {:pco/output [:schema_content]}
   {:schema_content
    (-> {:db/id id}
-       (resolve-db-id (connect-atm) #{:db/id})
+       (resolve-db-id (connect-atm :schema) #{:db/id})
        :schema_content)})
-
 
 ;;; ====================== Codelib resolvers  ========================================================
 ;;; (pathom-resolve {:library_fn "addOne"} [:db/id])
@@ -137,7 +125,7 @@
   {:db/id (d/q '[:find ?ent .
                  :in $ ?fn-name
                  :where [?ent :fn_name ?fn-name]]
-               @(codelib/connect-atm) library_fn)})
+               @(connect-atm :codelib) library_fn)})
 
 ;;; (pathom-resolve {:library_fn "addOne"} [:fn_name :fn_doc :fn_src])
 ;;; It is okay if the output doesn't contain all of the :pco/output (try adding :fn/DNE)
@@ -148,7 +136,7 @@
   [{:db/keys [id]}]
   {::pco/output [:fn_name :fn_src :fn_doc]}
   (-> {:db/id id}
-      (resolve-db-id (codelib/connect-atm) #{:db/id})))
+      (resolve-db-id (connect-atm :codelib) #{:db/id})))
 
 (pco/defresolver codelib-id->extra
   "Return a placeholder for the :fn/exe property."
@@ -221,7 +209,8 @@
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
                       :keep-history? false ; Not clear that I'd have to respecify this, right?
                       :schema-flexibility :write})
-  (connect-atm))
+  (register-db :schema @db-cfg-atm)
+  @db-cfg-atm)
 
 (defn init-resolvers
   []
@@ -236,7 +225,7 @@
   (pathom-resolve {} [:server/time])
   @indexes)
 
-(defstate schema-atm
+(defstate schema-cfg
   :start (init-db))
 
 (defstate resolvers

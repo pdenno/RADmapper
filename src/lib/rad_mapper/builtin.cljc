@@ -14,15 +14,14 @@
    N.B. LSP annotates many operators here as '0 references'; of course, they are used."
   (:refer-clojure :exclude [loop])
   (:require
-   [clojure.core :as c]
    #?@(:clj  [[clojure.data.json            :as json]
               [clojure.data.codec.base64    :as b64]
               [dk.ative.docjure.spreadsheet :as ss]
               [datahike.api                 :as d]
               [datahike.pull-api            :as dp]
               [muuntaja.core                :as m]
-              [rad-mapper.resolvers         :as schema :refer [pathom-resolve]]
-              [rad-mapper.codelib           :as codelib]
+              [rm-server.resolvers          :as schema :refer [pathom-resolve]]
+              [rm-server.sutil              :refer [connect-atm get-api-key read-xml]]
               [wkok.openai-clojure.api      :as openai]]
        :cljs [[ajax.core :refer [GET POST]]
               [datascript.core           :as d]
@@ -30,6 +29,7 @@
               ["nata-borrowed"           :as nb] ; ToDo: Replaces this with cljs-time, which wraps goog.time
               [goog.crypt.base64         :as jsb64]
               [rad-mapper.promesa-config :as scip]])
+   [clojure.core :as c]
    [cemerick.url                    :as url]
    [camel-snake-kebab.core          :as csk]
    [clojure.spec.alpha              :as s]
@@ -42,7 +42,7 @@
    [rad-mapper.query                :as qu]
    [rad-mapper.rewrite              :as rew]
    [rad-mapper.rewrite-macros       :as rewm]
-   [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock exception? rm-id->clj-key]]
+   [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock exception?]]
    [sci.core                        :as sci]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros       :as bim
@@ -1641,7 +1641,7 @@
            (let [type (-> (re-matches #"^.*\.([a-z,A-Z,0-9]{1,5})$" fname) second)]
              (-> (case (or (get opts "type") type "xml")
                    "json" (-> fname slurp json/read-str)
-                   "xml"  (-> fname util/read-xml :xml/content first :xml/content util/simplify-xml)
+                   "xml"  (-> fname read-xml :xml/content first :xml/content util/simplify-xml)
                    "edn"  (-> fname slurp util/read-str util/clj-key->rm-id))
                  set-context!)))
    :cljs (defn read-local
@@ -1709,7 +1709,7 @@
   (if (= ident-type "library_fn")
     (try (let [ident-type (keyword ident-type)
                obj (update-keys obj keyword)]
-           (d/transact (codelib/connect-atm) [(into {:fn_name ident-val} obj)])
+           (d/transact (connect-atm :codelib) [(into {:fn_name ident-val} obj)])
            "success")
          (catch Throwable e (ex-info "$put to library failed." {:obj obj :message (.getMessage e)})))
     (throw (ex-info "Only $put to library_fn currently supported." {:ident-type ident-type})))))
@@ -1873,7 +1873,7 @@
     (let [db-atms
           ;; CLJ can also be called with $db := $get([['db_name', 'schemaDB'], ['db_connection']]);
           (if (= {"db_connection" "_rm_schema-db"} (first data|dbs))
-            [(schema/connect-atm)]
+            [(connect-atm :schema)]
             (map #(if (util/db-atm? %) % (-> % keywordize-keys qu/db-for!)) data|dbs))]
       (query-fn-aux db-atms body in pred-args {} options)))))
 
@@ -2586,7 +2586,7 @@ answer 2:
   [src tar]
   (log/info "$llmMatch on server")
   (let [q-str (llm-match-string src tar)]
-       (if-let [key (util/get-api-key :llm)]
+       (if-let [key (get-api-key :llm)]
          (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301"
                                                             :api-key key
                                                             :messages [{:role "user" :content q-str}]})
@@ -2642,7 +2642,7 @@ answer 2:
   [src seek]
   (log/info "$llmExtract on server")
   (let [q-str (llm-extract-prompt src seek)]
-       (if-let [key (util/get-api-key :llm)]
+       (if-let [key (get-api-key :llm)]
          (try (let [res (-> (openai/create-completion {:model "text-davinci-003"
                                                        :api-key key
                                                        :max-tokens 3000
@@ -2917,7 +2917,7 @@ answer 2:
 (defn sort-map
   "Sort maps so that
     - '*/name' comes first, xsd/* comes last, */documentation comes next to last.
-    - schema/* stuff is ordered by schema/name, schema/type ... with schema/content last."
+    - schema/* stuff is ordered by schema_name, schema_type ... with schema_content last."
   [m]
   (letfn [(compare-names [ns x y]
             (if-let [v (get name-order ns)]

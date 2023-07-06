@@ -910,12 +910,7 @@
   (as-> ps ?ps
     (parse-list ?ps \( \) \; :ptag/exp)
     (assoc ?ps :result
-           {:typ (if (some #(let [typ (:typ %)]
-                              (or (= :JvarDecl typ)
-                                  (and (= :FnCall typ) (= "$put" (:fn-name %)))))
-                             (:result ?ps))
-                   :CodeBlock
-                   :Primary)
+           {:typ  :CodeBlock|Primary
             :exps (:result ?ps)})))
 
 ;;; <filter-exp> := '[' <exp> ']'

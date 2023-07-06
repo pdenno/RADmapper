@@ -5,24 +5,10 @@
    [datahike.api        :as d]
    [datahike.pull-api   :as dp]
    [mount.core          :as mount :refer [defstate]]
+   [rm-server.sutil     :as util :refer [register-db connect-atm]]
    [taoensso.timbre     :as log]))
 
 (def db-cfg-atm "Configuration map used for connecting to the db. It is set in core."  (atom nil))
-
-(defn connect-atm
-  "Set the var rad-mapper.db-util/conn by doing a d/connect.
-   Return a connection atom."
-  []
-  (when-let [db-cfg @db-cfg-atm]
-    (if (d/database-exists? db-cfg)
-      (d/connect db-cfg)
-      (log/warn "There is no DB to connect to."))))
-
-#_(def saved-code-entries
-  [[:db/add -1 :code/id (java.util.UUID/fromString "7b4f5d46-e09f-4cd9-b3f4-ef5803da2ae4")]
-   {:code/id    #uuid "7b4f5d46-e09f-4cd9-b3f4-ef5803da2ae4"
-    :code/date  #inst "2023-03-06T19:11:34.799-00:00"
-    :code/code  "[[1,2,3], 4].$[0][0] /* Take first of each element (twice) */"}])
 
 (def db-schema
   "Defines the datahike schema for this database.
@@ -34,14 +20,7 @@
    #:db{:cardinality :db.cardinality/one,  :valueType :db.type/string,  :ident :code/title
         :doc "Used in saved-code provided by the exerciser"}])
 
-#_(defn get-db-atm
-  "Do a d/connect to the database, returning a connection atom."
-  []
-  (if (d/database-exists? @db-cfg-atm)
-    (d/connect @db-cfg-atm)
-    (log/warn "There is no saved-code DB to connect to.")))
-
-(def rebuild-db? "Don't keep this on the db-cfg map" true)
+(def rebuild-db? "Don't keep this on the db-cfg map" false)
 
 (defn create-db!
   "Create the database if :rebuild? is true, otherwise just set the connection atom, conn."
@@ -51,7 +30,6 @@
     (d/create-database @db-cfg-atm)
     (let [conn (d/connect @db-cfg-atm)]
       (d/transact conn db-schema)
-      #_(d/transact conn saved-code-entries)
       (log/info "Created schema DB " conn)
       conn)))
 
@@ -63,15 +41,15 @@
                      :code/date (new java.util.Date)
                      :code/code code}
               data (assoc :code/data data))]
-    (d/transact (connect-atm) [[:db/add -1 :code/id uuid]])
-    (d/transact (connect-atm) [obj])
+    (d/transact (connect-atm :saves) [[:db/add -1 :code/id uuid]])
+    (d/transact (connect-atm :saves) [obj])
     (log/info "Stored user code " uuid)
     uuid))
 
 (defn get-code
   "Retrieve an saved-code from the exerciser-saves DB by its id"
   [{:keys [id]}]
-  (dp/pull @(connect-atm) '[*] [:code/id (java.util.UUID/fromString id)]))
+  (dp/pull @(connect-atm :saves) '[*] [:code/id (java.util.UUID/fromString id)]))
 
 (def base-dir "The base directory of the databases. Can't be set at compile time in Docker." nil)
 (def db-dir "The directory containing schema DBs. Can't be set at compile time in Docker." nil)
@@ -94,7 +72,8 @@
   (reset! db-cfg-atm {:store {:backend :file :path db-dir}
                       :keep-history? false
                       :schema-flexibility :write})
-  (connect-atm))
+  (register-db :saves @db-cfg-atm)
+  @db-cfg-atm)
 
-(defstate exerciser-saves-atm
+(defstate exerciser-saves-cfg
   :start (init-db))

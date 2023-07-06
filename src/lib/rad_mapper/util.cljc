@@ -1,21 +1,19 @@
 (ns rad-mapper.util
   (:require
-   [cemerick.url                 :as url]
-   #?(:clj  [clojure.data.xml    :as xml])
-   #?(:clj  [clojure.data.json   :as json])
-   #?(:cljs [cljs.reader])                 ; ToDo: Investigate. Not cljs version?
-   #?(:clj [clojure.java.io])
-   [clojure.pprint               :refer [cl-format]]
-   [clojure.string               :as str]
-   [clojure.walk                 :as walk :refer [postwalk]]
-   [mount.core                   :refer [defstate]]
-   #?(:clj  [datahike.db.utils  :refer [db?]]
-      :cljs [datascript.core    :refer [db?]])
-   #?(:clj  [datahike.pull-api    :as dp]
-      :cljs [datascript.pull-api  :as dp])
-   #?(:clj [rad-mapper.paillier  :refer [api-key]])
-   #?(:clj [promesa.core                 :as p])
-   [taoensso.timbre              :as log]))
+   [clojure.pprint            :refer [cl-format]]
+   [clojure.string            :as str]
+   [mount.core                :refer [defstate]]
+   [taoensso.timbre           :as log]
+   #?@(:clj
+       [[clojure.data.json    :as json]
+        [clojure.java.io]
+        [datahike.db.utils    :refer [db?]]
+        [datahike.pull-api    :as dp]
+        [promesa.core         :as p]])
+   #?@(:cljs
+       [[cljs.reader]                       ; ToDo: Investigate. Not cljs version?
+        [datascript.core      :refer [db?]]
+        [datascript.pull-api :as dp]])))
 
 ;;; ================== CLJ/CLJS/SCI Interop =========================
 (defn regex? [o]
@@ -109,17 +107,6 @@
         (keyword? obj)   (if-let [ns (namespace obj)] (str ns "_" (name obj)) (name obj))
         :else            obj))
 
-;;; ToDo: Do I really want deep translation?
-(defn rm-id->clj-key
-  "Walk the object replacing string keys with keywords. If the string has a _ in it, the
-   resulting keyword is namespaced where the namespace name is the text before the first _ and the
-   keyword name is the text after that _."
-  [obj]
-  (cond (map? obj)       (reduce-kv (fn [m k v] (assoc m (rm-id->clj-key k) (if (map? v) (rm-id->clj-key v) v))) {} obj)
-        (vector? obj)    (mapv rm-id->clj-key obj)
-        (string? obj)    (-> obj (str/replace-first #"\_" "/") keyword)
-        :else            obj))
-
 ;;; ToDo: The problem with output to log/debug might have to do with *err* not defined in cljs.
 (defn custom-output-fn
   " - I don't want :hostname_ and :timestamp_ in the log output preface text..
@@ -165,92 +152,6 @@
   [base-str used-names]
   (let [regex (re-pattern (str base-str "\\d+"))]
     (str base-str (->> (map str used-names) (filter #(re-matches regex %)) count inc))))
-
-(defn explicit-root-ns
-  "Return argument xml/element-nss map modified so that that the empty-string namespace is 'root' or whatever
-   If the schema uses 'xs' for 'http://www.w3.org/2001/XMLSchema', change it to xsd"
-  [nspaces & {:keys [root-name] :or {root-name "ROOT"}}]
-  #_(when (-> nspaces :p->u (contains? root-name))
-    (log/warn "XML uses explicit 'root' namespace alias.")) ; ToDo
-  (as-> nspaces ?ns
-    (assoc-in ?ns [:p->u root-name] (or (get (:p->u ?ns) "") :mm/nil))
-    (update ?ns :p->u #(dissoc % ""))
-    (update ?ns :u->ps
-            (fn [uri2alias-map]
-              (reduce-kv (fn [res uri aliases]
-                           (assoc res uri (mapv #(if (= % "") root-name %) aliases)))
-                         {}
-                         uri2alias-map)))
-    ;; Now change "xs" to "xsd" if it exists.
-    (if (= "http://www.w3.org/2001/XMLSchema" (get (:p->u ?ns) "xs"))
-      (as-> ?ns ?ns1
-        (assoc-in ?ns1 [:p->u "xsd"] "http://www.w3.org/2001/XMLSchema")
-        (update ?ns1 :p->u  #(dissoc % "xs"))
-        (update ?ns1 :u->ps #(dissoc % "http://www.w3.org/2001/XMLSchema"))
-        (assoc-in ?ns1 [:u->ps "http://www.w3.org/2001/XMLSchema"] ["xsd"]))
-      ?ns)))
-
-#?(:clj
-(defn alienate-xml
-  "Replace namespaced xml map keywords with their aliases."
-  [xml]
-  (let [ns-info (-> xml xml/element-nss explicit-root-ns)]
-    (letfn [(equivalent-tag [tag]
-              (let [[success? ns-name local-name] (->> tag str (re-matches #"^:xmlns\.(.*)/(.*)$"))]
-                (if success?
-                  (let [ns-name (url/url-decode ns-name)]
-                    (if-let [alias-name (-> ns-info :u->ps (get ns-name) first)]
-                      (keyword alias-name  local-name)
-                      (keyword ns-name     local-name)))
-                  tag)))]
-      (postwalk
-       (fn [obj]
-         (if (and (map? obj) (contains? obj :tag))
-           (update obj :tag equivalent-tag)
-           obj))
-       xml)))))
-
-(defn clean-whitespace
-  "Remove whitespace in element :content."
-  [xml]
-  (postwalk
-   (fn [obj]
-     (if (and (map? obj) (contains? obj :content))
-       (if (= 1 (count (:content obj))) ;; ToDo Maybe don't remove it if is the only content?
-         obj
-         (update obj :content (fn [ct] (remove #(and (string? %) (re-matches #"^\s*$" %)) ct))))
-       obj))
-   xml))
-
-(defn detagify
-  "Argument in content from clojure.data.xml/parse. Return a map where
-    (1) :tag is :schema/type,
-    (2) :content, if present, is a simple value or recursively detagified.
-    (3) :attrs, if present, are :xml/attrs.
-   The result is that
-     (a) returns a string or a map that if it has :xml/content, it is a string or a vector.
-     (b) if a map, and the argument had attrs, has an :xml/attrs key."
-  [obj]
-  (cond (map? obj)
-        (as-> obj ?m
-          (assoc ?m :xml/tag (:tag ?m))
-          (if (not-empty (:attrs   ?m)) (assoc ?m :xml/attrs (:attrs ?m)) ?m)
-          (if (not-empty (:content ?m)) (assoc ?m :xml/content (detagify (:content ?m))) ?m)
-          (dissoc ?m :tag :attrs :content))
-        (seq? obj) (if (and (== (count obj) 1) (-> obj first string?))
-                     (first obj)
-                     (mapv detagify obj))
-        (string? obj) obj ; It looks like nothing will be number? Need schema to fix things.
-        :else (throw (ex-info "Unknown type in detagify:" {:obj obj}))))
-
-#?(:clj
-(defn read-xml
-  "Return a map of the XML file read."
-  [pathname]
-  (let [xml (-> pathname clojure.java.io/reader xml/parse)]
-     {:xml/ns-info (explicit-root-ns (xml/element-nss xml))
-      :xml/content (-> xml alienate-xml clean-whitespace detagify vector)
-      :schema/pathname pathname})))
 
 (defn trans-tag [tag]
   (if-let [ns (namespace tag)]
@@ -439,8 +340,6 @@
           #(let [now #?(:clj (inst-ms (java.util.Date.)) :cljs (.getTime (js/Date.)))]
              (assoc % :valid? true :max-millis max-millis :start-time now :timeout-at (+ now max-millis))))
    max-millis))
-
-#?(:clj (defn get-api-key [_] api-key))
 
 ;;;=============================================================================================================
 ;;; Utils for macros: It seems the CLJS macros file cannot have these in them! See javascript.org [2023-01-25].

@@ -62,7 +62,17 @@
 
 (defrewrite :toplevel [m]
   (rad-mapper.rewrite-macros/clear-rewrite!) ; ToDo: Nothing less will suffice! (Though restarting shadow helped!)
-  (->> m :top rewrite))
+  (let [exps (-> m :top :exps)
+        mm (if (= :CodeBlock|Primary (-> m :top :typ))
+             (if (or (and (-> exps second not)
+                          (or (-> exps first string?)
+                              (-> exps first number?)
+                              (-> exps first :typ #{:FnCall :FnDef :BinOpSeq}))) ; ToDo: surely more. Doing this backwards!
+                     (some #(= :VarDecl (:typ %)) exps))
+               (assoc-in m [:top :typ] :CodeBlock)
+               (assoc-in m [:top :typ] :Primary))
+             m)]
+    (->> mm :top rewrite)))
 
 (def ^:dynamic *assume-json-data?* false)
 (def ^:dynamic *inside-let?*  "let is implemented in Primary" false)

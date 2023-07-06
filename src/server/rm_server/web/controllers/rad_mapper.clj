@@ -4,9 +4,9 @@
    [clojure.walk          :as walk :refer [keywordize-keys]]
    [promesa.core          :as p]
    [rad-mapper.builtin    :as bi]
-   [rad-mapper.resolvers  :refer [connect-atm]]
-   [rm-server.exerciser-saves :as user-saves]
    [ring.util.http-response :as response]
+   [rm-server.sutil      :refer [connect-atm]]
+   [rm-server.exerciser-saves :as user-saves]
    [taoensso.timbre :as log])
   (:import
    [java.util Date]))
@@ -114,7 +114,7 @@
   (log/info "Datalog query: qforms (string) = " qforms)
   (if (not-empty qforms)
     (try (let [qforms (read-string qforms)
-               res (bi/query-fn-aux [(connect-atm)] qforms '[$] nil nil nil)]
+               res (bi/query-fn-aux [(connect-atm :schema)] qforms '[$] nil nil nil)]
            (log/info "Datalog query returns: " res)
            (response/ok res))
          (catch Throwable e

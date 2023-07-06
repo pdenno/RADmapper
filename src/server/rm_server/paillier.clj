@@ -1,4 +1,4 @@
-(ns rad-mapper.paillier
+(ns rm-server.paillier
   (:require
    [mount.core :as mount :refer [defstate]]
    [taoensso.timbre :as log])
