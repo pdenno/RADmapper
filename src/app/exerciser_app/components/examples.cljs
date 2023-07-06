@@ -11,7 +11,7 @@
 ;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
   [
-   _{:name "Uses of $get"
+   {:name "Uses of $get"
     :code
     "{'1: Lists of lists'    : $get(['list_id', 'lists'],               ['list_content']),                        // Any of the values of 'list of lists can be used.
  '2: Library functions' : $get(['list_id', 'library_fn'],          ['list_content']),                        // This is one such example.
