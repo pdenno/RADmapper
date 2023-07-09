@@ -60,8 +60,9 @@
         (nil? obj)                            obj ; for optional things like (-> m :where rewrite)
         :else                                 (throw (ex-info "Don't know how to rewrite obj:" {:obj obj}))))
 
-(defn cb-or-primary?
-  "Return one of :CodeBlock, or :Primary, depending on what the argument object of :typ :CodeBlock|Primary should be."
+(defn toplevel-cb-or-primary?
+  "Return one of :CodeBlock, or :Primary, depending on what the argument object of :typ :CodeBlock|Primary should be.
+   This is only used at toplevel, in other places, :Primary is assumed."
   [top]
   (assert (= :CodeBlock|Primary (:typ top)))
   (let [exps (:exps top)]
@@ -74,13 +75,18 @@
       :Primary)))
 
 (defrewrite :toplevel [m]
-  (reset! diag m)
   (rad-mapper.rewrite-macros/clear-rewrite!) ; ToDo: Nothing less will suffice! (Though restarting shadow helped!)
   (as-> m ?m
     (if (= :CodeBlock|Primary (-> ?m :top :typ))
-      (assoc-in ?m [:top :typ] (cb-or-primary? (:top ?m)))
+      (assoc-in ?m [:top :typ] (toplevel-cb-or-primary? (:top ?m)))
       ?m)
     (->> ?m :top rewrite)))
+
+;;; This is the non-toplevel use of :CodeBlock|Primary; it assumes :Primary
+(defrewrite :CodeBlock|Primary [m]
+  (as-> m ?m
+    (assoc ?m :typ :Primary)
+    (rewrite ?m)))
 
 (def ^:dynamic *assume-json-data?* false)
 (def ^:dynamic *inside-let?*  "let is implemented in Primary" false)
@@ -208,7 +214,7 @@
   (let [fname (-> m :fn-name)]
     (if (builtin-fns fname) ; ToDo: Be careful about what argument, and nesting.
       (binding [*in-regex-fn?* (#{"$match" "$split" "$contains" "$replace"} fname)]
-        `(~(symbol "bi" fname) ~@(binding [*inside-let?* false] (-> m :args rewrite))))
+        `(~(symbol "rad-mapper.builtin" fname) ~@(binding [*inside-let?* false] (-> m :args rewrite))))
       `(rad-mapper.builtin/fncall   {:func ~(symbol fname)
                      :args [~@(binding [*inside-let?* false] (-> m :args rewrite))]}))))
 
@@ -229,7 +235,7 @@
   (if *assume-json-data?*
     `(with-meta
        ~(mapv rewrite (:exprs m))
-       {:rad-mapper.builtin/json-array? true})
+       {:bi/json-array? true})
     (mapv rewrite (:exprs m))))
 
 (defn dbs-from-qform
@@ -653,7 +659,8 @@
                                      {:pos pos
                                       :form (let [op (-> ?omap :op symbol)]
                                               (if (= op 'rad-mapper.builtin/thread) ; This allows us to not need a macro for threading
-                                                (let [fn-arg (-> info :args (nth (inc pos)) first)]
+                                                (let [fn-arg (-> info :args (nth (inc pos)))
+                                                      fn-arg (if (= (first fn-arg) 'clojure.core/fn) fn-arg (first fn-arg))]
                                                   `(try (reset! rad-mapper.builtin-macros/threading? true)
                                                         (~op ~(nth (:args info) (dec pos)) ~fn-arg)
                                                         (finally (reset! rad-mapper.builtin-macros/threading? false))))

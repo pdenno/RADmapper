@@ -48,6 +48,6 @@
     `(testing ~(str "\n(run \"" form-string "\")")
        (is (= ~expect
               (cond-> (run ~form-string
-                        :rewrite?x ~rewrite?
+                        :rewrite? ~rewrite?
                         :keep-meta? ~keep-meta?)
                 ~sets? vec2set))))))

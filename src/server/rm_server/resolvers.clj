@@ -161,6 +161,32 @@
 
 (def indexes (atom nil))
 
+(def type-typ?
+  "These are DB types for which the ident-value is a keyword."
+ #{"cct_bie"
+   "cct_componentSchema"
+   "cct_messageSchema"
+   "generic_codeListSchema"
+   "generic_librarySchema"
+   "generic_messageSchema"
+   "generic_qualifiedDtypeSchema"
+   "generic_unqualifiedDtypeSchema"
+   "generic_xsdFile"
+   "niem_codeListSchema"
+   "niem_domainSchema"})
+
+(defn adjust-ident-map
+  "$get sends pathom-resolve parameters untouched, but we've tried to maintain a discipline where
+   a value which identifies a type is represented as a keyword, whereas a value that identifies
+   an individual is represented as a string. Since $get, gets both with strings, the strings
+   representing types need to be converted to a keyword."
+  [ident-map]
+  (if (= :list_id (-> ident-map keys first))
+    (cond (empty? ident-map)                  ident-map
+          (-> ident-map vals first type-typ?) (update-vals ident-map keyword)
+          :else                               ident-map)
+    ident-map))
+
 ;;; (pathom-resolve {:list/id :ccts_messageSchema} [:schema_name])
 (defn pathom-resolve
   "Uses the indexes to respond to a query.
@@ -177,7 +203,8 @@
    outputs: a vector of properties (the :pco/outputs of resolvers) that are sought."
   [ident-map outputs]
   (log/info "Pathom3 resolve: ident-map = " ident-map " outputs= " outputs)
-  (try (let [res (p.eql/process @indexes ident-map outputs)
+  (try (let [ident-map (adjust-ident-map ident-map)
+             res (p.eql/process @indexes ident-map outputs)
              #_#_debug-str (str res) ; ToDo this is wasteful and should go away.
              #_#_len (count debug-str)
              #_#_es-str (subs debug-str 0 (min 40 len))]

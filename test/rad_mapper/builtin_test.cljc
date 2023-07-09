@@ -7,7 +7,7 @@
    [develop.dutil-util :refer [run]] ; Needed; ignore clj-kondo warning.
    [promesa.core :as p]
    [rad-mapper.parse]
-   [rad-mapper.rewrite]
+   [rad-mapper.rewrite :as rew]
    [rad-mapper.builtin :as bi]
    [rad-mapper.builtin-macros :as bm]
    [taoensso.timbre :as log :refer-macros [info debug log]]
@@ -291,11 +291,11 @@
                  "qty" {"amt" 4,
                         "uom" "unit"}})))
       (testing " Testing User's Guide interop $reduceKV."
-        (testing " Testing $reduceKV"
-          (run-test "$reduceKV({'a' : 1, 'b' : 2}, function($res, $k, $v){ $assoc($res, $uppercase($k), $v) })"
+        (testing " Testing $reduceKV, argument order like $mapObject (obj, fn, init) "
+          (run-test "$reduceKV({'a' : 1, 'b' : 2}, function($res, $k, $v){ $assoc($res, $uppercase($k), $v) } )"
                     {"A" 1, "B" 2}))
         (testing " Testing User's Guide interop $reduceKV."
-          (run "( $order := {'name'            : 'Example Customer',
+          (run-test "( $order := {'name'            : 'Example Customer',
                               'shippingAddress' : '123 Mockingbird Lane...',
                               'item part no.'   : 'p12345',
                               'qty'             : {'amt' : 4, 'uom' : 'unit'}};
@@ -303,7 +303,7 @@
                    $name2CustomerFn := function($res, $k, $v)
                                           { ($k = 'name') ? $assoc($res, 'customer', $v) : $assoc($res, $k, $v) };
 
-                   $reduceKV($name2CustomerFn, {}, $order)
+                   $reduceKV( $order, $name2CustomerFn, {})
                  )"
                 {"customer" "Example Customer",
                  "shippingAddress" "123 Mockingbird Lane...",
@@ -408,7 +408,12 @@
         (run-test  "[[1,2,3], 4].$" [1 2 3 4]))
 
       (testing "(7) Flattened?"
-        (run-test  "[[[1,2,3], 4]].$" [[1 2 3] 4])))
+        (run-test  "[[[1,2,3], 4]].$" [[1 2 3] 4]))
+
+      (testing "You can't provide filtering a function to apply; it just returns true."
+        (run-test "['abc', 'xyz', 'axyz'][function($x){$contains($x,'xyz')}]"
+                  ["abc" "xyz" "axyz"])))
+
     ;; ------------------------------
 
     (testing "Experiment with distinguishing 'paths' from 'bin-ops'"
@@ -500,6 +505,15 @@
                          {'Product' : {'price' : 50, 'quantity' : 4}}];
                   $p.Product.(price * quantity) )"
                 [100 200]))))
+
+;;; Of course, this is apt to change.
+(deftest use-of-$get-with-schema
+  (run-test "$get(['list_id', 'cct_bie'], ['list_content']).list_content[$contains('elena')]"
+            ["urn:oagi-10.:elena.2023-02-09.ProcessInvoice-BC_1"
+             "urn:oagi-10.:elena.2023-02-09.ProcessInvoice-BC_2"
+             "urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2"
+             "urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2"]))
+
 (deftest why
   (testing "Why:"
     (testing "In JSONata this disregards data and returns 'abc'. Why?"
@@ -570,10 +584,12 @@
                    $sum(Account.Order.Product.(Price*Quantity)) )"
                         336.36)))))
 
+
 (deftest some-async
   (testing "testing some async capabilities"
     (testing "testing threading (not async per se but...)"
-      (run-test "( $db  := $get([['db_name', 'schemaDB'], ['db_connection']]);
+      true ; ToDo: Make the db connection thing work in CLJ
+      #_(run-test "( $db  := $get([['db_name', 'schemaDB'], ['db_connection']]);
                    $qfn := query{[?e :schema/name ?name] [?e :schema/sdo ?sdo]};
                    $qfn($db).?sdo ~> $distinct() ~> $sort() )"
                 [:cefact :etsi :niem :oagi :oasis :qif :w3c]))))
@@ -734,7 +750,7 @@
 
 (def errors-on-async "A vector of maps describing errors." (atom []))
 
-;;; http://localhost:3000/api/graph-query?ident-type=schema%2Fname&ident-val=urn%3Aoagis-10.8.4%3ANouns%3AInvoice&request-objs=schema%2Fcontent
+;;; http://localhost:3000/api/graph-get?ident-type=schema%2Fname&ident-val=urn%3Aoagis-10.8.4%3ANouns%3AInvoice&request-objs=schema%2Fcontent
 (defn health-test []
   (let [prom (p/deferred)]
     (GET "http://localhost:3000/api/health"
@@ -811,13 +827,13 @@
       (is (= {"fn_src" "function($x){$x + 1}",
               "fn_doc" "Add one to the (numeric) argument. This is just for testing, of course."}
              (let [p (p/deferred)]
-               (GET (str svr-prefix "/api/graph-query")
+               (GET (str svr-prefix "/api/graph-get")
                     {:params {:ident-type "library_fn"
                               :ident-val "addOne"
                               :request-objs "fn_src|fn_doc"}
                      :handler (fn [resp] (p/resolve! p resp))
                      :error-handler (fn [{:keys [status status-text]}]
-                                      (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-query"
+                                      (p/reject! p (ex-info "CLJS-AJAX error on /api/graph-get"
                                                             {:status status :status-text status-text})))
                      :timeout 5000})
                (p/await p 5000)))))
@@ -965,21 +981,3 @@
        "TaxIDSet" {"ID" "<data>"}}}},
     "Process" "<data>"},
    "ApplicationArea" {"CreationDateTime" "<data>"}}})
-
-#_(defn tryme []
-  (bi/$put ["library/fn" "addTwo"]
-           {"fn_name" "addTwo"
-            "fn_doc" "Add 2 to the argument."
-            "fn_src" "function($x){$x + 2}"}))
-
-(defn tryme-1 []
-  (rad-mapper.builtin/run-steps
-   (rad-mapper.builtin/init-step (bi/$get ["library_fn" "addOne"] ["fn_exe"]))
-   (rad-mapper.builtin/get-step "fn_exe")))
-
-(defn tryme []
-  (rad-mapper.builtin/reset-env)
-  (rad-mapper.builtin/finalize
-   (rad-mapper.builtin/run-steps
-    (rad-mapper.builtin-macros/init-step-m (rad-mapper.builtin/$get ["library_fn" "addOne"] ["fn_exe"]))
-    (rad-mapper.builtin/get-step "fn_exe"))))

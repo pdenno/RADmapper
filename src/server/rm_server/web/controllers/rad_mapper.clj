@@ -65,21 +65,6 @@
       (response/ok res))
     (response/bad-request "Missing args.")))
 
-
-#_(defn llm-match
-  "Use an LLM to match maps (bi/$llmMatch) and return result. Request was a POST."
-  [{{{:keys [src tar]} :body} :parameters}]
-  (log/info "llm-match: src =" src "tar =" tar)
-  (if (and src tar)
-    (let [p (bi/$llmMatch src tar)
-          res (p/await p 45000)]
-      (if (nil? res)
-        (do
-          (log/error "$llmMatch timeouted out. (LLM call)")
-          (response/ok {:status :failure :cause "Call to LLM timed out."}))
-        (response/ok res)))
-    (response/bad-request "src or tar not provided.")))
-
 (defn llm-match
   "Use an LLM to match maps (bi/$llmMatch) and return result. Request was a POST."
   [{{{:keys [src tar]} :body} :parameters}]
@@ -130,7 +115,7 @@
   (if (not-empty qforms)
     (try (let [qforms (read-string qforms)
                res (bi/query-fn-aux [(connect-atm :schema)] qforms '[$] nil nil nil)]
-           (log/info "Datalog query returns: " res)
+           ;;(log/info "Datalog query returns: " res)
            (response/ok res))
          (catch Throwable e
            (log/error "Datalog-query:" (.getMessage e))

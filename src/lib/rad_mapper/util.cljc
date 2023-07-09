@@ -124,7 +124,7 @@
     (log/set-config!
      (-> log/*config*
          (assoc :output-fn #'custom-output-fn)
-         (assoc :min-level [[#{"RM-DEFAULT" "rad-mapper.*" "exerciser-app.*" "user"} min-level]
+         (assoc :min-level [[#{"RM-DEFAULT" "rad-mapper.*" "rm-server.*" "exerciser-app.*" "user"} min-level]
                             [#{"datahike.*"} :error]
                             [#{"datascript.*"} :error]
                             [#{"*"} :error]])))

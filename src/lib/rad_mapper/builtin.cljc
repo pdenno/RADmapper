@@ -47,7 +47,7 @@
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros       :as bim
     :refer [$ $$ set-context! defn* value-step-m primary-m init-step-m map-step-m
-            threading? jflatten containerize containerize? container? flatten-except-json]])
+            threading? jflatten containerize containerize? container? flatten-except-json]]) ; threading? introduced in rewritten code.
   #?(:cljs (:require-macros [rad-mapper.builtin-macros]
                             [promesa.core :refer [loop]])) ; ToDo: probably not necessary.
    #?(:clj
@@ -159,7 +159,6 @@
 (defn thread
   "Apply the function to the object."
   [obj func]
-  (log/info "func = " func)
   (if (p/promise? obj)
     (-> obj
         (p/then #(func %))
@@ -1659,46 +1658,47 @@
 
 (defn $get
   "Read a file of JSON or XML, creating a map."
-  [ident|file-string other]
-  (cond (string? ident|file-string)                           (let [file-string ident|file-string
-                                                                    opts other]
-                                                                (read-local file-string opts)),
-        (and (vector? ident|file-string)
-             (= ident|file-string ["db_name" "schemaDB"]))    {"db_connection" "_rm_schema-db"},
+  ([x] ($get x nil))
+  ([ident|file-string other]
+   (cond (string? ident|file-string)                           (let [file-string ident|file-string
+                                                                     opts other]
+                                                                 (read-local file-string opts)),
+         (and (vector? ident|file-string)
+              (= ident|file-string ["db_name" "schemaDB"]))    {"db_connection" "_rm_schema-db"},
 
-        :else   ;; It is a DB get.
-        (let [[ident-type ident-val] ident|file-string
-              out-props other
-              lib-fn?  (= "library_fn" ident-type)
-              wants-exe? (some #(= % "fn_exe") out-props)
-              wants-src? (some #(= % "fn_src") out-props)
-              new-props (if (and lib-fn? wants-exe? (not wants-src?)) (conj out-props "fn_src") out-props)] ; Need src to compile!
-          #?(:clj
-             ;; Conversion to keywords is always done close to pathom.
-             ;; ident-val is not coerced here because it need not be a key (e.g. 'addOne').
-             ;; ident-val may be coerced in the resolver, as needed.
-             ;; See resolvers.clj for things like ($put ["list_id", "ccts_message-schema"], ["list_content"])
-             (let [ident-type (keyword ident-type)
-                   new-props  (mapv keyword new-props)]
-               (log/info "$get: ident-type = " ident-type "ident-val = " ident-val "new-props =" new-props)
-               (as-> (pathom-resolve {ident-type ident-val} new-props) ?x
-                 (update-keys ?x name)
-                 (if (and lib-fn? wants-exe?) (assoc ?x "fn_exe" (compile-rm (get ?x "fn_src"))) ?x) ; ToDo: This is wasted if call is from CLJS.
-                 (if (not wants-src?) (dissoc ?x "fn_src") ?x)))
-             :cljs (let [prom (p/deferred)
-                         req-data {:params {:ident-type ident-type
-                                            :ident-val ident-val
-                                            :request-objs (cl-format nil "~{~A~^|~}" new-props)}
-                                   :handler (fn [resp] (p/resolve! prom resp))
-                                   :error-handler (fn [{:keys [status status-text]}]
-                                                    (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-get"
-                                                                             {:status status :status-text status-text})))
-                                   :timeout 5000}]
-                     (GET (str svr-prefix "/api/graph-get") req-data) ; ToDo: use Martian.
-                     (-> prom
-                         (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
-                         (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
-                         (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props new-props}))))))))
+         :else   ;; It is a DB get.
+         (let [[ident-type ident-val] ident|file-string
+               out-props other
+               lib-fn?  (= "library_fn" ident-type)
+               wants-exe? (some #(= % "fn_exe") out-props)
+               wants-src? (some #(= % "fn_src") out-props)
+               new-props (if (and lib-fn? wants-exe? (not wants-src?)) (conj out-props "fn_src") out-props)] ; Need src to compile!
+           #?(:clj
+              ;; Conversion to keywords is always done close to pathom.
+              ;; ident-val is not coerced here because it need not be a key (e.g. 'addOne').
+              ;; ident-val may be coerced in the resolver, as needed.
+              ;; See resolvers.clj for things like ($put ["list_id", "ccts_message-schema"], ["list_content"])
+              (let [ident-type (keyword ident-type)
+                    new-props  (mapv keyword new-props)]
+                (log/info "$get: ident-type = " ident-type "ident-val = " ident-val "new-props =" new-props)
+                (as-> (pathom-resolve {ident-type ident-val} new-props) ?x
+                  (update-keys ?x name)
+                  (if (and lib-fn? wants-exe?) (assoc ?x "fn_exe" (compile-rm (get ?x "fn_src"))) ?x) ; ToDo: This is wasted if call is from CLJS.
+                  (if (not wants-src?) (dissoc ?x "fn_src") ?x)))
+              :cljs (let [prom (p/deferred)
+                          req-data {:params {:ident-type ident-type
+                                             :ident-val ident-val
+                                             :request-objs (cl-format nil "~{~A~^|~}" new-props)}
+                                    :handler (fn [resp] (p/resolve! prom resp))
+                                    :error-handler (fn [{:keys [status status-text]}]
+                                                     (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-get"
+                                                                              {:status status :status-text status-text})))
+                                    :timeout 5000}]
+                      (GET (str svr-prefix "/api/graph-get") req-data) ; ToDo: use Martian.
+                      (-> prom
+                          (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
+                          (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
+                          (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props new-props})))))))))
 
  #?(:clj
 (defn $put
@@ -2726,7 +2726,6 @@ answer 2:
    "init-step"     'rad-mapper.builtin-macros/init-step-m,
    "map-step"      'rad-mapper.builtin-macros/map-step-m,
    "primary"       'rad-mapper.builtin-macros/primary-m,
-   #_#_"try-threading" 'rad-mapper.builtin-macros/try-threading-m, ; ToDo: Get SCI dynamic variable working so you don't need this!
    "value-step"    'rad-mapper.builtin-macros/value-step-m})
 
 (defn macro?
