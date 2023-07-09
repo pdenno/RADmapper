@@ -85,6 +85,7 @@
    Returns nil."
   [on-result-fn progress-bool-fn ^:js {:keys [state]}]
   (progress-bool-fn true)
+  (set-editor-text "result" "processing...") ; Nudges editor to ensure update.
   (as-> state ?res
     (.-doc ?res)
     (str ?res)
@@ -103,7 +104,8 @@
   nil)
 
 (defn add-result-action
-  "Return the keymap updated with the partial for :on-result, I think!" ;<===
+  "Return the keymap updated with the partial for :on-result.
+   on-result is set-result (hook fn); progress-bool is set-progressing."
   [{:keys [on-result progress-bool]}]
   (.of view/keymap
        (j/lit
@@ -166,6 +168,7 @@
     res))
 
 (defnc Top [{:keys [rm-example width height]}]
+  ;; ToDo: According to helix docs, use-state's set fn can be used similar to swap!. Is this useful here?
   (let [[result set-result] (hooks/use-state "Ctrl-Enter above to execute.")
         [progress set-progress] (hooks/use-state 0)
         [progressing? set-progressing] (hooks/use-state false)
@@ -174,7 +177,9 @@
         data-editor-height (- useful-height banner-height 20) ; ToDo: 20 (a gap before the editor starts)
         code-editor-height   (int (* useful-height 0.5))    ; <================================== Ignored?
         result-editor-height (int (* useful-height 0.5))]   ; <================================== Ignored?
-    (hooks/use-effect [result] (set-editor-text "result" result))
+    (hooks/use-effect [result]
+      (log/info "Use-effect on result = " result)
+      (set-editor-text "result" result #_(:text result)))
     ;; setInterval runs its argument function again and again at the argument time interval (milliseconds).
     ;; setInterval returns a handle that can be used by clearInterval to stop the running.
     (hooks/use-effect [progressing?]

@@ -65,7 +65,7 @@
 
 (declare aref)
 
-(def diag (atom nil))
+(def diag (atom {}))
 
 (s/def ::number number?)
 (s/def ::pos-number (s/and number? pos?))
@@ -1653,9 +1653,8 @@
   "Return the object produced by rad-mapper compiling the argument string."
   [src]
   (log/info "compile-rm: src =" src)
-  (try (reset! diag (processRM :ptag/exp src {:execute? true}))
+  (try (processRM :ptag/exp src {:execute? true})
        (catch #?(:clj Throwable :cljs :default) e
-         (reset! diag e)
          (ex-info "compile-rm: Did not compile!" {:src src :err e}))))
 
 (defn $get
@@ -2440,33 +2439,43 @@
            http://arxiv.org/abs/2302.12246"
 
 ;;; 1416 tokens! Careful about trailing blanks!
-  "Wherever you can, replace each <replace-me> in the target_form with similar information from the source_form.
+  "Wherever you can, replace each <replace-me> in the target_form with path information from the source_form.
 Both source_form and target_form are Clojure maps.
-Because data in source_form does not match data in target_form perfectly, you should do the following to make things work:
+Because the structure of the source_form does not match that of the target_form perfectly, you should do the following to make things work:
 
-(1) If a target_form fields combines data from multiple source_form fields, give that target_form field a value consisting of one field :concat, the value of which is a vector of the field names.
+(1) If a target_form field appears to concern multiple source_form fields, give that target_form field a value that is a map with key :concat, the value of which is a vector of all the source form paths that it concerns.
 
-For example, if source_form has specific data fields Company, StreetAddress and BuildingName, but the target_form has only has a general field :AddressLine1,
-it might used to accommodate all three of those data fields from the source_form:
+For example, if source_form has specific data fields SrcOrder.AddressInfo.Company, SrcOrder.AddressInfo.StreetAddress and SrcOrder.AddressInfo.BuildingName, but the target_form has only has a general field TarOrderForm.Customer.AddressLine1,
+:concat might used to accommodate all three of those data fields from the source_form. For example:
 ##
-source_fields:
- :Company \"<company-name-data>\"
- :StreetAddress  \"<street-address-data>\"
- :BuildingName \"<building-name-data>\"
+source_form:
+{:SrcOrder
+ {:AddressInfo
+   :Company \"<data>\"
+   :StreetAddress  \"<data>\"
+   :BuildingName \"<data>\"}}
 
-answer:
- :AddressLine1 {:concat [\"<company-name-data>\" \"<street-address-data>\" \"<building-name-data>\"]}
+target_form (answer):
+{:OrderForm
+  {:Customer
+    :AddressLine1 {:concat [\"SrcOrder.AddressInfo.Company\", \"SrcOrder.AddressInfo.StreetAddress\" \"SrcOrder.AddressInfo.BuildingNumber\"]}}}
 ##
-(2) Conversely, if source_form has a general field that might contain information for more specific target_form fields, give each of those target_form fields
-values that represent extracting the specific data from the more general field as shown:
+(2) Conversely, if source_form has a field that might concerns many target_form fields, give each of those target_form fields
+values that represent extracting the specific target data needed from the more general field.
+Here, use a map containing two key :extract-from and :value. :extract-from is a string describing the path to the source data.
+:value names the type of data you expect to be able to extract. For example:
 ##
-source_field:
- :AddressLine1 \"<address-line-1-data>\"
+source_form:
+{:SrcOrder
+ {:CustomerAddress
+  :AddressLine1 \"<data>\"}}
 
-answer:
- :Company {:extract-from \"<address-line-1-data>\" :value :Company},
- :Street {:extract-from  \"<address-line-1-data>\" :value :Street},
- :BuildingName {:extract-from \"<address-line-1-data>\" :value :Building Name}
+target_form (answer):
+{:OrderInfo
+ {:BuyerAddress
+  {:Company {:extract-from \"SrcOrder.CustomerAddress.AddfessLine1\" :value :Company},
+   :Street {:extract-from \"SrcOrder.CustomerAddress.AddressLine1\" :value :Street},
+   :BuildingName {:extract-from \"SrcOrder.CustomerAddress.AddressLine1\" :value BuildingName}}}}
 ##
 (3) If there is nothing in source_form that seems to match the needed information in target_form,
 just leave the value \"<replace-me>\" in target_form.
@@ -2474,18 +2483,18 @@ just leave the value \"<replace-me>\" in target_form.
 Some examples:
 
 source_form 1:
-{:Invoice
+{:SrcInvoice
  {:InvoiceLine
   {:Buyer
    {:Location
     {:Address
-     {:CompanyName \"<company-name-data>\"
-      :Street \"<street-data>\"
-      :BuildingNumber \"<building-number-data>\"
-      :City \"<city-data>\"
-      :State \"<state-data>\"
-      :ZipCode \"<zip-code-data>\"}}
-    :TaxID \"<tax-id-data>\"}}}}
+     {:CompanyName \"<data>\"
+      :Street \"<data>\"
+      :BuildingNumber \"<data>\"
+      :City \"<data>\"
+      :State \"<data>\"
+      :ZipCode \"<data>\"}}
+    :TaxID \"<data>\"}}}}
 
 target_form 1:
 {:Invoice
@@ -2504,21 +2513,21 @@ answer 1:
   {:BuyerParty
    {:Location
     {:Address
-     {:AddressLine1 {:concat [\"<company-name-data>\" \"<street-data>\" \"<building-number-data>\"]}
-      :City \"<city-data>\"
-      :State \"<state-data>\"
-      :PostalCode  \"<zip-code-data>\"}}}}}}
+     {:AddressLine1 {:concat [\"SrcInvoice.InvoiceLine.Buyer.Location.Address.CompanyName\" \"SrcInvoice.InvoiceLine.Buyer.Location.Address.Street\"  \"SrcInvoice.InvoiceLine.Buyer.Location.Address.BuildingNumber\"]}
+      :City \"SrcInvoice.InvoiceLine.Buyer.Location.Address.City\"
+      :State \"SrcInvoice.InvoiceLine.Buyer.Location.Address.State\"
+      :PostalCode \"SrcInvoice.InvoiceLine.Buyer.Location.Address.ZipCode\" }}}}}}
 ###
 source_form 2:
-{:Invoice
+{:SrcInvoice
  {:InvoiceLine
-  {:BuyerParty
+  {:Customer
    {:Location
     {:Address
-     {:AddressLine1 \"<address-line-1-data>\"
-      :City \"<city-data>\"
-      :State \"<state-data>\"
-      :PostalCode \"<postal-code-data>\"}}}}}}
+     {:AddressLine \"<data>\"
+      :City \"<data>\"
+      :State \"<data>\"
+      :PostalCode \"<data>\"}}}}}}
 
 target_form 2:
 {:Invoice
@@ -2531,23 +2540,24 @@ target_form 2:
       :BuildingNumber \"<replace-me>\"
       :City \"<replace-me>\"
       :State \"<replace-me>\"
-      :ZipCode \"<replace-me>\"}}
+      :ZipCode \"<replace-me>\"}}}
     :TaxID \"<replace-me>\"}}}}
 
 answer 2:
 {:Invoice
  {:InvoiceLine
-  {:BuyerParty
+  {:Buyer
    {:Location
     {:Address
-     {:CompanyName {:extract-from \"<address-line-1-data>\" :value :CompanyName}
-      :Street {:extract-from \"<address-line-1-data>\" :value :Street}
-      :BuildingNumber {:extract-from \"<address-line-1-data>\" :value :BuildingNumber)
-      :City \"<city-data>\"
-      :State \"<state-data>\"
-      :ZipCode  \"<postal-code-data>\"}}
-    :TaxID \"<replace-me>\"}}}}
+     {:CompanyName    {:extract-from \"SrcInvoice.InvoiceLine.Customer.Location.Address.AddressLine\" :value :CompanyName}
+      :Street         {:extract-from \"SrcInvoice.InvoiceLine.Customer.Location.Address.AddressLine\" :value :Street}
+      :BuildingNumber {:extract-from \"SrcInvoice.InvoiceLine.Customer.Location.Address.AddressLine\" :value :BuildingNumber}
+      :City \"SrcInvoice.InvoiceLine.Customer.Location.Address.City\"
+      :State \"SrcInvoice.InvoiceLine.Customer.Location.Address.State\"
+      :ZipCode  \"SrcInvoice.InvoiceLine.Customer.Location.Address.PostalCode\"}}}
+    :TaxID \"<replace-me>\"}}}
 ###")
+
 
 ;;; ToDo: Make keys go back two steps.
 (defn llm-match-pre
@@ -2561,18 +2571,37 @@ answer 2:
                                   (fn [m k v] (assoc m (keyword k) (if (string? v)
                                                                      (if replace-me?
                                                                        "<replace-me>"
-                                                                       (str "<" (csk/->kebab-case-string k) "-data>"))
+                                                                       "<data>"
+                                                                       #_(str "<" (csk/->kebab-case-string k) "-data>"))
                                                                      (smp v))))
                                   {} obj)
                   (vector? obj)  (mapv smp obj)
                   :else          obj))]
     (smp obj)))
 
+
+(defn sort-maps [obj]
+  (if (map? obj)
+    (into (sorted-map) (reduce-kv (fn [m k v] (assoc m k (sort-maps v))) {} obj))
+    obj))
+
+;;; 2023-07-08 Concatenating "Src" on the name of the top-level element appears to help with concat. Nothing is helping with :extract-from!
 (defn llm-match-string
   "Return the full string for matching."
   [src tar]
-  (let [src3 (with-out-str (-> src (llm-match-pre false) pprint))
-        tar3 (with-out-str (-> tar (llm-match-pre true)  pprint))]
+  (let [src3 (with-out-str
+               (-> src
+                   (update-keys #(str "Src" %))
+                   (update-keys keyword)
+                   (llm-match-pre false)
+                   sort-maps
+                   pprint))
+        tar3 (with-out-str
+               (-> tar
+                   (update-keys keyword)
+                   (llm-match-pre true)
+                   sort-maps
+                   pprint))]
     (str llm-match-instructions "\n\n"
          "source_form 3:\n" src3 "\n\n"
          "target_form 3:\n" tar3 "\n\n"
@@ -2586,16 +2615,15 @@ answer 2:
   [src tar]
   (log/info "$llmMatch on server")
   (let [q-str (llm-match-string src tar)]
+    (swap! diag #(-> % (assoc :q-str q-str) (assoc :src src) (assoc :tar tar)))
        (if-let [key (get-api-key :llm)]
-         (try (let [res (-> (openai/create-chat-completion {:model "gpt-3.5-turbo-0301"
+         (try (let [res (-> (openai/create-chat-completion {:model #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"  ; <=============== Try this
                                                             :api-key key
                                                             :messages [{:role "user" :content q-str}]})
                             :choices first :message :content)]
                 (-> res read-string))
               (catch Throwable e
-                (throw (ex-info "OpenAI API call failed."
-                                {:message (.getMessage e)
-                                 :details (-> e .getData :body json/read-str)}))))
+                (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
          (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
 
  #?(:cljs
@@ -2608,7 +2636,7 @@ answer 2:
     (util/start-clock 30000)
     (POST (str svr-prefix "/api/llm-match") ; ToDo: Use https://github.com/oliyh/martian
           {:params {:src src :tar tar}
-           :timeout 30000
+           :timeout 45000
            :handler (fn [resp] (p/resolve! prom resp))
            :error-handler (fn [{:keys [status status-text]}]
                             (log/info (str "CLJS-AJAX $llmMatch error: status = " status " status-text= " status-text))
@@ -2649,12 +2677,9 @@ answer 2:
                                                        :temperature 0.1
                                                        :prompt q-str})
                             :choices first :text)]
-                #_(reset! diag {:res res})
                 (-> res read-string))
               (catch Throwable e
-                #_(swap! diag #(assoc % :e e))
-                (throw (ex-info "OpenAI API call failed."
-                                {:message (.getMessage e)}))))
+                (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
          (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
 
  #?(:cljs

@@ -60,19 +60,27 @@
         (nil? obj)                            obj ; for optional things like (-> m :where rewrite)
         :else                                 (throw (ex-info "Don't know how to rewrite obj:" {:obj obj}))))
 
+(defn cb-or-primary?
+  "Return one of :CodeBlock, or :Primary, depending on what the argument object of :typ :CodeBlock|Primary should be."
+  [top]
+  (assert (= :CodeBlock|Primary (:typ top)))
+  (let [exps (:exps top)]
+    (if (or (and (-> exps second not)
+                 (or (-> exps first string?)
+                     (-> exps first number?)
+                     (-> exps first :typ #{:FnCall :FnDef :BinOpSeq}))) ; ToDo: surely more. Doing this backwards!
+            (some #(= :JvarDecl (:typ %)) exps))
+      :CodeBlock
+      :Primary)))
+
 (defrewrite :toplevel [m]
+  (reset! diag m)
   (rad-mapper.rewrite-macros/clear-rewrite!) ; ToDo: Nothing less will suffice! (Though restarting shadow helped!)
-  (let [exps (-> m :top :exps)
-        mm (if (= :CodeBlock|Primary (-> m :top :typ))
-             (if (or (and (-> exps second not)
-                          (or (-> exps first string?)
-                              (-> exps first number?)
-                              (-> exps first :typ #{:FnCall :FnDef :BinOpSeq}))) ; ToDo: surely more. Doing this backwards!
-                     (some #(= :VarDecl (:typ %)) exps))
-               (assoc-in m [:top :typ] :CodeBlock)
-               (assoc-in m [:top :typ] :Primary))
-             m)]
-    (->> mm :top rewrite)))
+  (as-> m ?m
+    (if (= :CodeBlock|Primary (-> ?m :top :typ))
+      (assoc-in ?m [:top :typ] (cb-or-primary? (:top ?m)))
+      ?m)
+    (->> ?m :top rewrite)))
 
 (def ^:dynamic *assume-json-data?* false)
 (def ^:dynamic *inside-let?*  "let is implemented in Primary" false)

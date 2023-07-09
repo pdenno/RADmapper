@@ -123,7 +123,7 @@
 (defnc Editor
   [{:keys [text ext-adds name height] :or {ext-adds #js []}}]
   (let [ed-ref (hooks/use-ref nil)
-        txt (if (string? text) text (or (:success text) (:failure text) ""))
+        txt (if (string? text) text (or (:success text) (:failure text) "")) ; "" for the data-editor, for example.
         view-dom (atom nil)]
     (hooks/use-effect [name]
        (when-let [parent (j/get ed-ref :current)]
