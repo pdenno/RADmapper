@@ -129,6 +129,57 @@
 
 (def threading? "Set in bi/thread and used in defn* macro to decide whether to use the context variable $ or return a partial." (atom false))
 
+;;; ToDo: Promise code here not shown to help.
+(defn deref$
+  "Dereference or set the $ atom.
+   Expressions such as [[1,2,3], [1]].$ will translate to (bi/map-steps-m (deref$))
+   making it advantageous to have a deref that sets the value and returns it.
+   (That expression flattens the list to [1 2 3 1], BTW.)"
+  ([]     (if (p/promise? @$)
+            (p/then @$ #(containerize? %))
+            (containerize? @$)))
+  ([val]  (if (p/promise? @$)
+            (p/then @$ (fn [_] (set-context! (containerize? val))))
+            (set-context! (containerize? val)))))
+
+#_(defmacro defn*
+  "Define two function arities using the body:
+     (1) the ordinary one, that has the usual arguments for the built-in, and,
+     (2) a function where the missing argument will be assumed to be the context variable, $.
+   The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
+   doc-string is required."
+  [fn-name doc-string [& params] & body]
+  (let [param-map (zipmap params (map #(symbol nil (name %)) params))
+        abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
+        abbrv-args (mapv #(if (str/ends-with? (str %) "_") '(deref$) %) (vals param-map))
+        fn-name  (->> fn-name name (symbol nil))
+        fn-name- (gensym fn-name)]
+    (letfn [(rewrite [x]
+              (cond (seq? x)    (map  rewrite x)
+                    (vector? x) (mapv rewrite x)
+                    (map? x)    (reduce-kv (fn [m k v] (assoc m (rewrite k) (rewrite v))) {} x)
+                    :else (get param-map x x)))]
+      `(letfn [(~fn-name- [~@(vals param-map)]
+                (let [res# (do ~@(rewrite body))]
+                  (cond (p/promise? res#)          (-> res#
+                                                       (p/then #(if (seq? %) (doall %) %))
+                                                       (p/catch #(throw (ex-info ~(str fn-name) {:err %}))))
+                        (seq? res#)                (doall res#)
+                        :else                      res#)))]
+         (defn ~fn-name ~doc-string
+           (~abbrv-params
+            (if @threading?
+              (partial ~fn-name- ~@abbrv-params)
+              (if (p/promise? @$)
+                (-> @$ (p/then (fn [_#] (~fn-name- ~@abbrv-args)))) ; This one has a @$ in it somewhere (see above).
+                (~fn-name- ~@abbrv-args)))) ; This one has a @$ in it somewhere (see above).
+           ([~@(vals param-map)]
+            (if (p/promise? @$) ; <========== THIS HAS NOT BEEN SHOWN TO HELP! Keep the implementation below ========================
+              (-> @$ (p/then (fn [_#]
+                               (let [p# (p/all (vector ~@(vals param-map)))]
+                                 (-> p# (p/then (fn [_#] (~fn-name- ~@(vals param-map)))))))))
+              (~fn-name- ~@(vals param-map)))))))))
+
 (defmacro defn*
   "Define two function arities using the body:
      (1) the ordinary one, that has the usual arguments for the built-in, and,
@@ -138,7 +189,7 @@
   [fn-name doc-string [& params] & body]
   (let [param-map (zipmap params (map #(symbol nil (name %)) params))
         abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
-        abbrv-args (mapv #(if (str/ends-with? (str %) "_") '@$ %) (vals param-map))
+        abbrv-args (mapv #(if (str/ends-with? (str %) "_") '(deref$) %) (vals param-map))
         fn-name  (->> fn-name name (symbol nil))
         fn-name- (gensym fn-name)]
     (letfn [(rewrite [x]
@@ -160,6 +211,7 @@
               (~fn-name- ~@abbrv-args))) ; This one has a @$ in it somewhere (see above).
            ([~@(vals param-map)]
             (~fn-name- ~@(vals param-map))))))))
+
 
 (defmacro value-step-m
   [body]

@@ -3,7 +3,7 @@
   (:require
    [clojure.pprint :as pp :refer [cl-format]]
    [clojure.repl :refer [doc]]
-   [clojure.string :as str :refer [index-of]]
+   [clojure.string :as str]
    [clojure.set    :as set]
    [clojure.spec.alpha :as s]
    [rad-mapper.util :as util]
@@ -136,15 +136,15 @@
                                   (if (str/starts-with? in "\\") (subs in 2) (subs in 1))
                                   (str/starts-with? in "/")
                                   (if (str/starts-with? in "\\") (str out "\\" (subs in 1 2)) (str out (subs in 0 1))))))]
-    (when (and base (not (index-of base new-line))) ; Flags are after the closing /
+    (when (and base (not (str/index-of base new-line))) ; Flags are after the closing /
       (let [flags (or (-> (re-matches #"(?s)([imugsy]{1,6}).*" (subs st (count base))) second) "") ; Was (?sm). Does that make sense?
             flag-map (cond-> {}
-                       (index-of flags \i) (assoc :ignore-case? true)
-                       (index-of flags \m) (assoc :multi-line? true)
-                       (index-of flags \u) (assoc :unicode? true)
-                       (index-of flags \g) (assoc :global? true)
-                       (index-of flags \s) (assoc :dot-all? true)
-                       (index-of flags \y) (assoc :sticky? true))]
+                       (str/index-of flags \i) (assoc :ignore-case? true)
+                       (str/index-of flags \m) (assoc :multi-line? true)
+                       (str/index-of flags \u) (assoc :unicode? true)
+                       (str/index-of flags \g) (assoc :global? true)
+                       (str/index-of flags \s) (assoc :dot-all? true)
+                       (str/index-of flags \y) (assoc :sticky? true))]
         {:raw (str base flags)
          :tkn {:typ :RegExp :base base :flags flag-map}}))))
 
@@ -237,8 +237,8 @@
         comment (loop [lines (str/split-lines s)
                        open-count  (if (re-matches o-regex (first lines)) 1 0)
                        close-count (if (re-matches c-regex (first lines)) 1 0)
-                       res (first lines)]
-                  (cond (== open-count close-count)   (subs res 0 (+ (.indexOf  res "*/") 2)) ; Could be all on the first line too.
+                       res (first lines)] ; ToDo Next use of index-of needs investigation; was .indexOf.
+                  (cond (== open-count close-count)   (subs res 0 (+ (or (str/index-of  res "*/") -1) 2)) ; Could be all on the first line too.
                         (-> lines second not)         nil            ; Wasn't all on first line, and ended.  Also, see ToDo above.
                         :else                         (recur (rest lines)
                                                              (if (re-matches o-regex (second lines)) (inc  open-count) open-count)
@@ -380,7 +380,7 @@
           lines (str/split-lines raw)
           ws-before (->> ws str/split-lines last count)
           has-newline? (second lines) ; Means it is a StringLit.
-          ws-newline? (index-of ws "\n")
+          ws-newline? (str/index-of ws "\n")
           len (-> lines last count)]
       {:lines-before (->> ws (re-seq #"\n") count)
        :lines-after (if has-newline? (count (re-seq #"\n" raw)) 0)
@@ -532,11 +532,11 @@
 (defn find-token
   "Return position if tkn is found within the item (before semicolon)."
   [tvec tkn & {:keys [stop-tokens stop-pos]}]
-  (when (not-empty tvec)
-    (let [stop-pos (or stop-pos (->> (map #(.indexOf tvec %) stop-tokens) (apply max)))
+  (when (not-empty tvec) ; index-of
+    (let [stop-pos (or stop-pos (->> (map #(util/has-index tvec %) stop-tokens) (apply max)))
           stop-pos (if (pos? stop-pos) stop-pos (count tvec)) ; In testing, might not have full item; not stop.
-          tkn-pos  (.indexOf tvec tkn)]
-      (cond (== tkn-pos  -1) nil,
+          tkn-pos  (util/has-index tvec tkn)]
+      (cond (== -1 tkn-pos) nil,
             (and (pos? stop-pos) (< stop-pos tkn-pos)) nil,
             :else tkn-pos))))
 

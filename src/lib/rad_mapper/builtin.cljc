@@ -46,7 +46,7 @@
    [sci.core                        :as sci]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
    [rad-mapper.builtin-macros       :as bim
-    :refer [$ $$ set-context! defn* value-step-m primary-m init-step-m map-step-m
+    :refer [$ $$ set-context! defn* value-step-m primary-m init-step-m map-step-m deref$
             threading? jflatten containerize containerize? container? flatten-except-json]]) ; threading? introduced in rewritten code.
   #?(:cljs (:require-macros [rad-mapper.builtin-macros]
                             [promesa.core :refer [loop]])) ; ToDo: probably not necessary.
@@ -133,14 +133,6 @@
                   (p/promise? obj)        (util/await-promise obj)
                   :else                   obj))]
     (-> obj fin jflatten)))
-
-(defn deref$
-  "Dereference the $ atom.
-   Expressions such as [[1,2,3], [1]].$ will translate to (bi/run-steps [[1 2 3] [1]] (deref bi/$))
-   making it advantageous to have a deref that sets the value and returns it."
-  ([] (containerize? @$))
-  ([val] ; ToDo: Is this one ever used?
-   (set-context! (containerize? val))))
 
 ;;;========================= JSONata built-ins  =========================================
 (defn add      "plus"   [x y] (+ x y))
@@ -258,6 +250,38 @@
         will be queried for selection. [This rule has nothing to do with filtering!]"
   [pred|ix-fn]
   (-> (fn filter-step [obj prior-step]
+        (letfn [(internal [obj]
+                  (let [prix (try (pred|ix-fn @$) (catch #?(:clj Exception :cljs :default) _e nil))
+                        ob (if (= :bi/get-step (:bi/prior-step-type prior-step))
+                             (let [k (:bi/attr prior-step)] ; non-compositional semantics
+                               (if (vector? obj)
+                                 (cmap #(get % k) (containerize obj))
+                                 (get obj k)))
+                             obj)]
+                    (if (number? prix)   ; Array behavior. Caller will map over it.
+                      (let [ix (-> prix Math/floor int) ; Really! I checked!
+                            m (meta obj)]
+                        (if (or (:bi/json-array? m) (:bi/b-set? m))
+                          (aref ob ix)
+                          (-> (cmap #(aref % ix) ob) jflatten)))
+                      (as-> ob ?o          ; Filter behavior.
+                        (singlize ?o)
+                        (-> (filterv #(binding [$ (atom %)] (pred|ix-fn %)) ?o) containerize?)))))]
+          (if (p/promise? obj)
+            (-> obj (p/then #(internal %)))
+            (internal obj))))
+      (with-meta {:bi/step-type :bi/filter-step})))
+
+#_(defn filter-step
+  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
+    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
+        then it is treated as a predicate.
+    (2) See aref below.
+    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
+        If the array contains objects, and the location path selects fields within these objects, then each object within the array
+        will be queried for selection. [This rule has nothing to do with filtering!]"
+  [pred|ix-fn]
+  (-> (fn filter-step [obj prior-step]
         (let [prix (try (pred|ix-fn @$) (catch #?(:clj Exception :cljs :default) _e nil))
               ob (if (= :bi/get-step (:bi/prior-step-type prior-step))
                    (let [k (:bi/attr prior-step)] ; non-compositional semantics
@@ -275,6 +299,7 @@
               (singlize ?o)
               (-> (filterv #(binding [$ (atom %)] (pred|ix-fn %)) ?o) containerize?)))))
       (with-meta {:bi/step-type :bi/filter-step})))
+
 
 (defn get-step
   "Perform the mapping activity of the 'a' in $.a, for example.
@@ -438,9 +463,23 @@
    If it is a regex, the function will return true if the regex matches the contents of str."
   [s_ pat]
   (s/assert ::string s_)
-  (if (util/regex? pat)
-    (if (re-find pat s_) true false)
-    (if (index-of s_ pat) true false)))
+  (reset! diag {:s s_ :pat pat})
+  (if (p/promise? s_)
+    (-> s_
+        (p/then #(if (util/regex? pat)
+                  (if (re-find pat %) true false)
+                  (if (index-of % pat) true false))))
+    (if (util/regex? pat)
+      (if (re-find pat s_) true false)
+      (if (index-of s_ pat) true false))))
+
+#_(defn $contains
+  ([pat] ($contains @$ pat))
+  ([s_ pat]
+   (reset! diag {:s s_ :pat pat})
+   (if (util/regex? pat)
+     (if (re-find pat s_) true false)
+     (if (index-of s_ pat) true false))))
 
 ;;; $decodeUrl
 (defn* $decodeUrl
@@ -469,24 +508,6 @@
   [s_]
   (s/assert ::string s_)
   (url/url-encode s_))
-
-;;; $eval
-#?(:clj
-(defn $eval
-  ([]  (partial $eval))
-  ([s] ($eval s @$))
-  ([s context]
-   (s/assert ::string s)
-   (let [rewrite (ns-resolve 'rad-mapper.rewrite 'processRM)
-         form (rewrite :ptag/exp s :rewrite? true)]
-     (binding [*ns* (find-ns 'user)]
-       (try
-         (reset-env context)
-         (let [res (eval form)]
-           (if (and (fn? res) (= :bi/primary (-> res meta :bi/step-type)))
-             (jflatten (res))
-             (jflatten res)))
-         (catch Throwable e (str "$eval failed:" (.getMessage e)))))))))
 
 ;;; $join
 (defn $join
@@ -1656,6 +1677,10 @@
        (catch #?(:clj Throwable :cljs :default) e
          (ex-info "compile-rm: Did not compile!" {:src src :err e}))))
 
+(defn $eval
+  [src]
+  (compile-rm src))
+
 (defn $get
   "Read a file of JSON or XML, creating a map."
   ([x] ($get x nil))
@@ -2129,7 +2154,7 @@
   (let [known-key? (set key-order)]
     (letfn [(compar [k1 k2]
               (if (and (known-key? k1) (known-key? k2))
-                (< (.indexOf key-order k1) (.indexOf key-order k2))
+                (< (index-of key-order k1) (index-of key-order k2))
                 (compare (str k1) (str k2)))) ; ToDo: See notes 2023-01-09 about symbols as keys.
             (ek-vec? [obj]
               (and (vector? obj)
@@ -2945,16 +2970,16 @@ answer 2:
   [m]
   (letfn [(compare-names [ns x y]
             (if-let [v (get name-order ns)]
-              (let [xi (as-> (.indexOf v x) ?i (if (neg? ?i) nil ?i))
-                    yi (as-> (.indexOf v y) ?i (if (neg? ?i) nil ?i))]
+              (let [xi (as-> (index-of v x) ?i (if (neg? ?i) nil ?i))
+                    yi (as-> (index-of v y) ?i (if (neg? ?i) nil ?i))]
                 (cond (and xi yi)  (if (< xi yi) -1 +1)
                       xi           -1
                       yi           +1
                       :else        (compare x y)))
               (compare x y)))
           (compare-namespaces [x y]
-              (let [xi (as-> (.indexOf ns-order x) ?i (if (neg? ?i) nil ?i))
-                    yi (as-> (.indexOf ns-order y) ?i (if (neg? ?i) nil ?i))]
+              (let [xi (as-> (index-of ns-order x) ?i (if (neg? ?i) nil ?i))
+                    yi (as-> (index-of ns-order y) ?i (if (neg? ?i) nil ?i))]
                 (cond (and xi yi)  (if (< xi yi) -1 +1)
                       xi           -1
                       yi           +1

@@ -10,9 +10,32 @@
 
 ;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
-  [{:name "Try (11): LLM match"
+  [{:name "(1) The files"
+    :code "$get(['list_id', 'cct_bie'], ['list_content']).list_content[$contains('elena')]"}
+
+   {:name "(2): Differences"
     :code
    "(
+  $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
+  $schema2   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
+  $pcQuery   := $get(['library_fn', 'schemaParentChild'],['fn_exe']).fn_exe;
+  $rootQuery := $get(['library_fn', 'schemaRoots'],['fn_exe']).fn_exe;
+  $shape     := $get(['library_fn', 'schemaShape'],['fn_exe']).fn_exe;
+
+  $schema1PC    := $pcQuery($schema1);     // Get parent-child relationships of each schema.
+  $schema2PC    := $pcQuery($schema2);
+  $schema1Roots := $rootQuery($schema1);   // Get root elements of each schema.
+  $schema2Roots := $rootQuery($schema2);
+
+  {'shape 1' : $shape($schema1Roots.?name[0], $schema1PC), // Show shapes
+   'shape 2' : $shape($schema2Roots.?name[0], $schema2PC)}
+)"}
+
+   {:name "(3): LLM match 1->2"
+    :code
+    "// There is sometimes a in the (few-shot/untrained) $llmMatch we'll generate here.
+
+     (
   $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
   $schema2   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
   $pcQuery   := $get(['library_fn', 'schemaParentChild'],['fn_exe']).fn_exe;
@@ -27,6 +50,10 @@
   $llmMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
             $shape($schema2Roots.?name[0], $schema2PC)) // Call $llmMatch to do shape matching
 )"}
+
+
+   {:name "(4) Get the validated invoice-match-1->2"
+    :code "$get(['library_fn', 'invoice-match-1->2'], ['fn_src']).fn_src ~> $eval()"}
 
    {:name "Uses of $get"
     :code

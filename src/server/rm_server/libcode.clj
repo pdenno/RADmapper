@@ -34,4 +34,27 @@
                                                       $p,
                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<data>')}) },
                                             {})})"
-    :fn_doc "Return the schema shape (nesting structure of elements) as used by $llmMatch"}])
+    :fn_doc "Return the schema shape (nesting structure of elements) as used by $llmMatch"}
+
+   {:fn_name "invoice-match-1->2"
+    :fn_src
+"// Here we assume that we validates the $llmMatch result, and stored it as this.
+
+ {'ProcessInvoice':
+  {'ApplicationArea': {'CreationDateTime': 'ProcessInvoice.ApplicationArea.CreationDateTime'},
+   'Process'        :  '<replace-me>',
+   'DataArea'       : {'Invoice':
+                        {'InvoiceLine':
+                         {'BuyerParty':
+                            {'Location' : {'Address'  : {'BuildingNumber':  {'extract-from': 'ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine',
+                                                                             'value'       : 'BuildingNumber'},
+                                                         'CityName'      :  {'extract-from': 'ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine',
+                                                                             'value'       : 'CityName'},
+                                                         'CountryCode'   :  '<replace-me>',
+                                                         'PostalCode'    :  {'extract-from': 'ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine',
+                                                                             'value'       : 'PostalCode'},
+                                                         'StreetName'    :  {'extract-from': 'ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine',
+                                                                             'value'       : 'StreetName'}}},
+                             'TaxIDSet' : {'ID': '<replace-me>'}}},
+                         'Item'                  : {'ManufacturingParty': {'Name': '<replace-me>'}},
+                         'PurchaseOrderReference': {'ID': 'ProcessInvoice.DataArea.Invoice.InvoiceHeader.PurchaseOrderReference.ID'}}}}}"}])

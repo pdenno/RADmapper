@@ -24,6 +24,14 @@
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
+;;; ToDo: Useless; use .indexOf
+(defn has-index [v elem]
+  (let [len (count v)]
+    (loop [ix 0]
+      (cond (>= ix len) -1
+            (= elem (nth v ix)) ix
+            :else (recur (inc ix))))))
+
 (defn exception?
   [x]
   #?(:clj  (instance? clojure.lang.ExceptionInfo x)
