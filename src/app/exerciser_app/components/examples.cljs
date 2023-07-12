@@ -10,7 +10,15 @@
 
 ;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
-  [{:name "(1) The files"
+  [{:name "Instance files"
+    :code
+"(
+  $data := $get(['library_fn', 'bie-1-message'], ['fn_src']).fn_src ~> $eval();
+  $mappingFn := $get(['library_fn', 'invoice-match-1->2-fn'], ['fn_src']).fn_src ~> $eval();
+  $mappingFn($data)
+)"}
+
+   {:name "(1) The files"
     :code "$get(['list_id', 'cct_bie'], ['list_content']).list_content[$contains('elena')]"}
 
    {:name "(2): Differences"
@@ -33,9 +41,9 @@
 
    {:name "(3): LLM match 1->2"
     :code
-    "// There is sometimes a in the (few-shot/untrained) $llmMatch we'll generate here.
+    "// Call $llmMatch to generate the mapping function. Note use of {'as-fn?' true} in the call.
 
-     (
+(
   $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
   $schema2   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
   $pcQuery   := $get(['library_fn', 'schemaParentChild'],['fn_exe']).fn_exe;
@@ -48,7 +56,8 @@
   $schema2Roots := $rootQuery($schema2);
 
   $llmMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
-            $shape($schema2Roots.?name[0], $schema2PC)) // Call $llmMatch to do shape matching
+            $shape($schema2Roots.?name[0], $schema2PC), // Call $llmMatch to do shape matching
+            {'as-fn?' : true})
 )"}
 
 

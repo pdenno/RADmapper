@@ -1239,7 +1239,7 @@
     (assoc ?ps :result {:typ :KeyExp
                         :qvar (recall ?ps :qvar)})))
 
-;;; The next four 'options' rules are just for query and express keyword parameters (so far).
+;;; The next four 'options' rules are just for query and express keyword parameters, $llmMatch, and $llmExtact (so far).
 (s/def ::OptionsMap (s/keys :req-un [::kv-pairs]))
 ;;; <options-struct> '<|' <options-kv-pair>* '|>'
 (defparse :ptag/options-map
@@ -1258,7 +1258,7 @@
     (eat-token ?ps \:)
     (parse :ptag/option-val ?ps)
     (store ?ps :val)
-    (assoc ?ps :result {:typ :OptionKeywordPair
+    (assoc ?ps :result {:typ :kv-pair
                         :key (recall ?ps :key)
                         :val (recall ?ps :val)})))
 

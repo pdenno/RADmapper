@@ -317,7 +317,7 @@
 
 (defrewrite :OptionsMap [m]
   (-> (reduce (fn [res pair]
-                (assoc res (-> pair :key keyword) (-> pair :val rewrite)))
+                (assoc res (-> pair :key rewrite keyword) (-> pair :val rewrite)))
               {}
               (:kv-pairs m))
       (with-meta {:bi/options? true})))

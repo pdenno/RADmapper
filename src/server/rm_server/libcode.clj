@@ -1,5 +1,7 @@
 (ns rm-server.libcode
-  "A collection of library functions to be pre-loaded into the codelib DB.")
+  "A collection of library functions to be pre-loaded into the codelib DB."
+  (:require
+   [rad-mapper.builtin :as bi]))
 
 (def library-code
   [{:fn_name "addOne"
@@ -36,9 +38,9 @@
                                             {})})"
     :fn_doc "Return the schema shape (nesting structure of elements) as used by $llmMatch"}
 
-   {:fn_name "invoice-match-1->2"
+   {:fn_name "invoice-match-1->2-pattern"
     :fn_src
-"// Here we assume that we validates the $llmMatch result, and stored it as this.
+"// Here we assume that we validated the $llmMatch result, and stored it as this.
 
  {'ProcessInvoice':
   {'ApplicationArea': {'CreationDateTime': 'ProcessInvoice.ApplicationArea.CreationDateTime'},
@@ -57,4 +59,34 @@
                                                                              'value'       : 'StreetName'}}},
                              'TaxIDSet' : {'ID': '<replace-me>'}}},
                          'Item'                  : {'ManufacturingParty': {'Name': '<replace-me>'}},
-                         'PurchaseOrderReference': {'ID': 'ProcessInvoice.DataArea.Invoice.InvoiceHeader.PurchaseOrderReference.ID'}}}}}"}])
+                         'PurchaseOrderReference': {'ID': 'ProcessInvoice.DataArea.Invoice.InvoiceHeader.PurchaseOrderReference.ID'}}}}}"}
+
+   {:fn_name "invoice-match-1->2-fn"
+    :fn_src
+    "// Here we assume that we validated the $llmMatch result, and stored it as this.
+
+function($data){
+ {'ProcessInvoice':
+  {'DataArea':
+    {'ApplicationArea':
+      {'CreationDateTime': $data.ProcessInvoice.ApplicationArea.CreationDateTime},
+      'Invoice'        :
+      {'InvoiceLine':
+        {'BuyerParty':
+          {'Location':
+            {'Address':
+              {'BuildingNumber' :   $llmExtract($data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine, 'BuildingNumber'),
+                'CityName'      :   $llmExtract($data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine, 'CityName'),
+                'PostalCode'    :   $llmExtract($data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine, 'PostalCode'),
+                'StreetName'    :   $llmExtract($data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.AddressLine, 'StreetName')}},
+            'TaxIDSet': {'ID': $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.TaxIDSet.ID}},
+          'Item' : {'ManufacturingParty': {'Name': $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.Item.ManufacturingParty.Name}},
+          'PurchaseOrderReference': {'ID': $data.ProcessInvoice.DataArea.Invoice.InvoiceHeader.PurchaseOrderReference.ID}},
+        'Process' : $data.ProcessInvoice.DataArea.Process}}}}
+  }"}
+
+   {:fn_name "bie-1-message"
+    :fn_src (-> "data/testing/json-for-bie/schema1.json" (bi/read-local  {}) bi/pprint-obj)}
+
+   {:fn_name "bie-2-message"
+    :fn_src (-> "data/testing/json-for-bie/schema2.json" (bi/read-local  {}) bi/pprint-obj)}])

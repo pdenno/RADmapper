@@ -2455,133 +2455,13 @@
   [m k f]
   (update m k f))
 
-;;; https://platform.openai.com/docs/guides/chat/introduction
-(def llm-match-instructions
+#_(def llm-match-instructions
   "A prompt for an LLM to produce a solution for reconciling information in two EDN structures.
    See (1) Wei et al. 'Chain-of-Thought Prompting Elicits Reasoning in Large Language Models'
            https://arxiv.org/abs/2201.11903
        (2) Shizhe Diao et al., 'Active Prompting with Chain-of-Thought for Large Language Models',
            http://arxiv.org/abs/2302.12246"
-
-;;; 1416 tokens! Careful about trailing blanks!
-  "Wherever you can, replace each <replace-me> in the target_form with path information from the source_form.
-Both source_form and target_form are Clojure maps.
-Because the structure of the source_form does not match that of the target_form perfectly, you should do the following to make things work:
-
-(1) If a target_form field appears to concern multiple source_form fields, give that target_form field a value that is a map with key :concat, the value of which is a vector of all the source form paths that it concerns.
-
-For example, if source_form has specific data fields SrcOrder.AddressInfo.Company, SrcOrder.AddressInfo.StreetAddress and SrcOrder.AddressInfo.BuildingName, but the target_form has only has a general field TarOrderForm.Customer.AddressLine1,
-:concat might used to accommodate all three of those data fields from the source_form. For example:
-##
-source_form:
-{:SrcOrder
- {:AddressInfo
-   :Company \"<data>\"
-   :StreetAddress  \"<data>\"
-   :BuildingName \"<data>\"}}
-
-target_form (answer):
-{:OrderForm
-  {:Customer
-    :AddressLine1 {:concat [\"SrcOrder.AddressInfo.Company\", \"SrcOrder.AddressInfo.StreetAddress\" \"SrcOrder.AddressInfo.BuildingNumber\"]}}}
-##
-(2) Conversely, if source_form has a field that might concerns many target_form fields, give each of those target_form fields
-values that represent extracting the specific target data needed from the more general field.
-Here, use a map containing two key :extract-from and :value. :extract-from is a string describing the path to the source data.
-:value names the type of data you expect to be able to extract. For example:
-##
-source_form:
-{:SrcOrder
- {:CustomerAddress
-  :AddressLine1 \"<data>\"}}
-
-target_form (answer):
-{:OrderInfo
- {:BuyerAddress
-  {:Company {:extract-from \"SrcOrder.CustomerAddress.AddfessLine1\" :value :Company},
-   :Street {:extract-from \"SrcOrder.CustomerAddress.AddressLine1\" :value :Street},
-   :BuildingName {:extract-from \"SrcOrder.CustomerAddress.AddressLine1\" :value BuildingName}}}}
-##
-(3) If there is nothing in source_form that seems to match the needed information in target_form,
-just leave the value \"<replace-me>\" in target_form.
-
-Some examples:
-
-source_form 1:
-{:SrcInvoice
- {:InvoiceLine
-  {:Buyer
-   {:Location
-    {:Address
-     {:CompanyName \"<data>\"
-      :Street \"<data>\"
-      :BuildingNumber \"<data>\"
-      :City \"<data>\"
-      :State \"<data>\"
-      :ZipCode \"<data>\"}}
-    :TaxID \"<data>\"}}}}
-
-target_form 1:
-{:Invoice
- {:InvoiceLine
-  {:BuyerParty
-   {:Location
-    {:Address
-     {:AddressLine1 \"<replace-me>\"
-      :City \"<replace-me>\"
-      :State \"<replace-me>\"
-      :PostalCode \"<replace-me>\"}}}}}}
-
-answer 1:
-{:Invoice
- {:InvoiceLine
-  {:BuyerParty
-   {:Location
-    {:Address
-     {:AddressLine1 {:concat [\"SrcInvoice.InvoiceLine.Buyer.Location.Address.CompanyName\" \"SrcInvoice.InvoiceLine.Buyer.Location.Address.Street\"  \"SrcInvoice.InvoiceLine.Buyer.Location.Address.BuildingNumber\"]}
-      :City \"SrcInvoice.InvoiceLine.Buyer.Location.Address.City\"
-      :State \"SrcInvoice.InvoiceLine.Buyer.Location.Address.State\"
-      :PostalCode \"SrcInvoice.InvoiceLine.Buyer.Location.Address.ZipCode\" }}}}}}
-###
-source_form 2:
-{:SrcInvoice
- {:InvoiceLine
-  {:Customer
-   {:Location
-    {:Address
-     {:AddressLine \"<data>\"
-      :City \"<data>\"
-      :State \"<data>\"
-      :PostalCode \"<data>\"}}}}}}
-
-target_form 2:
-{:Invoice
- {:InvoiceLine
-  {:Buyer
-   {:Location
-    {:Address
-     {:CompanyName \"<replace-me>\"
-      :Street \"<replace-me>\"
-      :BuildingNumber \"<replace-me>\"
-      :City \"<replace-me>\"
-      :State \"<replace-me>\"
-      :ZipCode \"<replace-me>\"}}}
-    :TaxID \"<replace-me>\"}}}}
-
-answer 2:
-{:Invoice
- {:InvoiceLine
-  {:Buyer
-   {:Location
-    {:Address
-     {:CompanyName    {:extract-from \"SrcInvoice.InvoiceLine.Customer.Location.Address.AddressLine\" :value :CompanyName}
-      :Street         {:extract-from \"SrcInvoice.InvoiceLine.Customer.Location.Address.AddressLine\" :value :Street}
-      :BuildingNumber {:extract-from \"SrcInvoice.InvoiceLine.Customer.Location.Address.AddressLine\" :value :BuildingNumber}
-      :City \"SrcInvoice.InvoiceLine.Customer.Location.Address.City\"
-      :State \"SrcInvoice.InvoiceLine.Customer.Location.Address.State\"
-      :ZipCode  \"SrcInvoice.InvoiceLine.Customer.Location.Address.PostalCode\"}}}
-    :TaxID \"<replace-me>\"}}}
-###")
+  (str llm-match-system-part llm-match-example-part))
 
 
 ;;; ToDo: Make keys go back two steps.
@@ -2605,51 +2485,255 @@ answer 2:
     (smp obj)))
 
 
-(defn sort-maps [obj]
-  (if (map? obj)
-    (into (sorted-map) (reduce-kv (fn [m k v] (assoc m k (sort-maps v))) {} obj))
-    obj))
+(def llm-match-system-part
+;;; 1416 tokens! Careful about trailing blanks!
+  "Wherever you can, replace each <replace-me> in the target_form with similar information from the source_form.
+Both source_form and target_form are Clojure maps.
+Because data in source_form does not match data in target_form perfectly, you should do the following to make things work:
 
-;;; 2023-07-08 Concatenating "Src" on the name of the top-level element appears to help with concat. Nothing is helping with :extract-from!
+(1) If a target_form fields combines data from multiple source_form fields, give that target_form field a value consisting of one field :concat, the value of which is a vector of the field names.
+
+For example, if source_form has specific data fields Company, StreetAddress and BuildingName, but the target_form has only has a general field :AddressLine1,
+it might used to accommodate all three of those data fields from the source_form:
+##
+source_fields:
+ :Company \"<company-name-data>\"
+ :StreetAddress  \"<street-address-data>\"
+ :BuildingName \"<building-name-data>\"
+
+answer:
+ :AddressLine1 {:concat [\"<company-name-data>\" \"<street-address-data>\" \"<building-name-data>\"]}
+##
+(2) Conversely, if source_form has a general field that might contain information for more specific target_form fields, give each of those target_form fields
+values that represent extracting the specific data from the more general field as shown:
+##
+source_field:
+ :AddressLine1 \"<address-line-1-data>\"
+
+answer:
+ :Company {:extract-from \"<address-line-1-data>\" :value :Company},
+ :Street {:extract-from  \"<address-line-1-data>\" :value :Street},
+ :BuildingName {:extract-from \"<address-line-1-data>\" :value :Building Name}
+##
+(3) If there is nothing in source_form that seems to match the needed information in target_form,
+just leave the value \"<replace-me>\" in target_form.\n")
+
+(def llm-match-example-part
+
+"\nSome examples:
+
+source_form 1:
+{:Invoice
+ {:InvoiceLine
+  {:Buyer
+   {:Location
+    {:Address
+     {:CompanyName \"<company-name-data>\"
+      :Street \"<street-data>\"
+      :BuildingNumber \"<building-number-data>\"
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :ZipCode \"<zip-code-data>\"}}
+    :TaxID \"<tax-id-data>\"}}}}
+
+target_form 1:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:AddressLine1 \"<replace-me>\"
+      :City \"<replace-me>\"
+      :State \"<replace-me>\"
+      :PostalCode \"<replace-me>\"}}}}}}
+
+answer 1:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:AddressLine1 {:concat [\"<company-name-data>\" \"<street-data>\" \"<building-number-data>\"]}
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :PostalCode  \"<zip-code-data>\"}}}}}}
+###
+source_form 2:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:AddressLine1 \"<address-line-1-data>\"
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :PostalCode \"<postal-code-data>\"}}}}}}
+
+target_form 2:
+{:Invoice
+ {:InvoiceLine
+  {:Buyer
+   {:Location
+    {:Address
+     {:CompanyName \"<replace-me>\"
+      :Street \"<replace-me>\"
+      :BuildingNumber \"<replace-me>\"
+      :City \"<replace-me>\"
+      :State \"<replace-me>\"
+      :ZipCode \"<replace-me>\"}}
+    :TaxID \"<replace-me>\"}}}}
+
+answer 2:
+{:Invoice
+ {:InvoiceLine
+  {:BuyerParty
+   {:Location
+    {:Address
+     {:CompanyName {:extract-from \"<address-line-1-data>\" :value :CompanyName}
+      :Street {:extract-from \"<address-line-1-data>\" :value :Street}
+      :BuildingNumber {:extract-from \"<address-line-1-data>\" :value :BuildingNumber}
+      :City \"<city-data>\"
+      :State \"<state-data>\"
+      :ZipCode  \"<postal-code-data>\"}}
+    :TaxID \"<replace-me>\"}}}}
+###")
+
+(def llm-match-instructions
+  "A prompt for an LLM to produce a solution for reconciling information in two EDN structures.
+   See (1) Wei et al. 'Chain-of-Thought Prompting Elicits Reasoning in Large Language Models'
+           https://arxiv.org/abs/2201.11903
+       (2) Shizhe Diao et al., 'Active Prompting with Chain-of-Thought for Large Language Models',
+           http://arxiv.org/abs/2302.12246"
+  (str llm-match-system-part llm-match-example-part))
+
+;;; ToDo: Make keys go back two steps.
+#?(:clj
+(defn llm-match-pre
+  "Create a Clojure map like used in the $llmMatch prompt. Specifically
+      - for the source replace '<data>' with a <a-unique-kebab-case-name-for-this-data>
+      - for the target replace '<data>' with '<replace-me>'."
+  [obj replace-me?]
+  (let [used-data (atom [])]
+    (letfn [(next-unused [s]
+              (if (some #(= % s) @used-data)
+                (let [[_ root num] (re-matches #"^<([^_]+)(_\d)?>$" s)
+                      next-num (if num (-> num (subs 1) read-string inc) 1)
+                      new-name (str "<" root "_" next-num ">")]
+                  (swap! used-data conj new-name)
+                  new-name)
+                (do (swap! used-data conj s) s)))
+            ;; The main function here.
+            (smp [obj]
+              (cond (map? obj)     (reduce-kv
+                                    (fn [m k v] (assoc m (keyword k) (if (string? v)
+                                                                       (if replace-me?
+                                                                         "<replace-me>"
+                                                                         (next-unused (str "<" (csk/->kebab-case-string k) "-data>")))
+                                                                       (smp v))))
+                                    {} obj)
+                    (vector? obj)  (mapv smp obj)
+                    :else          obj))]
+      (smp obj)))))
+
+#?(:clj
 (defn llm-match-string
   "Return the full string for matching."
   [src tar]
-  (let [src3 (with-out-str
-               (-> src
-                   (update-keys #(str "Src" %))
-                   (update-keys keyword)
-                   (llm-match-pre false)
-                   sort-maps
-                   pprint))
-        tar3 (with-out-str
-               (-> tar
-                   (update-keys keyword)
-                   (llm-match-pre true)
-                   sort-maps
-                   pprint))]
-    (str llm-match-instructions "\n\n"
+  (let [src3 (with-out-str (pprint src))
+        tar3 (with-out-str (pprint tar))]
+    (str llm-match-example-part "\n\n"
          "source_form 3:\n" src3 "\n\n"
          "target_form 3:\n" tar3 "\n\n"
-         "answer 3:\n")))
+         "answer 3:\n"))))
 
+(declare match-postprocess)
 #?(:clj
 (defn $llmMatch
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
-  [src tar]
-  (log/info "$llmMatch on server")
-  (let [q-str (llm-match-string src tar)]
-    (swap! diag #(-> % (assoc :q-str q-str) (assoc :src src) (assoc :tar tar)))
-       (if-let [key (get-api-key :llm)]
-         (try (let [res (-> (openai/create-chat-completion {:model #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"  ; <=============== Try this
-                                                            :api-key key
-                                                            :messages [{:role "user" :content q-str}]})
-                            :choices first :message :content)]
-                (-> res read-string))
-              (catch Throwable e
-                (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
-         (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
+  ([src tar] ($llmMatch src tar {}))
+  ([src tar opts]
+   (log/info "$llmMatch on server")
+   (let [src (llm-match-pre src false)
+        tar (llm-match-pre tar true)
+         q-str (llm-match-string src tar)]
+     (reset! diag {:q-str q-str :src src :tar tar})
+     (if-let [key (get-api-key :llm)]
+       (try (let [res (-> (openai/create-chat-completion {:model  #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"
+                                                          :api-key key
+                                                          :messages [{:role "system" :content llm-match-system-part}
+                                                                     {:role "user" :content q-str}]})
+                          :choices first :message :content)]
+              (swap! diag #(assoc % :raw-res res))
+              (-> res read-string (match-postprocess opts src)))
+            (catch Throwable e
+              (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
+       (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))
+
+(declare pprint-obj)
+;;; ToDo: This currently assumes every string but '<replace-me>' is a source path.
+#?(:clj
+(defn match-post-as-fn
+  "Return a map containing a key 'fn_src' that is the $llmMatch result expressed as a pretty-printed function.
+    - Where the argument object has an {:extract-from object}, replace this with a call to $llmExtract.
+    - Where the argument object has a  {:concat object} replace this with the concatenation (&) of the expressions."
+  [obj]
+  (letfn [(maf [obj]
+            (cond (and (map? obj)
+                       (some #(= :extract-from %) (keys obj))) {:bi/literal-exp
+                                                                (cl-format nil "$llmExtract(~A, '~A')"
+                                                                           (-> obj :extract-from :bi/literal-exp)
+                                                                           (-> obj :value name))}
+                  (and (map? obj)
+                       (some #(= :concat %)       (keys obj))) {:bi/literal-exp
+                                                                (cl-format nil "~{~A ~^& ~}" (map :bi/literal-exp (:concat obj)))}
+
+                  (map? obj)                      (reduce-kv (fn [m k v] (assoc m k (maf v))) {} obj)
+                  (vector? obj)                   (mapv maf obj)
+                  :else                           obj))]
+    {"'fn_src'" (->> obj maf pprint-obj (cl-format nil "function($data){~%~A~%}"))})))
+
+;;; (bi/match-post-paths bi/src "<name-data>")
+#?(:clj
+(defn path-to
+  "Return the llmMatch result string values '<strings-like-this>'
+   replaced with the path to that string in the the src."
+  [src seek]
+  (let [path (atom [])
+        result (atom nil)]
+    (letfn [(search [obj]
+              (cond @result        @result
+                    (= seek obj)   (reset! result @path)
+                    (map? obj)     (doseq [[k v] (seq obj)]
+                                     (cond (= seek v) (reset! result (swap! path conj k))
+                                           (map? v) (do (swap! path conj k)
+                                                        (search v)
+                                                        (swap! path #(-> % butlast vec)))))))]
+      (doall (search src))
+      @result))))
+
+#?(:clj
+(defn match-post-set-paths
+  "Return the llmMatch result string values '<strings-like-this>' replaced with
+   the path to that string in the the src."
+  [res src]
+  (letfn [(mpp [obj]
+            (cond (map? obj)                            (reduce-kv (fn [m k v] (assoc m k (mpp v))) {} obj)
+                  (vector? obj)                         (mapv mpp obj)
+                  (and (string? obj)
+                       (re-matches #"^<[^>]+>$" obj))   (if-let [p (path-to src obj)]
+                                                          {:bi/literal-exp (apply str "$data." (->> p (map name)  (interpose ".")))}
+                                                          obj) ; Probably '<replace-me>'
+                  :else obj))]
+    (mpp res))))
+
+#?(:clj
+(defn match-postprocess
+  [res opts src]
+  (cond->  res
+    true           (match-post-set-paths src)
+    (:as-fn? opts)  match-post-as-fn)))
 
  #?(:cljs
 (defn $llmMatch
@@ -2668,6 +2752,8 @@ answer 2:
                             (p/rejected (ex-info "CLJS-AJAX error on /api/llm-match" {:status status :status-text status-text})))})
     (log/info "$llmMatch returns promise" prom)
     prom)))
+
+;;;===========================================================================================================
 
 (defn llm-extract-prompt
   "Create a few-shot prompt for extracting particular information from a text field."
@@ -3016,7 +3102,8 @@ answer 2:
   - width is column beyond which print should not appear."
   [obj indent width]
   (cond (empty? obj) "{}",
-        (= obj {"db_connection" "_rm_schema-db"}) "<<connection>>",
+        (= obj {"db_connection" "_rm_schema-db"})    "<<connection>>",
+        (= :bi/literal-exp (-> obj keys first))      (:bi/literal-exp obj)
         :else (let [kv-pairs (reduce-kv (fn [m k v] ; Here we get the 'dense' size; later calculate a new rest-start
                                           (let [kk (pprint-obj k :width width)
                                                 vv (pprint-obj v :width width)]
