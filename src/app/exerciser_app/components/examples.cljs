@@ -10,7 +10,7 @@
 
 ;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
-  [#_{:name "(1) Full mapping"
+  [{:name "(1) Full mapping"
     :code
 "(
   $data := $get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval();
@@ -18,13 +18,13 @@
   $mappingFn($data)
 )"}
 
-   #_{:name "(2) Look at data"
+   {:name "(2) Look at data"
     :code "$get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval()"}
 
-   #_{:name "(3) Look at mapping fn"
+   {:name "(3) Look at mapping fn"
     :code "$get(['library_fn', 'invoice-match-1->2-fn'], ['fn_src']).fn_src"}
 
-   #_{:name "(4): Shapes"
+   {:name "(4): Shapes"
     :code
    "(
   $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
