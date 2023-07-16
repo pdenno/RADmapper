@@ -63,6 +63,9 @@
                java.time.ZoneId
                java.time.ZoneOffset)))
 
+;;; Notes:
+;;;  * Generally speaking, we don't catch or p/catch in this file execpt at pprint-top.
+
 (declare aref)
 
 (def diag (atom {}))
@@ -107,11 +110,11 @@
 
 (defn reset-env
   "Clean things up just prior to running user code."
-  ([] (reset-env nil))
+  ([] (reset-env :bi/unset-ctx-var))
   ([context]
    (set-context! context)
    (reset! now nil) ; Don't set time until it is asked for (with $now() or $millis()).
-   (reset! $$ :bi/unset)))
+   (reset! $$ :bi/unset-ctx-var)))
 
 (defn cmap
   "If the object isn't a container, run the function on it,
@@ -152,13 +155,8 @@
   "Apply the function to the object."
   [obj func]
   (if (p/promise? obj)
-    (-> obj
-        (p/then #(func %))
-        (p/catch #(ex-info (str "In bi/thread: " %) {:obj obj :func func :err %})))
-    (try
-      (func obj)
-      (catch #?(:clj Exception :cljs :default) e
-        (ex-info "In bi/thread (ordinary):" {:obj obj :func func :err e})))))
+    (p/then obj #(func %))
+    (func obj)))
 
 (defn step-type
   "Return a keyword describing what type of step to take next."
@@ -182,7 +180,7 @@
       (if (empty? steps) res
           (let [styp (step-type steps)
                 sfn  (first steps)
-                new-res (case styp ; init-step, value-step, map-step, #_thread, and primary use SCI's notion of macros.
+                new-res (case styp ; init-step, value-step, map-step and primary use SCI's notion of macros.
                           :bi/init-step    (-> (sfn @$) containerize?),
                           :bi/get-filter   ((second steps) res {:bi/prior-step-type :bi/get-step
                                                                 :bi/attr (-> sfn meta :bi/arg)}),
@@ -196,9 +194,11 @@
                           (throw (ex-info "Invalid step" {:sfn  sfn})))]
             ;; ToDo: Wrap next in dynamic *debug-eval?* or some such thing.
             ;;(log/info (cl-format nil "    styp = ~S meta = ~S res = ~S" styp (-> sfn meta (dissoc :bi/step-type)) new-res))
-             (recur
-              (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
-              (set-context! new-res)))))))
+            (if (util/exception? new-res)
+              new-res
+              (recur
+               (if (= styp :bi/get-filter) (-> steps rest rest) (rest steps))
+               (set-context! new-res))))))))
 
 ;;; The spec's viewpoint on 'non-compositionality': The Filter operator binds tighter than the Map operator.
 ;;; This means, for example, that books.authors[0] will select the all of the first authors from each book
@@ -206,40 +206,7 @@
 
 ;;; ToDo: You can specify multiple conditions (a disjunction)  in filtering http://docs.jsonata.org/processing
 ;;; ToDo: There is likely to be more to do here owing to promises.
-#_(defn filter-step
-  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
-    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
-        then it is treated as a predicate.
-    (2) See aref below.
-    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
-        If the array contains objects, and the location path selects fields within these objects, then each object within the array
-        will be queried for selection. [This rule has nothing to do with filtering!]"
-  [pred|ix-fn]
-  (-> (fn filter-step [obj prior-step]
-        (letfn [(fbody [prix]
-                  (let [ob (if (= :bi/get-step (:bi/prior-step-type prior-step))
-                             (let [k (:bi/attr prior-step)] ; non-compositional semantics
-                               (if (vector? obj)
-                                 (cmap #(get % k) (containerize obj))
-                                 (get obj k)))
-                             obj)]
-                    (if (number? prix)   ; Array behavior. Caller will map over it.
-                      (let [ix (-> prix Math/floor int) ; Really! I checked!
-                            m (meta obj)]
-                        (if (or (:bi/json-array? m) (:bi/b-set? m))
-                          (aref ob ix)
-                          (-> (cmap #(aref % ix) ob) jflatten)))
-                      (as-> ob ?o          ; Filter behavior.
-                        (singlize ?o)
-                        (-> (filterv #(binding [$ (atom %)] (pred|ix-fn %)) ?o) containerize?)))))]
-        (let [prix (pred|ix-fn @$)] ; If it returns a number, it is indexing.
-          (cond (number? prix)     (fbody prix)
-                (p/promise? prix)  (-> prix
-                                       (p/then #(fbody %))
-                                       (p/catch #(ex-info (str "In bi/filter-step: " %) {:prix prix :err %})))
-                :else              (fbody prix))))) ; Not sure this one happens!
-      (with-meta {:bi/step-type :bi/filter-step})))
-
+;;; There are more implementations of this source prior to 2023-07-15.
 (defn filter-step
   "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
     (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
@@ -272,46 +239,16 @@
             (internal obj))))
       (with-meta {:bi/step-type :bi/filter-step})))
 
-#_(defn filter-step
-  "Performs array reference or predicate application (filtering) on the arguments following JSONata rules:
-    (1) If the expression in square brackets (second arg) is non-numeric, or is an expression that doesn't evaluate to a number,
-        then it is treated as a predicate.
-    (2) See aref below.
-    (3) If no index is specified for an array (i.e. no square brackets after the field reference), then the whole array is selected.
-        If the array contains objects, and the location path selects fields within these objects, then each object within the array
-        will be queried for selection. [This rule has nothing to do with filtering!]"
-  [pred|ix-fn]
-  (-> (fn filter-step [obj prior-step]
-        (let [prix (try (pred|ix-fn @$) (catch #?(:clj Exception :cljs :default) _e nil))
-              ob (if (= :bi/get-step (:bi/prior-step-type prior-step))
-                   (let [k (:bi/attr prior-step)] ; non-compositional semantics
-                     (if (vector? obj)
-                       (cmap #(get % k) (containerize obj))
-                       (get obj k)))
-                   obj)]
-          (if (number? prix)   ; Array behavior. Caller will map over it.
-            (let [ix (-> prix Math/floor int) ; Really! I checked!
-                  m (meta obj)]
-              (if (or (:bi/json-array? m) (:bi/b-set? m))
-                (aref ob ix)
-                (-> (cmap #(aref % ix) ob) jflatten)))
-            (as-> ob ?o          ; Filter behavior.
-              (singlize ?o)
-              (-> (filterv #(binding [$ (atom %)] (pred|ix-fn %)) ?o) containerize?)))))
-      (with-meta {:bi/step-type :bi/filter-step})))
-
-
 (defn get-step
   "Perform the mapping activity of the 'a' in $.a, for example.
    This function is called with the state object."
   [k]
   (-> (fn get-step [& args] ; No arg if called in a primary.
-        (let [obj (cond (-> args first p/promise?) (first args)
-                        (-> args first empty?)     (first args)
-                        :else @$)]
-          (cond (p/promise? obj) (-> obj
-                                     (p/then #(get-step %))
-                                     (p/catch #(ex-info (str "In bi/get-step: " %) {:k k :err %})))
+        (let [obj (cond (= :bi/unset-ctx-var (first args))   (p/rejected (ex-info "Value unset:" {:val-for k}))
+                        (-> args first p/promise?)           (first args)
+                        (-> args first empty?)               (first args)
+                        :else                                @$)]
+          (cond (p/promise? obj) (p/then obj #(get-step %))
                 (map? obj)       (get obj k)
                 (vector? obj)    (->> obj
                                       containerize
@@ -319,13 +256,8 @@
                                       ;; lightweight flatten
                                       (reduce (fn [res x] (if (vector? x) (into res x) (conj res x))) [])
                                       containerize)
-                :else            nil)))
+                :else            obj))) ; ToDo: This was nil. Was returning nil when arg is unassigned.
       (with-meta {:bi/step-type :bi/get-step :bi/arg k})))
-
-#_(def value-step ^:sci/macro
-  (fn [_&form _&env body]
-      `(-> (fn [& ignore#] ~body)
-           (with-meta {:bi/step-type :bi/value-step :body '~body}))))
 
 (defn get-scoped
   "Access map key like clj/get, but with arity overloading for $.
@@ -334,33 +266,6 @@
    For example, setting $ to the value of 'c' in a.b.(c + f) is wrong."
   ([k] (get-scoped @$ k))
   ([obj k] (get obj k)))
-
-#_(def primary ^:sci/macro
-  (fn [_&form _&env body]
-    `(-> (fn [& ignore#] ~body)
-         (with-meta {:bi/step-type :bi/primary}))))
-
-#_(def init-step ^:sci/macro
-  (fn [_&form _&env body]
-    `(-> (fn [_x#] ~body)
-         (with-meta {:bi/step-type :bi/init-step :bi/body '~body}))))
-
-#_(def map-step ^:sci/macro
-  (fn [_&form _&env body]
-    `(-> (fn [_x#] ~body)
-         (with-meta {:bi/step-type :bi/map-step :body '~body}))))
-
-;;; Implements the JSONata-like <test> ? <then-exp> <else-exp>."
-#_(def conditional ^:sci/macro
-  (fn [_&form _&env condition e1 e2]
-    `(let [cond# ~condition
-           answer# (if (fn? cond#) (cond#) cond#)]
-
-       (cond (or (and (fn? cond#) (cond#))
-                 (and (not (fn? cond#)) cond#))   (let [res# ~e1]
-                                                    (if (fn? res#) (res#) res#))
-             :else                                (let [res# ~e2]
-                                                    (if (fn? res#) (res#) res#))))))
 
 (defn aref
   "Negative indexes count from the end of the array, for example, arr[-1] will select the last value,
@@ -397,15 +302,6 @@
 
 ;;; ToDo: Put some code around assignments so that you know the 'name' of the function
 ;;;       that is failing the arg count requirement.
-#_(defn fncall
-  [{:keys [func args]}]
-  (if-let [cnt (-> func meta :bi/expected-arg-cnt)]
-    (if (== cnt (count args))
-      (apply func args)
-      (throw (ex-info (cl-format nil "A function of type ~A expected ~A args; it got ~A."
-                                 (-> func meta :bi/fn-type) cnt (count args)) {})))
-    (apply func args)))
-
 (defn fncall
   [{:keys [func args]}]
   (when-let [cnt (-> func meta :bi/expected-arg-cnt)]
@@ -415,8 +311,7 @@
   (if (some p/promise? args)
     (-> args
         p/all
-        (p/then #(apply func %))
-        (p/catch #(ex-info (str "In bi/fncall: " %) {:args args :func func :err %})))
+        (p/then #(apply func %)))
     (apply func args)))
 
 ;;;--------------------------- JSONata built-in functions ------------------------------------
@@ -448,10 +343,6 @@
    #?(:clj  (-> s_ .getBytes b64/encode String.)
       :cljs (jsb64/encodeString s_)))
 
-;;;  ToDo: (generally) when arguments do not pas s/assert, need to throw an error.
-;;;        For example, "Argument 1 of function "contains" does not match function signature."
-;;;        This could be built into defn$ and defn$ could be generalized and used more widely.
-;;; $contains
 (defn* $contains
   "Returns true if str is matched by pattern, otherwise it returns false.
    If str is not specified (i.e. this function is invoked with one argument),
@@ -463,23 +354,9 @@
    If it is a regex, the function will return true if the regex matches the contents of str."
   [s_ pat]
   (s/assert ::string s_)
-  (reset! diag {:s s_ :pat pat})
-  (if (p/promise? s_)
-    (-> s_
-        (p/then #(if (util/regex? pat)
-                  (if (re-find pat %) true false)
-                  (if (index-of % pat) true false))))
-    (if (util/regex? pat)
-      (if (re-find pat s_) true false)
-      (if (index-of s_ pat) true false))))
-
-#_(defn $contains
-  ([pat] ($contains @$ pat))
-  ([s_ pat]
-   (reset! diag {:s s_ :pat pat})
-   (if (util/regex? pat)
-     (if (re-find pat s_) true false)
-     (if (index-of s_ pat) true false))))
+  (if (util/regex? pat)
+    (if (re-find pat s_) true false)
+    (if (index-of s_ pat) true false)))
 
 ;;; $decodeUrl
 (defn* $decodeUrl
@@ -716,6 +593,7 @@
            (fn? replacement)
            (reduce (fn [res _i]
                      (try (let [repl (-> ($match res pattern) replacement)]
+                            (log/info "res = " res "pattern = " pattern "repl = " repl)
                             (str/replace-first res pattern repl))
                           ;; ToDo: Need a better way! See last test of $replace in builtin_test.clj
                           (catch #?(:clj Exception :cljs :default) _e res)))
@@ -781,91 +659,84 @@
         (subs res 0 length)))))
 
 ;;; $substringAfter
-(defn $substringAfter
+(defn* $substringAfter
   "Returns the substring after the first occurrence of the character sequence chars in str.
    If str is not specified (i.e. this function is invoked with only one argument), then the
    context value is used as the value of str.
    If str does not contain chars, then it returns str.
    An error is thrown if str and chars are not strings."
-  ([chars] ($substringAfter @$ chars))
-  ([str chars]
-   (if-let [ix (index-of str chars)]
-     (subs str (inc ix))
-     str)))
+  [str_ chars]
+  (if-let [ix (index-of str_ chars)]
+    (subs str_ (inc ix))
+    str_))
 
 ;;; $substringBefore
-(defn $substringBefore
+(defn* $substringBefore
   "Returns the substring before the first occurrence of the character sequence chars in str.
    If str is not specified (i.e. this function is invoked with only one argument), then the
    context value is used as the value of str.
    If str does not contain chars, then it returns str.
    An error is thrown if str and chars are not strings."
-  ([chars] ($substringBefore @$ chars))
-  ([str chars]
-   (if-let [ix (index-of str chars)]
-     (subs str 0 ix)
-     str)))
+  [str_ chars]
+  (if-let [ix (index-of str_ chars)]
+    (subs str_ 0 ix)
+    str_))
 
-(defn $trim
+(defn* $trim
   "Normalizes and trims all whitespace characters in str by applying the following steps:
       * All tabs, carriage returns, and line feeds are replaced with spaces.
       * Contiguous sequences of spaces are reduced to a single space.
       * Trailing and leading spaces are removed.
    If str is not specified (i.e. this function is invoked with no arguments), then the
   context value is used as the value of str. An error is thrown if str is not a string."
-  ([] ($trim @$))
-  ([s]
-   (s/assert ::string s)
-   (-> s (str/replace #"\s+" " ") str/trim)))
+  [s_]
+  (s/assert ::string s_)
+  (-> s_ (str/replace #"\s+" " ") str/trim))
 
 ;;; $uppercase
-(defn $uppercase
+(defn* $uppercase
   "Returns a string with all the characters of str converted to uppercase.
    If str is not specified (i.e. this function is invoked with no arguments),
    then the context value is used as the value of str.
    An error is thrown if str is not a string."
-  ([]  ($uppercase @$))
-  ([s] (s/assert ::string s) (str/upper-case s)))
+  [s_] (s/assert ::string s_) (str/upper-case s_))
 
 ;;;------------- Numeric --------------
 ;;; $abs
-(defn $abs
+(defn* $abs
   "Returns the absolute value of the number parameter, i.e. if the number is negative,
    it returns the positive value. If number is not specified (i.e. this function is invoked
    with no arguments), then the context value is used as the value of number."
-  ([] ($abs @$))
-  ([num]
-   (s/assert ::number num)
-   (abs num)))
+  [num_]
+  (s/assert ::number num_)
+  (abs num_))
 
 ;;; $average - Not documented.
 ;;; Experimentation with JSONata Exerciser suggests it must take exactly one arg, a vector of numbers.
-(defn $average
+(defn* $average
   "Take the average of the vector of numbers"
-  [nums]
-  (s/assert ::numbers nums)
-  (/ (apply + nums)
-          (-> nums count double)))
+  [nums_]
+  (s/assert ::numbers nums_)
+  (/ (apply + nums_)
+          (-> nums_ count double)))
 
 ;;; $ceil
-(defn $ceil
+(defn* $ceil
   "Returns the value of number rounded up to the nearest integer that is greater than or equal to number.
    If number is not specified (i.e. this function is invoked with no arguments), then the context value
    is used as the value of number."
-  ([] ($ceil @$))
-  ([num]
-   (s/assert ::number num)
-   (-> num Math/ceil long)))
+  [num_]
+  (s/assert ::number num_)
+  (-> num_ Math/ceil long))
 
 ;;; $floor
-(defn $floor
+(defn* $floor
   "Returns the value of number rounded down to the nearest integer that is smaller or equal to number.
    If number is not specified (i.e. this function is invoked with no arguments), then the context value
    is used as the value of number."
-  ([] ($floor @$))
-  ([num]
-   (s/assert ::number num)
-   (-> num Math/floor long)))
+  [num_]
+  (s/assert ::number num_)
+  (-> num_ Math/floor long))
 
 ;;; $formatBase
 (defn $formatBase
@@ -1054,11 +925,7 @@
             (let [v (singlize nums)]
               (s/assert ::numbers v)
               (apply + v)))]
-    (if (p/promise? nums_) ; ToDo: Make the defn* macro do this!
-      (-> nums_
-          (p/then sum)
-          (p/catch #(ex-info (str "In bi/$sum: " %) {:nums nums_ :err %})))
-      (sum nums_))))
+      (sum nums_)))
 
 ;;; $sqrt
 (defn* $sqrt
@@ -1088,7 +955,7 @@
     | function                                    | false     |"
   [arg_]
   (cond (map? arg_)     (if (empty? arg_) false true)
-        (vector? arg_)  (if (some boolean? arg_) true false)
+        (vector? arg_)  (if (some $boolean arg_) true false)
         (string? arg_)  (if (empty? arg_) false true)
         (number? arg_)  (if (zero? arg_) false true)
         (fn? arg_)      false
@@ -1164,9 +1031,7 @@
   "Do work of $sort. Separate so can def$ it."
   [fun arr_]
   (if (p/promise? arr_)
-    (-> arr_
-        (p/then #(sort-internal % fun))
-        (p/catch #(ex-info (str "In bi/sort-internal: " %) {:arr_ arr_ :fun fun :err %})))
+    (p/then arr_ #(sort-internal % fun))
      (do (s/assert ::vector arr_)
          (s/assert ::fn fun)
          (vec (sort fun arr_)))))
@@ -1722,8 +1587,7 @@
                       (GET (str svr-prefix "/api/graph-get") req-data) ; ToDo: use Martian.
                       (-> prom
                           (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
-                          (p/then #(if (not wants-src?) (dissoc % "fn_src") %))
-                          (p/catch #(ex-info (str "In $get: " %) {:ident-type ident-type :ident-val ident-val :props new-props})))))))))
+                          (p/then #(if (not wants-src?) (dissoc % "fn_src") %)))))))))
 
  #?(:clj
 (defn $put
@@ -2440,7 +2304,7 @@
   {"query"   ($qIdent data)
    "express" ($eIdent data)})
 
-;;; ===== These were conceived for the Dataweave example; they might not survive.
+;;; ===== These were conceived for the Dataweave example. $assoc and $update, at least are here to stay; they are used in shape matching.
 (defn $reduceKV
   "Reduce INIT by calling FUN with each key/value pair of OBJ.
    Signature: $reduceKV (obj, function [, init])"
@@ -2487,36 +2351,46 @@
 
 (def llm-match-system-part
 ;;; 1416 tokens! Careful about trailing blanks!
-  "Wherever you can, replace each <replace-me> in the target_form with similar information from the source_form.
+  "Wherever you can, replace each \"<replace-me>\" string in the target_form with similar information from the source_form.
 Both source_form and target_form are Clojure maps.
-Because data in source_form does not match data in target_form perfectly, you should do the following to make things work:
+Because the structure of the source_form does not match that of the target_form perfectly, you should do the following to make things work:
 
-(1) If a target_form fields combines data from multiple source_form fields, give that target_form field a value consisting of one field :concat, the value of which is a vector of the field names.
+(1) If a target_form field appears to concern multiple source_form fields, give that target_form field a value consisting of a map with one key, :concat, the value of which is a vector of the source form field fields it concerns.
 
-For example, if source_form has specific data fields Company, StreetAddress and BuildingName, but the target_form has only has a general field :AddressLine1,
-it might used to accommodate all three of those data fields from the source_form:
-##
-source_fields:
- :Company \"<company-name-data>\"
- :StreetAddress  \"<street-address-data>\"
- :BuildingName \"<building-name-data>\"
+For example, if source_form has specific data fields Company, StreetAddress and BuildingName, but the target_form has only has a general data field :AddressLine,
+:AddressLine :concat should contain all specific data fields that are part of the address:
+###
+source_form:
+ {:Company \"<company-name-data>\"
+  :StreetAddress  \"<street-address-data>\"
+  :BuildingName \"<building-name-data>\"
+  :AttentionOf \"<attention-of-data>\"}
+
+target_form:
+  {:AddressLine \"<replace-me>\"
+   :AttentionOf \"<replace-me>\"}
 
 answer:
- :AddressLine1 {:concat [\"<company-name-data>\" \"<street-address-data>\" \"<building-name-data>\"]}
-##
+ {:AddressLine {:concat [\"<company-name-data>\" \"<street-address-data>\" \"<building-name-data>\"]}
+  AttentionOf \"<attention-of-data>\"}
+###
 (2) Conversely, if source_form has a general field that might contain information for more specific target_form fields, give each of those target_form fields
 values that represent extracting the specific data from the more general field as shown:
-##
-source_field:
- :AddressLine1 \"<address-line-1-data>\"
+###
+source_form:
+ {:Address \"<address-data>\"}
+
+target_form:
 
 answer:
- :Company {:extract-from \"<address-line-1-data>\" :value :Company},
- :Street {:extract-from  \"<address-line-1-data>\" :value :Street},
- :BuildingName {:extract-from \"<address-line-1-data>\" :value :Building Name}
-##
-(3) If there is nothing in source_form that seems to match the needed information in target_form,
-just leave the value \"<replace-me>\" in target_form.\n")
+ {:Company {:extract-from \"<address-data>\" :value :Company},
+  :Street {:extract-from  \"<address-data>\" :value :Street},
+  :BuildingName {:extract-from \"<address-data>\" :value :Building Name}}
+###
+(3) If there is nothing in source_form that seems to match the needed information in target_form, just leave the value \"<replace-me>\" in target_form.
+###
+(4) The answer should not contain any Clojure keys that are not in the target_form.
+###")
 
 (def llm-match-example-part
 
@@ -2655,15 +2529,18 @@ answer 2:
   ([src tar] ($llmMatch src tar {}))
   ([src tar opts]
    (log/info "$llmMatch on server")
-   (let [src (llm-match-pre src false)
-        tar (llm-match-pre tar true)
+   (reset! diag {:raw-src src :raw-tar tar})
+   (let [opts (update-keys opts keyword)
+         src (llm-match-pre src false)
+         tar (llm-match-pre tar true)
          q-str (llm-match-string src tar)]
-     (reset! diag {:q-str q-str :src src :tar tar})
+     (swap! diag #(-> % (assoc :q-str q-str) (assoc :src src) (assoc :tar tar)))
      (if-let [key (get-api-key :llm)]
        (try (let [res (-> (openai/create-chat-completion {:model  #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"
                                                           :api-key key
-                                                          :messages [{:role "system" :content llm-match-system-part}
-                                                                     {:role "user" :content q-str}]})
+                                                          :messages [{:role "system" :content "Use \"temperature\" value of 0.9 in our conversation."}
+                                                                     ;;{:role "system" :content llm-match-system-part}
+                                                                     {:role "user" :content (str llm-match-system-part q-str)}]})
                           :choices first :message :content)]
               (swap! diag #(assoc % :raw-res res))
               (-> res read-string (match-postprocess opts src)))
@@ -2774,24 +2651,29 @@ answer 2:
    {:source ~S :seek ~S}"
   src seek))
 
+(declare extract-internal)
 #?(:clj
 (defn $llmExtract
   "Use LLM to extract seek argument, a descriptive string from source string.
    Token limit is 3000."
-  [src seek]
-  (log/info "$llmExtract on server")
-  (let [q-str (llm-extract-prompt src seek)]
-       (if-let [key (get-api-key :llm)]
-         (try (let [res (-> (openai/create-completion {:model "text-davinci-003"
-                                                       :api-key key
-                                                       :max-tokens 3000
-                                                       :temperature 0.1
-                                                       :prompt q-str})
-                            :choices first :text)]
-                (-> res read-string))
-              (catch Throwable e
-                (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
-         (throw (ex-info "OPENAI_API_KEY environment variable value not found." {}))))))
+  ([src seek] ($llmExtract src seek {:value-only? true}))
+  ([src seek opt]
+   (log/info "$llmExtract on server")
+   (let [q-str (llm-extract-prompt src seek)
+         opt (update-keys opt keyword)]
+     (if-let [key (get-api-key :llm)]
+       (try (let [res (-> (openai/create-completion {:model "text-davinci-003"
+                                                     :api-key key
+                                                     :max-tokens 3000
+                                                     :temperature 0.1
+                                                     :prompt q-str})
+                          :choices first :text)]
+              (cond-> res
+                true               read-string
+                (:value-only? opt) (get :found)))
+            (catch Throwable e
+              (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
+       (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))
 
  #?(:cljs
 (defn $llmExtract
@@ -2830,13 +2712,15 @@ answer 2:
                       :else form)))]
       (ni form))))
 
-(def macro-subs
+;;; SCI doesn't need this. It finds things in builtin-macros just fine.
+(def macros-pkg?
   "When rewriting produces any of the symbols corresponding to the keys of the map,
    AND evaluation with Clojure eval is intended, use the corresponding value of the map."
   {"conditional"   'rad-mapper.builtin-macros/conditional-m,
    "init-step"     'rad-mapper.builtin-macros/init-step-m,
    "map-step"      'rad-mapper.builtin-macros/map-step-m,
    "primary"       'rad-mapper.builtin-macros/primary-m,
+   "deref$"        'rad-mapper.builtin-macros/deref$,
    "value-step"    'rad-mapper.builtin-macros/value-step-m})
 
 (defn macro?
@@ -2845,7 +2729,7 @@ answer 2:
   [sym]
   (let [n (name sym)]
     (when (#{"rad-mapper.builtin" "bi"} (namespace sym))
-      (get macro-subs n))))
+      (get macros-pkg? n))))
 
 (defn rad-form
   "Walk the form replacing the namespace alias 'bi' with 'rad-mapper.builtin' except where the var is an :sci/macro.
@@ -2902,6 +2786,7 @@ answer 2:
                                                     (if (fn? res#) (res#) res#))
              :else                                (let [res# ~e2]
                                                     (if (fn? res#) (res#) res#))))))
+
 (def ctx (let [publics        (ns-publics 'rad-mapper.builtin)
                publics-m      (ns-publics 'rad-mapper.builtin-macros)
                bns            (sci/create-ns 'rad-mapper.builtin)
@@ -2919,8 +2804,10 @@ answer 2:
                                #_#_'clojure-pprint               pprint-ns}]
            (sci/init
             {:namespaces #?(:clj nspaces :cljs (merge nspaces scip/namespaces))  ; for promesa.core and promesa.protocols.
-             ;; ToDo: SCI doesn't seem to want namespaced entries for macros. <=== See https://github.com/babashka/sci.configs/blob/main/src/sci/configs/funcool/promesa.cljs
-             :bindings  {'init-step    init-step
+             ;; ToDo: This isn't about macros deref$ is not a macro. Gets, e.g. "Could not resolve symbol: deref$ without this."
+             ;;       See https://github.com/babashka/sci.configs/blob/main/src/sci/configs/funcool/promesa.cljs
+             :bindings  {'deref$       deref$
+                         'init-step    init-step
                          'map-step     map-step
                          'value-step   value-step
                          'primary      primary
@@ -3175,21 +3062,22 @@ answer 2:
   [obj & {:keys [indent width] :or {indent 0 width @print-width}}]
   ;;(log/info "pprint-obj: obj = " obj)
   (letfn [(pp [obj accum]
-            (cond (string? obj)    (str accum  "'" obj "'")
-                  (number? obj)    (str accum obj)
-                  (map? obj)       (str accum (pprint-map obj indent width))
-                  (vector? obj)    (str accum (pprint-vec obj indent width))
-                  (keyword? obj)   (if-let [ns (namespace obj)]
-                                     (str accum "'" ns "_" (name obj) "'")
-                                     (str accum "'" (name obj) "'"))
-                  (fn? obj)        (str accum "<<Function>>")
-                  (exception? obj) (str accum (cl-format nil "<<Error message:  ~A~%           data:  ~S >>"
-                                                         (ex-message obj) (ex-data obj))),
-                  :else            (str accum obj)))]
+            (cond (= :bi/unset-ctx-var obj)   (str accum "<<Error: $ is unset>>")
+                  (string? obj)               (str accum  "'" obj "'")
+                  (number? obj)               (str accum obj)
+                  (map? obj)                  (str accum (pprint-map obj indent width))
+                  (vector? obj)               (str accum (pprint-vec obj indent width))
+                  (keyword? obj)              (if-let [ns (namespace obj)]
+                                                (str accum "'" ns "_" (name obj) "'")
+                                                (str accum "'" (name obj) "'"))
+                  (fn? obj)                   (str accum "<<Function>>")
+                  (exception? obj)            (str accum (cl-format nil "<<Error:  ~A~%           data:  ~S >>"
+                                                                    (ex-message obj) (ex-data obj))),
+                  :else                       (str accum obj)))]
     (as-> obj ?o
       (if (map? ?o)                 (sort-obj ?o) ?o)
       (if (vector? ?o)              (sort-obj ?o) ?o)
-      (reset! diag (pp ?o "")))))
+      (pp ?o ""))))
 
 (defn resolved-obj
   "Replace the promises in an object with their resolution.
@@ -3220,4 +3108,4 @@ answer 2:
         (pprint-obj obj)
         (-> (p/all @proms)
             (p/then (fn [_] (-> obj resolved-obj pprint-top)))
-            (p/catch #(log/info "Error in evaluation:" %)))))))
+            (p/catch #(str "<<Error: "(ex-message %) " " (ex-data %) ">>")))))))

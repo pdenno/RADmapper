@@ -8,14 +8,13 @@
            com.wsscode.promesa.macros/clet                   clojure.core/let
            com.wsscode.promesa.macros/ctry                   clojure.core/try
            mount.core/defstate                               clj-kondo.lint-as/def-catch-all
-           rad-mapper.builtin/defn$                          clojure.core/defn
-           rad-mapper.builtin/defn*                          clojure.core/defn #_clj-kondo.lint-as/def-catch-all #_clojure.core/defmacro #_clj-kondo.lint-as/def-catch-all ; Nothing works!
+           rad-mapper.builtin-macros/defn*                   clojure.core/defn #_clj-kondo.lint-as/def-catch-all #_clojure.core/defmacro #_clj-kondo.lint-as/def-catch-all ; Nothing works!
            rad-mapper.builtin/init-step                      clojure.core/defmacro
-           rad-mapper.builtin/init-step-m                    clojure.core/defmacro
+           rad-mapper.builtin-macros/init-step-m             clojure.core/defmacro
            rad-mapper.builtin/map-step                       clojure.core/defmacro
-           rad-mapper.builtin/map-step-m                     clojure.core/defmacro
+           rad-mapper.builtin-macros/map-step-m              clojure.core/defmacro
            rad-mapper.builtin/primary                        clojure.core/defmacro
-           rad-mapper.builtin/primary-m                      clojure.core/defmacro
+           rad-mapper.builtin-macros/primary-m               clojure.core/defmacro
            rad-mapper.data-util.macros/defparse              clojure.core/defn
            rad-mapper.parse/defparse                         clojure.core/defmethod
            rad-mapper.rewrite/defrewrite                     clojure.core/defn

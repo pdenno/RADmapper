@@ -10,18 +10,24 @@
 
 ;;; ($get ["schema/name" "urn:oagis-10.8.4:Nouns:Invoice"],  ["schema-object"])
 (def rm-examples
-  [{:name "Instance files"
+  [{:name "(0) Debugging"
+    :code " 'abc' ~> $unknown()"}
+
+   {:name "(1) Full mapping"
     :code
 "(
-  $data := $get(['library_fn', 'bie-1-message'], ['fn_src']).fn_src ~> $eval();
+  $data := $get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval();
   $mappingFn := $get(['library_fn', 'invoice-match-1->2-fn'], ['fn_src']).fn_src ~> $eval();
   $mappingFn($data)
 )"}
 
-   {:name "(1) The files"
-    :code "$get(['list_id', 'cct_bie'], ['list_content']).list_content[$contains('elena')]"}
+   {:name "(2) Look at data"
+    :code "$get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval()"}
 
-   {:name "(2): Differences"
+   {:name "(3) Look at mapping fn"
+    :code "$get(['library_fn', 'invoice-match-1->2-fn'], ['fn_src']).fn_src"}
+
+   {:name "(4): Shapes"
     :code
    "(
   $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
@@ -39,7 +45,7 @@
    'shape 2' : $shape($schema2Roots.?name[0], $schema2PC)}
 )"}
 
-   {:name "(3): LLM match 1->2"
+   {:name "(5): LLM match 1->2"
     :code
     "// Call $llmMatch to generate the mapping function. Note use of {'as-fn?' true} in the call.
 
@@ -60,9 +66,38 @@
             {'as-fn?' : true})
 )"}
 
+   {:name "(6): LLM match 2->1"
+    :code
+    "// Call $llmMatch to generate the mapping function. Note use of {'as-fn?' true} in the call.
 
-   {:name "(4) Get the validated invoice-match-1->2"
-    :code "$get(['library_fn', 'invoice-match-1->2'], ['fn_src']).fn_src ~> $eval()"}
+(
+  $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
+  $schema2   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
+  $pcQuery   := $get(['library_fn', 'schemaParentChild'],['fn_exe']).fn_exe;
+  $rootQuery := $get(['library_fn', 'schemaRoots'],['fn_exe']).fn_exe;
+  $shape     := $get(['library_fn', 'schemaShape'],['fn_exe']).fn_exe;
+
+  $schema1PC    := $pcQuery($schema1);     // Get parent-child relationships of each schema.
+  $schema2PC    := $pcQuery($schema2);
+  $schema1Roots := $rootQuery($schema1);   // Get root elements of each schema.
+  $schema2Roots := $rootQuery($schema2);
+
+  $llmMatch($shape($schema2Roots.?name[0], $schema2PC), // [0] here is cheating a bit; there could be multiple roots.
+            $shape($schema1Roots.?name[0], $schema1PC), // Call $llmMatch to do shape matching
+            {'as-fn?' : true})
+)"}
+
+   {:name "(7) Full mapping 2->1"
+    :code
+"(
+  $data := $get(['library_fn', 'bie-2-data'], ['fn_src']).fn_src ~> $eval();
+  $mappingFn := $get(['library_fn', 'invoice-match-2->1-fn'], ['fn_src']).fn_src ~> $eval();
+  $mappingFn($data)
+)"}
+
+
+   {:name "The files"
+    :code "$get(['list_id', 'cct_bie'], ['list_content']).list_content[$contains('elena')]"}
 
    {:name "Uses of $get"
     :code
@@ -86,23 +121,6 @@
     :code "( $addOne := $get(['library_fn', 'addOne'],['fn_exe']).fn_exe;
   $addOne(3) );"}
 
-   {:name "partial solution"
-    :code "{'ProcessInvoice':
-    {'ApplicationArea':
-      {'CreationDateTime': '<creation-date-time-data>'},
-      'DataArea'       :
-      {'Invoice':
-        {'InvoiceLine':
-          {'BuyerParty':
-            {'Location': {'Address': {'BuildingNumber': $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'BuildingNumber'),
-                                                  'CityName'      : $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'City'),
-                                                  'CountryCode'   : '<replace-me>',
-                                                  'PostalCode'    : $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'Zipcode')
-                                                  'StreetName'    : $llmExtract($src.ProcessInvoice.ApplicationArea.DataArea.Invoice.InvoiceLine.BuyerParty.Location.AddressLine, 'StreetName')}}}
-             'TaxIDSet': {'ID': '<id-data>'}},
-             'Item'    : {'ManufacturingParty': {'Name': '<name-data>'}}}},
-        'Process':      '<process-data>'}}"}
-
    {:name "Using library code"
     :code "($schema1 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
  $schema2 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
@@ -119,7 +137,7 @@
   'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 )"}
 
-   {:name "Try (-1) : JSONata-like"
+   {:name "(-1) : JSONata-like"
     :code
     "( // Ordinary JSONata-like expressions: get the names of the two schema in the LHS pane:
   $s1 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content', 'schema_name']);
@@ -130,17 +148,23 @@
    #_{:name "So simple!"
     :code "1 + 2"}
 
-   {:name "Try (1): Small remote query"
+   {:name "(-2): Small remote query SDOs"
     :code "( $db  := $get(['db_name', 'schemaDB'], ['db_connection']);
   $qfn := query{[?e :schema_name ?name] [?e :schema_sdo ?sdo]};
   $qfn($db).?sdo ~> $distinct() ~> $sort()
    )"}
 
-   {:name "Try (2) : Simple get"
+   {:name "(-2): Small remote query SDO/Topic"
+    :code "( $db  := $get(['db_name', 'schemaDB'], ['db_connection']);
+  $qfn := query{[?e :schema_name ?name] [?e :schema_topic ?topic] [?e :schema_sdo ?sdo]};
+  $qfn($db)
+   )"}
+
+   {:name "(-3) : Simple get"
     :code "( $schema := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
            $schema )"}
 
-   {:name "Try (3) : JSONata-like"
+   {:name "(-4) : JSONata-like"
     :code
     "( // Ordinary JSONata-like expressions: get the names of the two schema in the LHS pane:
   $s1 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content', 'schema_name']);
@@ -148,7 +172,7 @@
 
 [$s1, $s2].`schema_name` )"}
 
-   {:name "Try (4) : Simplest query"
+   {:name "(-5) : Simplest query"
     :code
 "(
   $x := {'element_name' : 'foo'};
@@ -156,7 +180,7 @@
   $qf($x)
 )"}
 
-   {:name "Try (5): Simple query, complicated schema"
+   {:name "(-6): Simple query, complicated schema"
     :code "(
   // Small bug in the exerciser (because it combines data from the LHS pane):
   // currently comments have to be inside the open paren.
@@ -172,7 +196,7 @@
  $qf($db)
 )" }
 
-   #_{:name "Try (*): (aside) Query defines a function."
+   #_{:name "(*): (aside) Query defines a function."
     :code
     "(
   // Remember: query and express are function defining.
@@ -181,7 +205,7 @@
   query{[?x :model_elementDef ?ed]}
 )"}
 
-   {:name "Try (6):  query :model_elementDef"
+   {:name "(-7):  query :model_elementDef"
     :code
     "(
   // This example queries for all the element definitions.
@@ -197,7 +221,7 @@
 )"}
 
 
-   {:name "Try (7): Towards goal: query :element_name"
+   {:name "(-8): Towards goal: query :element_name"
     :code
     "(
   // We'll start working towards something useful with the two schema.
@@ -212,7 +236,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "Try (8): Child elements"
+   {:name "(-9): Child elements"
     :code
     "(
   // Let's find the children of an element.
@@ -237,7 +261,7 @@
    'schema 2': $qf($s2)}
 )"}
 
-   {:name "Try (9): Roots"
+   {:name "(-10): Roots"
     :code
     "(
   // The two lists we generated in (6) each have one less element than the lists
@@ -289,7 +313,7 @@
 
 )"}
 
-   {:name "Try (10): Shape "
+   {:name "(-11): Shape (in-line spec)"
     :code
    "(
   $schema1 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
@@ -325,7 +349,7 @@
    'shape2' : $shape($schema2Roots.?name[0], $schema2PC)}
 )"}
 
-   {:name "Try (11): LLM match"
+   {:name "(-12): LLM match (in-line spec)"
     :code
    "(
   $schema1 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
@@ -346,11 +370,9 @@
 
   // This function calls itself recursively to build the schema shape, starting from the root.
   $shape := function($p, $spc) { $reduce($children($spc, $p),
-                                         function($tree, $c) // Update the tree.
-                                             { $update($tree,
-                                                       $p,
-                                                       function($x) { $assoc($x, $c, $lookup($shape($c, $spc), $c) or '<data>')}) },
-                                         {})};
+                                         function($tree, $c) // Update
+                                         the tree.  { $update($tree,
+                                         $p, function($x) { $assoc($x,$c, $lookup($shape($c, $spc), $c) or '<data>')}) }, {})};
 
   $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.
   $schema2PC    := $pcQuery($schema2);     // The first two return binding sets for {?parent x ?child y}
@@ -361,7 +383,7 @@
             $shape($schema2Roots.?name[0], $schema2PC))
 )"}
 
-   {:name "Try (12): LLM extract"
+   {:name "(-13): LLM extract"
     :code "$llmExtract('Acme Widgets, 100 Main Street, Bldg 123, Chicago, IL, 60610', 'building')"}
 
    {:name "2 Databases"

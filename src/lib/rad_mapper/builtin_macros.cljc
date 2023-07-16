@@ -5,7 +5,7 @@
    [taoensso.timbre :as log :refer-macros[error debug info log!]]))
 
 (def ^:dynamic $  "JSONata context variable" (atom :orig-val)) ; It really is both dynamic and an atom!
-(def $$ "JSONata root context." (atom :bi/unset))
+(def $$ "JSONata root context." (atom :bi/unset-ctx-var))
 
 (defn set-context!
   "Set the JSONata context variable to the argument (using p/then if it is a promise).
@@ -15,20 +15,11 @@
   (let [res (if (p/promise? val)
               (p/then val #(reset! $ %))
               (reset! $ val))]
-    (when (= @$$ :bi/unset)
+    (when (= @$$ :bi/unset-ctx-var)
       (if (p/promise? val)
         (p/then val #(reset! $$ %))
         (reset! $$ val)))
     res))
-
-#_(defn set-context!
-  "Set the JSONata context variable to the argument (using p/then if it is a promise).
-   If the root context has not yet been set, set that too.
-   Returns argument."
-  [val]
-  (reset! $ val)
-  (when (= @$$ :bi/unset) (reset! $$ val))
-  val)
 
 (defn containerize [obj] (-> obj (with-meta (merge (meta obj) {:bi/container? true}))))
 (defn container?   [obj] (-> obj meta :bi/container?))
@@ -187,6 +178,7 @@
    The parameter ending in a \\_ is the one elided in (2). (There must be such a parameter.)
    doc-string is required."
   [fn-name doc-string [& params] & body]
+  (assert (string? doc-string) (ex-info "Need a doc-string!" {}))
   (let [param-map (zipmap params (map #(symbol nil (name %)) params))
         abbrv-params (vec (remove #(str/ends-with? (str %) "_") (vals param-map)))
         abbrv-args (mapv #(if (str/ends-with? (str %) "_") '(deref$) %) (vals param-map))

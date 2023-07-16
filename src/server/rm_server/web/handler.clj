@@ -104,7 +104,7 @@
 (s/def ::found string?)
 
 (s/def ::llm-extract-request  (s/keys :req-un [::source ::seek]))
-(s/def ::llm-extract-response (s/keys :req-un [::source ::seek ::probability ::found]))
+(s/def ::llm-extract-response string? #_(s/keys :req-un [::source ::seek ::probability ::found]))
 
 ;;; datalog-query (query)
 (s/def ::qforms (st/spec {:spec string? ; In CLJS,
@@ -126,7 +126,7 @@
 (s/def ::request-objs (st/spec {:spec string?
                                 :name "request-objs"
                                 :description "A collection of (vertical bar, e.g. '|')-separated properties sought for the identified object."
-                                :json-schema/default "schema/content"}))
+                                :json-schema/default "schema_content"}))
 (s/def ::graph-get-request (s/keys :req-un [::ident-type ::ident-val ::request-objs]))
 (s/def ::graph-get-response map?)
 
@@ -134,7 +134,7 @@
 (s/def ::put-ident-type (st/spec {:spec string?
                                   :name "ident-type"
                                   :description "The type recognized in some database."
-                                  :json-schema/default "library/fn"}))
+                                  :json-schema/default "library_fn"}))
 (s/def ::put-ident-val (st/spec {:spec string?
                                  :name "ident-val"
                                  :description "The uniqueness property of the object being stored."
@@ -163,16 +163,14 @@
 ;;;====================================================
 
 (def routes
-  [["/app" {:get {:summary "Ignore this swagger entry. I get rid of this soon."
-                              :handler home}}]
-   ["/swagger.json"
+  [["/swagger.json"
      {:get {:no-doc true
             :swagger {:info {:title "RADmapper API"
                              :description "API with reitit-http"}}
             :handler (swagger/create-swagger-handler)}}]
 
    ["/api"
-     {:swagger {:tags ["RADmapper functions"]}}
+    {:swagger {:tags ["RADmapper API functions"]}}
 
     ["/process-rm"
      {:post {:summary "Run RADmapper code."
@@ -225,7 +223,10 @@
     ["/health"
      {:get {:summary "Check server health"
             :responses {200 {:body {:time string? :up-since string?}}}
-            :handler rm/healthcheck}}]]])
+            :handler rm/healthcheck}}]]
+   ["/app" {:get {:summary "Ignore this swagger entry. I get rid of this soon."
+                  :handler home}}]])
+
 
 (def options
   {;:reitit.interceptor/transform dev/print-context-diffs ;; pretty context diffs  <=========================================== For debugging!

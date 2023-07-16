@@ -60,7 +60,7 @@
         (nil? obj)                            obj ; for optional things like (-> m :where rewrite)
         :else                                 (throw (ex-info "Don't know how to rewrite obj:" {:obj obj}))))
 
-(defn toplevel-cb-or-primary?
+#_(defn toplevel-cb-or-primary?
   "Return one of :CodeBlock, or :Primary, depending on what the argument object of :typ :CodeBlock|Primary should be.
    This is only used at toplevel, in other places, :Primary is assumed."
   [top]
@@ -74,19 +74,54 @@
       :CodeBlock
       :Primary)))
 
-(defrewrite :toplevel [m]
-  (rad-mapper.rewrite-macros/clear-rewrite!) ; ToDo: Nothing less will suffice! (Though restarting shadow helped!)
-  (as-> m ?m
-    (if (= :CodeBlock|Primary (-> ?m :top :typ))
-      (assoc-in ?m [:top :typ] (toplevel-cb-or-primary? (:top ?m)))
-      ?m)
-    (->> ?m :top rewrite)))
+;;; (bi/processRM :ptag/exp "1 + (({'a' : 1})).((a + 44))")
+#_{:typ :BinOpSeq,
+ :seq
+ [1
+  :op/add
+  {:typ :CodeBlock|Primary, :exps [{:typ :CodeBlock|Primary, :exps [{:typ :ObjExp, :kv-pairs [{:typ :KVPair, :key "a", :val 1}]}]}]}
+  :op/get-step
+  {:typ :CodeBlock|Primary, :exps [{:typ :CodeBlock|Primary, :exps [{:typ :BinOpSeq, :seq [{:typ :Field, :field-name "a"} :op/add 44]}]}]}]}
 
-;;; This is the non-toplevel use of :CodeBlock|Primary; it assumes :Primary
-(defrewrite :CodeBlock|Primary [m]
-  (as-> m ?m
-    (assoc ?m :typ :Primary)
-    (rewrite ?m)))
+(defn rewrite-primary
+  [m]
+  (letfn [(rw-bin-op-seq [bos] ; Find :CodeBlock|Primary in :BinObSeqs and reset them.
+            (loop [res [(first bos)]
+                   seq-val (-> bos rest vec)]
+              (let [pair (take 2 seq-val)
+                    [op exp] pair
+                    len (count pair)
+                    new-res (cond (< len 2)                            (into res pair)
+                                  (= :CodeBlock|Primary (:typ exp))    (if (#{:op/get-step :op/filter-step} op)
+                                                                         (into res [op (assoc exp :typ :Primary)])
+                                                                         (into res [op (assoc exp :typ :CodeBlock)]))
+                                  :else                                (into res [op exp]))]
+                (if (empty? pair)
+                  new-res
+                  (recur new-res
+                         (subvec seq-val (count pair)))))))
+          (walk-exp [obj]
+            (cond (and (map? obj) (= :BinOpSeq (:typ obj)))    (-> obj
+                                                                   (update :seq rw-bin-op-seq)
+                                                                   (update :seq #(mapv walk-exp %)))
+                  (map? obj)                                   (reduce-kv (fn [m k v] (assoc m k (walk-exp v))) {} obj)
+                  (vector? obj)                                (mapv walk-exp obj)
+                  :else                                        obj))
+          (switch-to-cb [obj] ; Everything left should be treated as a :CodeBlock
+            (cond (and (map? obj)
+                       (= (:typ obj) :CodeBlock|Primary))   (-> obj (assoc :typ :CodeBlock) (update :exps #(mapv switch-to-cb %)))
+                  (map? obj)                                (reduce-kv (fn [m k v] (assoc m k (switch-to-cb v))) {} obj)
+                  (vector? obj)                             (mapv switch-to-cb obj)
+                  :else                                     obj))]
+    (-> m
+        walk-exp
+        switch-to-cb)))
+
+(defrewrite :toplevel [m]
+  (rad-mapper.rewrite-macros/clear-rewrite!)
+  ;; Walk through the top-level and resolve issues of :CodeBlock|Primary being one of #{:CodeBlock :Primary}.
+  ;; ToDo: Some paren can just be tossed That could be one more step of rewrite-primary.
+  (-> m rewrite-primary :top rewrite))
 
 (def ^:dynamic *assume-json-data?* false)
 (def ^:dynamic *inside-let?*  "let is implemented in Primary" false)

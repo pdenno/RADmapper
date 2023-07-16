@@ -39,6 +39,7 @@
     :fn_doc "Return the schema shape (nesting structure of elements) as used by $llmMatch"}
 
    {:fn_name "invoice-match-1->2-pattern"
+    :fn_doc "This defines the validated result for mapping Elena's July schema1 to schema2."
     :fn_src
 "// Here we assume that we validated the $llmMatch result, and stored it as this.
 
@@ -62,6 +63,7 @@
                          'PurchaseOrderReference': {'ID': 'ProcessInvoice.DataArea.Invoice.InvoiceHeader.PurchaseOrderReference.ID'}}}}}"}
 
    {:fn_name "invoice-match-1->2-fn"
+    :fn_doc "This defines the function for mapping Elena's July schema1 to schema2."
     :fn_src
     "// Here we assume that we validated the $llmMatch result, and stored it as this.
 
@@ -85,8 +87,51 @@ function($data){
         'Process' : $data.ProcessInvoice.DataArea.Process}}}}
   }"}
 
-   {:fn_name "bie-1-message"
+   {:fn_name "invoice-match-2->1-fn"
+    :fn_doc "This defines the function for mapping Elena's July schema2 to schema1."
+    :fn_src "// Here we assume that we validated the $llmMatch result, and stored it as this.
+function($data){
+{'ProcessInvoice':
+  {'ApplicationArea':
+    {'CreationDateTime': $data.ProcessInvoice.ApplicationArea.CreationDateTime},
+    'DataArea'       :
+    {'Invoice':
+      {'InvoiceLine':
+        {'BuyerParty':
+          {'Location':
+            {'Address':
+              {'AddressLine': $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.BuildingNumber &
+                              $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.StreetName     &
+                              $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.Location.Address.CityName}}},
+            'TaxIDSet': {'ID': $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.BuyerParty.TaxIDSet.ID}},
+          'Item'  : {'ManufacturingParty': {'Name': $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.Item.ManufacturingParty.Name}},
+          'PurchaseOrderReference': {'ID': $data.ProcessInvoice.DataArea.Invoice.InvoiceLine.PurchaseOrderReference.ID}}},
+      'Process': $data.ProcessInvoice.DataArea.Process}}}"}
+
+   {:fn_name "bie-1-data"
+    :fn_doc "Example instance data for Elena's July schema 1"
     :fn_src (-> "data/testing/json-for-bie/schema1.json" (bi/read-local  {}) bi/pprint-obj)}
 
-   {:fn_name "bie-2-message"
-    :fn_src (-> "data/testing/json-for-bie/schema2.json" (bi/read-local  {}) bi/pprint-obj)}])
+   {:fn_name "bie-2-data"
+    :fn_doc "Example instance data for Elena's July schema 2"
+    :fn_src (-> "data/testing/json-for-bie/schema2.json" (bi/read-local  {}) bi/pprint-obj)}
+
+   {:fn_name "1->2results"
+    :fn_doc "In case of networking problems, etc."
+    :fn_src "{'ProcessInvoice':
+  {'DataArea':
+    {'ApplicationArea':
+      {'CreationDateTime': '2023-07-10'},
+      'Invoice'        :
+      {'InvoiceLine':
+        {'BuyerParty':
+          {'Location':
+            {'Address': {'BuildingNumber': '123', 'CityName': 'Gaithersburg', 'PostalCode': '20878', 'StreetName': 'Mockingbird Lane'}},
+            'TaxIDSet':
+            {'ID': 'tax-id-999'}},
+          'Item'                  :
+          {'ManufacturingParty': {'Name': 'Acme Widget'}},
+          'PurchaseOrderReference':
+          {'ID': 'PO-1234'}},
+        'Process'    :
+        'Hey new stuff!'}}}}"}])

@@ -62,7 +62,7 @@
   (if (and put-ident-type put-ident-val put-obj)
     (let [res (bi/$put [put-ident-type put-ident-val] put-obj)]
       (log/info "graph-put: res =" res)
-      (response/ok res))
+      (response/ok "success"))
     (response/bad-request "Missing args.")))
 
 (defn llm-match

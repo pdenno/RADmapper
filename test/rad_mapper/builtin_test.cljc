@@ -9,35 +9,36 @@
    [rad-mapper.parse]
    [rad-mapper.rewrite :as rew]
    [rad-mapper.builtin :as bi]
-   [rad-mapper.builtin-macros :as bm]
+   [rad-mapper.builtin-macros :as bim]
    [taoensso.timbre :as log :refer-macros [info debug log]]
-   #?(:clj [develop.dutil-macros :refer [run-test test-results]]))
-#?(:cljs (:require-macros [develop.dutil-macros :refer [run-test]])))
+   #?@(:clj [[develop.dutil :refer [nicer]] ; for testing
+             [develop.dutil-macros :refer [run-test test-results]]]))
+   #?(:cljs (:require-macros [develop.dutil-macros :refer [run-test]])))
 
 (deftest jflatten-test
   (testing "Testing that JSONata flattening rules are obeyed."
 
     (testing "Testing Rule 1."
-      (is (nil? (bm/jflatten (bm/containerize [])))))
+      (is (nil? (bim/jflatten (bim/containerize [])))))
 
     (testing "Testing Rule 1; drop map keys when the value is empty."
       (is (= [{"match" "foo", "index" 2}]
-             (bm/jflatten
-              (bm/containerize
+             (bim/jflatten
+              (bim/containerize
                {"match" "foo", "index" 2, "groups" []})))))
 
     (testing "Testing Rule 2."
-      (is (= 1 (bm/jflatten (bm/containerize [1])))))
+      (is (= 1 (bim/jflatten (bim/containerize [1])))))
 
     (testing "Testing Rule 3 (The adapted core/flatten function doesn't flatten JSON.)."
       (is (= [1 2 3 [4 5] 6]
-             (bm/jflatten
+             (bim/jflatten
               (with-meta [1 2 3 [4 5] 6] {:bi/type :bi/json-array})))))
 
     (testing "Testing Rule 4."
       (is (= [1 2 3 4 5 6]
-             (bm/jflatten
-              (bm/containerize
+             (bim/jflatten
+              (bim/containerize
                [1 [[2]] [3] [[[4 [5] [[6]]]]]])))))))
 
 ;;; ==============  Builtin-functions =============================
@@ -560,8 +561,20 @@
     (testing "binary precedence and non-advancing context variable (2)."
       (run-test  "{'a' : 1, 'b' : 2, 'c' : 3, 'd' : 4}.(a + b * c + d)" 11))
 
-    (testing "code block or primary doesn't matter"
-      (run-test  "{'b' : 1}.(b)" 1))
+    (testing "parentheses don't matter (primary)"
+      (run-test "{'a' : 10, 'b' : 2}.(( a * (b * 2 )))" 40))
+
+    (testing "parentheses don't matter (parenthetical)"
+      (run-test "((32))" 32))
+
+    (testing "parentheses don't matter (mixed)"
+      (run-test "1 + (({'a' : 1})).((a + 44))" 46))
+
+    (testing "parentheses don't matter (filter)"
+      (run-test "((({'a' : 1})))[a = 1]" {"a" 1}))
+
+    (testing "parentheses don't matter (filter, parens)"
+      (run-test "({'a' : 1})[a = 1]" {"a" 1}))
 
     ;; ToDo: This hasn't worked since the :CodeBlock / :Primary distinction.
     ;; It now returns a function. If you actually ran the function with the
@@ -838,7 +851,7 @@
                      :timeout 5000})
                (p/await p 5000)))))
     (testing "Testing $put of a library function."
-      (is (= true
+      (is (= true ; <==================== Yet the function rm/graph-put is returning (response/ok "success").
              (let [prom (p/deferred)
                    req-data {:params {:put-ident-type "library_fn"
                                       :put-ident-val "addTwo"
@@ -846,6 +859,7 @@
                                                 "fn_doc"   "Add two to the argument",
                                                 "fn_src"   "function($x){$x + 1}"}}
                              :handler (fn [resp] (p/resolve! prom resp))
+                             :response-format map? ;<===================== Why needed (and not needed above) I can't say!
                              :error-handler (fn [{:keys [status status-text]}]
                                               (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-put"
                                                                        {:status status :status-text status-text})))
@@ -981,3 +995,38 @@
        "TaxIDSet" {"ID" "<data>"}}}},
     "Process" "<data>"},
    "ApplicationArea" {"CreationDateTime" "<data>"}}})
+
+;;;=================================================================================================
+;;; Fine tuning
+;;;=================================================================================================
+
+;;; On July 6, 2023, we announced the deprecation of ada, babbage, curie and davinci models.
+;;; These models, including fine-tuned versions, will be turned off on January 4, 2024.
+;;; We are actively working on enabling fine-tuning for upgraded base GPT-3 models as well as GPT-3.5 Turbo and GPT-4.
+;;; We recommend waiting for those new options to be available rather than fine-tuning based off of the soon to be deprecated models.
+
+
+(defn tryme []
+   (rad-mapper.builtin/reset-env)
+ (rad-mapper.builtin/finalize
+  (clojure.core/letfn
+   [($convert
+     [$m]
+     (rad-mapper.builtin/concat-op
+      (rad-mapper.builtin/div
+       (rad-mapper.builtin/multiply
+        (rad-mapper.builtin-macros/primary-m
+         (rad-mapper.builtin/subtract
+          (rad-mapper.builtin/$number
+           (rad-mapper.builtin/run-steps
+            (rad-mapper.builtin-macros/init-step-m $m)
+            (rad-mapper.builtin/get-step "groups")
+            (rad-mapper.builtin/filter-step
+             (clojure.core/fn [_x1] (clojure.core/binding [rad-mapper.builtin-macros/$ (clojure.core/atom _x1)] 0)))))
+          32))
+        5)
+       9)
+      "C"))]
+   (clojure.core/let
+    [$convert (clojure.core/with-meta $convert #:bi{:type :bi/user-fn, :params '[$m]})]
+    (rad-mapper.builtin/$replace "temperature = 68F today" #"(\d+)F" $convert)))))

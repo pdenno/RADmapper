@@ -73,44 +73,45 @@
           ;_zippy (log/info "******* For RM eval: CODE = \n" code)
           ;_zippy (log/info "******* For RM eval: DATA = \n" user-data)
           result (try (bi/processRM :ptag/exp code  {:pprint? true :execute? true :sci? true :user-data user-data})
-                      (catch js/Error e {:failure (str "Error: " (.-message e))}))]
+                      (catch js/Error e (str "<<Error: " (.-message e) ">>")))]
       (log/info "run-code returns result = " result)
       result)))
 
 (j/defn eval-cell
   "Run RADmapper on the string retrieved from the editor's state.
-   Apply the result to the argument function on-result, which was is the set-result function set up by hooks/use-state.
-   Similarly, on-progress is the progress bar completion value set up by hooks/use-state [progress set-progress].
+   progress-bool-fn is hooks/use-state [progress set-progress].
    Note that the actual change to the output editor is done in a use-effect [state] in the toplevel component.
    Returns nil."
-  [on-result-fn progress-bool-fn ^:js {:keys [state]}]
+  [progress-bool-fn ^:js {:keys [state]}]
   (progress-bool-fn true)
   (set-editor-text "result" "processing...") ; Nudges editor to ensure update.
-  (as-> state ?res
-    (.-doc ?res)
-    (str ?res)
-    (run-code ?res)
-    (-> ?res
-        (p/then #(-> % str on-result-fn)) ; for side-effect
-        (p/catch (fn [e]
-                   (js/window.clearInterval @progress-handle)
-                   (log/info "Error in eval-cell")
-                   (-> e str on-result-fn)))
-        (p/finally (fn [_]
-                     (progress-bool-fn false)
-                     (invalidate-timeout-info)
-                     (log/info "clear handler")
-                     (js/window.clearInterval @progress-handle)))))
-  nil)
+  (let [result-str (atom "Ctrl-Enter above to execute (1).")]
+    (as-> state ?res
+      (.-doc ?res)
+      (str ?res)
+      (run-code ?res)
+      (-> ?res
+          (p/then #(reset! result-str %))
+          (p/catch (fn [e]
+                     (js/window.clearInterval @progress-handle)
+                     (log/info "Error in eval-cell")
+                     (->> e str (set-editor-text "result"))))
+          (p/finally (fn [_]
+                       (progress-bool-fn false)
+                       (invalidate-timeout-info)
+                       (log/info "clear handler")
+                       (set-editor-text "result" @result-str)
+                       (js/window.clearInterval @progress-handle)))))
+    nil))
 
 (defn add-result-action
   "Return the keymap updated with the partial for :on-result.
    on-result is set-result (hook fn); progress-bool is set-progressing."
-  [{:keys [on-result progress-bool]}]
+  [{:keys [progress-bool-fn]}]
   (.of view/keymap
        (j/lit
         [{:key "Mod-Enter"
-          :run (partial eval-cell on-result progress-bool)}])))
+          :run (partial eval-cell progress-bool-fn)}])))
 
 (defn get-props [obj]
   (when (map? (js->clj obj))
@@ -169,20 +170,17 @@
 
 (defnc Top [{:keys [rm-example width height]}]
   ;; ToDo: According to helix docs, use-state's set fn can be used similar to swap!. Is this useful here?
-  (let [[result set-result] (hooks/use-state "Ctrl-Enter above to execute.")
-        [progress set-progress] (hooks/use-state 0)
+  (let [[progress set-progress] (hooks/use-state 0)
         [progressing? set-progressing] (hooks/use-state false)
         banner-height 42
         useful-height (- height banner-height)
         data-editor-height (- useful-height banner-height 20) ; ToDo: 20 (a gap before the editor starts)
         code-editor-height   (int (* useful-height 0.5))    ; <================================== Ignored?
         result-editor-height (int (* useful-height 0.5))]   ; <================================== Ignored?
-    (hooks/use-effect [result]
-      (log/info "Use-effect on result = " result)
-      (set-editor-text "result" result #_(:text result)))
     ;; setInterval runs its argument function again and again at the argument time interval (milliseconds).
     ;; setInterval returns a handle that can be used by clearInterval to stop the running.
     (hooks/use-effect [progressing?]
+          (log/info "In use-effect: progressing? = " progressing?)
           (reset! progress-atm 0)
           (reset! progress-handle
                   (js/window.setInterval
@@ -221,13 +219,12 @@
                       :up ($ Editor {:name "code-editor"
                                      :height code-editor-height
                                      :text (:code rm-example)
-                                     :ext-adds #js [(add-result-action {:on-result set-result
-                                                                        :progress-bool set-progressing})]})
+                                     :ext-adds #js [(add-result-action {:progress-bool-fn set-progressing})]}) ; call to eval-cell.
                       :dn ($ Stack {:direction "column"}
                              ($ LinearProgress {:variant "determinate" :value progress})
                              ($ Editor {:name "result"
                                         :height result-editor-height
-                                        :text result}))
+                                        :text "Ctrl-Enter above to execute."}))
                       :share-fns (:right-share top-share-fns)})
            :share-fns (:left-share top-share-fns)
            :lf-pct 0.20 #_0.55 ; <=================================

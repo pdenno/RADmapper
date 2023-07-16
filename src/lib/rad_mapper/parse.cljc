@@ -165,7 +165,7 @@
          chars (rest s)
          raw quote-char
          res ""]
-    (cond (= ::eof      (first chars))         (throw (ex-info "unbalanced quoted string" {:string s}))
+    (cond (= ::eof      (first chars))         (throw (ex-info "Unbalanced quoted string" {:string s}))
           (= quote-char (first chars))         (-> ps
                                                    (assoc :one-token {:ws ws :raw (str raw quote-char) :tkn {:typ :StringLit :value res}})
                                                    (update :string-block #(subs % 1)))
@@ -176,7 +176,7 @@
                                                       (str res quote-char))
           (empty? chars)                      (let [ps (get-more ps)]
                                                 (if (-> ps :string-block empty?)
-                                                  (throw (ex-info "unbalanced quoted string" {:string s}))
+                                                  (throw (ex-info "Unbalanced quoted string" {:string s}))
                                                   (recur ps
                                                          (:string-block ps)
                                                          raw

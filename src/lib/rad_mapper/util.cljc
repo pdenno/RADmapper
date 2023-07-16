@@ -3,6 +3,7 @@
    [clojure.pprint            :refer [cl-format]]
    [clojure.string            :as str]
    [mount.core                :refer [defstate]]
+   [promesa.core              :as p]
    [taoensso.timbre           :as log]
    #?@(:clj
        [[clojure.data.json    :as json]
@@ -34,8 +35,10 @@
 
 (defn exception?
   [x]
-  #?(:clj  (instance? clojure.lang.ExceptionInfo x)
-     :cljs (instance? cljs.core.ExceptionInfo x)))
+  (or
+   #?(:clj  (instance? clojure.lang.ExceptionInfo x)
+      :cljs (instance? cljs.core.ExceptionInfo x))
+   (and (p/promise? x) (p/rejected? x))))
 
 (def ^:dynamic *await-finalize* 45000) ; Sufficient for a tough LLM call.
 
