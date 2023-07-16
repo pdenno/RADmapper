@@ -2528,7 +2528,7 @@ answer 2:
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
-  ([src tar] ($llmMatch src tar {:as-fn? true}))
+  ([src tar] ($llmMatch src tar {:asFn? true}))
   ([src tar opts]
    (log/info "$llmMatch on server")
    (reset! diag {:raw-src src :raw-tar tar})
@@ -2616,7 +2616,7 @@ answer 2:
   (log/info "match-postprocess: opts =" opts)
   (cond->  res
     true           (match-post-set-paths src)
-    (:as-fn? opts)  match-post-as-fn)))
+    (:asFn? opts)   match-post-as-fn)))
 
 ;;; This approach is used because openai/create-chat-completion is CLJ-only.
  #?(:cljs

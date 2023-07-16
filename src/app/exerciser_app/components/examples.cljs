@@ -13,20 +13,22 @@
   [{:name "(1) Full mapping"
     :code
 "(
-  $data := $get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval();
-  $mappingFn := $get(['library_fn', 'invoice-match-1->2-fn'], ['fn_src']).fn_src ~> $eval();
+  $data := $get(['library_fn', 'bie-1-data'], ['fn_exe']).fn_exe;
+  $mappingFn := $get(['library_fn', 'invoice-match-1->2-fn'], ['fn_exe']).fn_exe;
   $mappingFn($data)
 )"}
 
    {:name "(2) Look at data"
-    :code "$get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval()"}
+    :code "$get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval() // For fun we $eval the source here."}
 
    {:name "(3) Look at mapping fn"
     :code "$get(['library_fn', 'invoice-match-1->2-fn'], ['fn_src']).fn_src"}
 
    {:name "(4): Shapes"
     :code
-   "(
+    "( // This is code to make/show the input objects to $llmMatch.
+  // We pull functions from the code library and run them.
+
   $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
   $schema2   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
   $pcQuery   := $get(['library_fn', 'schemaParentChild'],['fn_exe']).fn_exe;
@@ -44,7 +46,7 @@
 
    {:name "(5): LLM match 1->2"
     :code
-    "// Call $llmMatch to generate the mapping function. Note use of {'as-fn?' true} in the call.
+    "// Call $llmMatch to generate the mapping function. Note use of {'asFn?' true} in the call.
 
 (
   $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
@@ -60,12 +62,12 @@
 
   $llmMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
             $shape($schema2Roots.?name[0], $schema2PC), // Call $llmMatch to do shape matching
-            {'as-fn?' : true})
+            {'asFn?' : true})
 )"}
 
    {:name "(6): LLM match 2->1"
     :code
-    "// Call $llmMatch to generate the mapping function. Note use of {'as-fn?' true} in the call.
+    "// Call $llmMatch to generate the mapping function. Note use of {'asFn?' true} in the call.
 
 (
   $schema1   := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
@@ -81,7 +83,7 @@
 
   $llmMatch($shape($schema2Roots.?name[0], $schema2PC), // [0] here is cheating a bit; there could be multiple roots.
             $shape($schema1Roots.?name[0], $schema1PC), // Call $llmMatch to do shape matching
-            {'as-fn?' : true})
+            {'asFn?' : true})
 )"}
 
    {:name "(7) Full mapping 2->1"
@@ -312,7 +314,8 @@
 
    {:name "(-11): Shape (in-line spec)"
     :code
-   "(
+    "( // This code shows all the detail of creating shapes for $llmMatch.
+
   $schema1 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
   $schema2 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
 
@@ -348,7 +351,9 @@
 
    {:name "(-12): LLM match (in-line spec)"
     :code
-   "(
+    "( // This code shows all the detail for making shape data for $llmMatch, then runs it.
+  // Typically this would be reviewed from a business-process standpoint and, if acceptable, stored for reuse.
+
   $schema1 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
   $schema2 := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_2_v2'], ['schema_content']);
 
@@ -367,9 +372,8 @@
 
   // This function calls itself recursively to build the schema shape, starting from the root.
   $shape := function($p, $spc) { $reduce($children($spc, $p),
-                                         function($tree, $c) // Update
-                                         the tree.  { $update($tree,
-                                         $p, function($x) { $assoc($x,$c, $lookup($shape($c, $spc), $c) or '<data>')}) }, {})};
+                                         function($tree, $c) { // Update the tree.
+                                           $update($tree, $p, function($x) { $assoc($x,$c, $lookup($shape($c, $spc), $c) or '<data>')}) }, {})};
 
   $schema1PC    := $pcQuery($schema1);     // Call the two queries with the two schema.
   $schema2PC    := $pcQuery($schema2);     // The first two return binding sets for {?parent x ?child y}
@@ -377,7 +381,8 @@
   $schema2Roots := $rootQuery($schema2);
 
   $llmMatch($shape($schema1Roots.?name[0], $schema1PC), // [0] here is cheating a bit; there could be multiple roots.
-            $shape($schema2Roots.?name[0], $schema2PC))
+            $shape($schema2Roots.?name[0], $schema2PC),
+            {'asFn?' : true})
 )"}
 
    {:name "(-13): LLM extract"
