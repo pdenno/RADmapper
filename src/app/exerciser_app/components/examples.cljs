@@ -19,7 +19,7 @@
 )"}
 
    {:name "(2) Look at data"
-    :code "$get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval() // For fun we $eval the source here."}
+    :code "$get(['library_fn', 'bie-1-data'], ['fn_src']).fn_src ~> $eval()"}
 
    {:name "(3) Look at mapping fn"
     :code "$get(['library_fn', 'invoice-match-1->2-fn'], ['fn_src']).fn_src"}

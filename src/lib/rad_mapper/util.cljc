@@ -161,7 +161,11 @@
   (->> log/*config* :min-level (some #(when (contains? (first %) "RM-DEFAULT") (second %)))))
 
 
-(defn cljs? [] (if (find-ns 'cljs.core.Namespace) true false))
+;;;(defn cljs? [] (if (find-ns 'cljs.core.Namespace) true false)) ; Not good for prod code.
+(defn cljs?
+  "Return true if this is executed in CLJS."
+  []
+  (if (resolve '*clojurescript-version*) true false))
 
 ;;; ToDo: Refactor: This stuff belongs in the "messaging plug-in".
 (defn nspaces

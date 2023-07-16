@@ -1538,10 +1538,12 @@
 (defn compile-rm
   "Return the object produced by rad-mapper compiling the argument string."
   [src]
-  (log/info "compile-rm: src =" src)
-  (try (processRM :ptag/exp src {:execute? true})
-       (catch #?(:clj Throwable :cljs :default) e
-         (ex-info "compile-rm: Did not compile!" {:src src :err e}))))
+  (log/info "compile-rm: cljs? = " (util/cljs?) " src =" src)
+  (let [res (try (processRM :ptag/exp src {:execute? true :sci? (util/cljs?)})
+                 (catch #?(:clj Throwable :cljs :default) e
+                   (ex-info "compile-rm: Did not compile!" {:src src :err e})))]
+    (log/info "compile results in:" res)
+    res))
 
 (defn $eval
   [src]
@@ -2837,14 +2839,14 @@ answer 2:
       (-> full-form pretty-form pprint))
     (try
       ;;(s/check-asserts (:check-asserts? opts)) ; ToDo: Investigate why check-asserts? = true is a problem
-      ;(sci/binding [bim/$ nil] ; <==== I get from SCI: "Error: Can't dynamically bind non-dynamic var [object Object]" yet this IS ^:dynamic.
-        (sci/binding [sci/out *out*]
-          (if run-sci?
-            (sci/eval-form ctx full-form)
-            #?(:clj (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
-                         (catch Throwable e   ; Is this perhaps because I didn't have the alias for bi in builtin.cljc? No.
-                           (ex-info "Failure in clojure.eval:" {:error e})))
-               :cljs :never-happens)))
+      ;;(sci/binding [bim/$ nil] ; <==== I get from SCI: "Error: Can't dynamically bind non-dynamic var [object Object]" yet this IS ^:dynamic.
+      (sci/binding [sci/out *out*]
+        (if run-sci?
+          (sci/eval-form ctx full-form)
+          #?(:clj (try (-> full-form str util/read-str eval) ; Once again (see notes), just eval doesn't work!
+                       (catch Throwable e   ; Is this perhaps because I didn't have the alias for bi in builtin.cljc? No.
+                         (ex-info "Failure in clojure.eval:" {:error e})))
+             :cljs :never-happens)))
       (finally (util/config-log min-level)))))
 
 (defn user-eval-devl
