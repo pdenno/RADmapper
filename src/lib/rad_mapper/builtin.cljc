@@ -936,6 +936,7 @@
 
 ;;;--------------- Boolean ------------
 ;;; $boolean
+(declare $boolean)
 (defn* $boolean
    " Casts the argument to a Boolean using the following rules:
 

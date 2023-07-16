@@ -650,25 +650,30 @@
            (bi/processRM :ptag/exp "$x1" {:user-data "$x1 := 'hello world!';" :execute? true}))))
 
     (testing "Testing a more extensive use case"
-      (is (= {"Alice" {"aData" "Alice-A-data", "bData" "Alice-B-data", "id" 234}
-               "Bob"  {"aData" "Bob-A-data",   "bData" "Bob-B-data",   "id" 123}}
+      (is (= {"alice@alice.org" {"aData" "Alice-A-data" "bData" "Alice-B-data" "name" "Alice"}
+              "bob@example.com" {"aData" "Bob-A-data" "bData" "Bob-B-data" "name" "Bob"}}
              (bi/processRM
-              :ptag/exp
-              "( $qFn :=  query(){[$DBa ?e1 :id    ?id]
-                                  [$DBb ?e2 :id    ?id]
-                                  [$DBa ?e1 :name  ?name]
-                                  [$DBa ?e1 :aAttr ?aData]
-                                  [$DBb ?e2 :bAttr ?bData]};
+              :ptag/exp "( $qFn :=  query(){[$DBa ?e1 :email ?id]
+                   [$DBb ?e2 :id    ?id]
+                   [$DBa ?e1 :name  ?name]
+                   [$DBa ?e1 :aAttr ?aData]
+                   [$DBb ?e2 :bAttr ?bData]};
 
-                 $bSets := $qFn($DBa, $DBb);
-                 $eFn := express{{?name : {'aData' : ?aData, 'bData' : ?bData, 'id' : ?id}}};
-                 $reduce($bSets, $eFn) )"
+  $bSet := $qFn($DBa, $DBb);
+
+  $eFn := express(){{?id : {'name'  : ?name,
+                            'aData' : ?aData,
+                            'bData' : ?bData}}};
+
+  $reduce($bSet, $eFn)
+)"
               {:execute? true
-               :user-data "$DBa := [{'id' : 123, 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
-                                    {'id' : 234, 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
+               :user-data " $DBa := [{'email' : 'bob@example.com', 'aAttr' : 'Bob-A-data',   'name' : 'Bob'},
+           {'email' : 'alice@alice.org', 'aAttr' : 'Alice-A-data', 'name' : 'Alice'}];
 
-                           $DBb := [{'id' : 123, 'bAttr' : 'Bob-B-data'},
-                                    {'id' : 234, 'bAttr' : 'Alice-B-data'}]"}))))))
+  $DBb := [{'id' : 'bob@example.com', 'bAttr' : 'Bob-B-data'},
+           {'id' : 'alice@alice.org', 'bAttr' : 'Alice-B-data'}];"}))))))
+
 
 (defn try-them-all [which]
   (case which
@@ -778,13 +783,13 @@
                   (swap! errors-on-async conj {:on "health-test" :reason "Wrong keys." :val (keys %)}))))))
 
 (defn $get-test-1 []
-  (-> (run "$get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']])")
+  (-> (run "$get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content'])")
       (p/then #(when-not (contains? % "schema_content")
                  (log/info "Failed $get-test-1")
                  (swap! errors-on-async conj {:on "$get-test-1" :reason "No schema found" :val %})))))
 
 (defn $get-test-2 []
-  (-> (run "( $schema := $get([['schema/name', 'urn:oagi-10.unknown:elena.2023-02-09.ProcessInvoice-BC_1'], ['schema/content']]);
+  (-> (run "( $schema := $get(['schema_name', 'urn:oagi-10.:elena.2023-07-02.ProcessInvoice-BC_1_v2'], ['schema_content']);
            $schema )")
       (p/then #(when-not (contains? % "schema_content")
                  (log/info "Failed $get-test-2")
@@ -995,38 +1000,3 @@
        "TaxIDSet" {"ID" "<data>"}}}},
     "Process" "<data>"},
    "ApplicationArea" {"CreationDateTime" "<data>"}}})
-
-;;;=================================================================================================
-;;; Fine tuning
-;;;=================================================================================================
-
-;;; On July 6, 2023, we announced the deprecation of ada, babbage, curie and davinci models.
-;;; These models, including fine-tuned versions, will be turned off on January 4, 2024.
-;;; We are actively working on enabling fine-tuning for upgraded base GPT-3 models as well as GPT-3.5 Turbo and GPT-4.
-;;; We recommend waiting for those new options to be available rather than fine-tuning based off of the soon to be deprecated models.
-
-
-(defn tryme []
-   (rad-mapper.builtin/reset-env)
- (rad-mapper.builtin/finalize
-  (clojure.core/letfn
-   [($convert
-     [$m]
-     (rad-mapper.builtin/concat-op
-      (rad-mapper.builtin/div
-       (rad-mapper.builtin/multiply
-        (rad-mapper.builtin-macros/primary-m
-         (rad-mapper.builtin/subtract
-          (rad-mapper.builtin/$number
-           (rad-mapper.builtin/run-steps
-            (rad-mapper.builtin-macros/init-step-m $m)
-            (rad-mapper.builtin/get-step "groups")
-            (rad-mapper.builtin/filter-step
-             (clojure.core/fn [_x1] (clojure.core/binding [rad-mapper.builtin-macros/$ (clojure.core/atom _x1)] 0)))))
-          32))
-        5)
-       9)
-      "C"))]
-   (clojure.core/let
-    [$convert (clojure.core/with-meta $convert #:bi{:type :bi/user-fn, :params '[$m]})]
-    (rad-mapper.builtin/$replace "temperature = 68F today" #"(\d+)F" $convert)))))

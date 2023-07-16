@@ -273,7 +273,7 @@
    Called by builtins for query and express, for example.
    The argument known-schema is DS-style, a map indexed by db/ident (not a vector).
    NOTE: The db attributes (map keys) have to be keyword; you can't use strings etc."
-  [data & {:keys [known-schema db-name :learn?] :or {known-schema {} db-name "temp" learn? true}}] ; ToDo: :learn? ???
+  [data & {:keys [known-schema db-name :learn?] :or {known-schema {} db-name (-> "temp" gensym name) learn? true}}] ; ToDo: :learn? ???
   (let [db-cfg {:store {:backend :mem :id db-name} :keep-history? false :schema-flexibility :write}
         data (-> (if (vector? data) data (vector data)) keywordize-keys)]
     #?(:clj (when (d/database-exists? db-cfg) (d/delete-database db-cfg))) ; ToDo: FIX!
