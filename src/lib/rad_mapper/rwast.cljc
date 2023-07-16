@@ -164,8 +164,3 @@
     {:typ :FnCall, :fn-name "$reduceKV", :args [{:typ :Jvar, :jvar-name "$name2CustomerFn"}
                                                 {:typ :ObjExp, :kv-pairs []}
                                                 {:typ :Jvar, :jvar-name "$order"}]}]})
-
-(defn tryme []
-  (-> (rwast example-ast)
-      util/string-keys
-      util/json-pprint))

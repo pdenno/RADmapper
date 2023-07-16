@@ -9,8 +9,7 @@ COPY . /
 FROM azul/zulu-openjdk-alpine:17
 
 #COPY --from=build /target/rm-server-standalone.jar rm-server-standalone.jar
-#  Use the next and comment out the RUN clj and copy--from=build if you want to reuse iteratively
-#  a build you made separately. (Most the the execution time here concern making the uberjar.)
+#  Use the next and comment out the RUN clj and copy--from=build if you want to reuse iteratively a build you made separately.
 ADD target/rm-server-standalone.jar /
 
 # Note that you have a databases directory at the same level as this Dockerfile.

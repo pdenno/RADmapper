@@ -165,14 +165,11 @@
   "Return the API key. It is typically an environment variable when running native
    and a build secret file if running Docker."
   []
-  (or (System/getenv "OPENAI_API_KEY")
+  (or #_(System/getenv "OPENAI_API_KEY") ; Never use this, it will only cause building the production version to be more complex.
       (try (let [paillier (init-paillier)]
              (->> key-string BigInteger. (decrypt-string (:private-key paillier)) read-string :llm))
            (catch Throwable e (log/error "Could not find LLM API key:" (.getMessage e))))
       (log/error "LLM API key is neither an environment variable nor build secret.")))
-
-;(defstate paillier
-;  :start (init-paillier))
 
 (defstate api-key
   :start (init-api-key))

@@ -10,7 +10,7 @@
            funcool/promesa                     {:mvn/version "11.0.671"}
            io.replikativ/datahike              {:mvn/version "0.6.1542"}
            mount/mount                         {:mvn/version "0.1.17"}
-           net.clojars.wkok/openai-clojure     {:mvn/version "0.6.0"}
+           net.clojars.wkok/openai-clojure     {:mvn/version "0.8.0"}
            org.babashka/sci                    {:mvn/version "0.7.39"}
            org.apache.logging.log4j/log4j-api  {:mvn/version "2.20.0"} ; ToDo: Move logging to :dev.
            org.apache.logging.log4j/log4j-core {:mvn/version "2.20.0"} ; ToDo: Move logging to :dev.

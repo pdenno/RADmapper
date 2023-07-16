@@ -2541,10 +2541,10 @@ answer 2:
        (try (let [prom (p/future
                          (openai/create-chat-completion
                           {:model  #_"text-davinci-003" #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"
-                           :api-key key
                            :messages [{:role "system" :content "Use \"temperature\" value of 0.3 in our conversation."} ; 0.3 - 0.9 no effect!
                                       ;;{:role "system" :content llm-match-system-part}
-                                      {:role "user" :content (str llm-match-system-part q-str)}]}))]
+                                      {:role "user" :content (str llm-match-system-part q-str)}]}
+                          {:api-key key}))]
               (-> prom
                   (p/await 45000)
                   (p/then #(-> % :choices first :message :content))
@@ -2670,16 +2670,17 @@ answer 2:
      (if-let [key (get-api-key :llm)]
        (try (let [prom (p/future
                          (openai/create-completion {:model "text-davinci-003"
-                                                    :api-key key
                                                     :max-tokens 3000
                                                     :temperature 0.1
-                                                    :prompt q-str}))]
+                                                    :prompt q-str}
+                                                   {:api-key key}))]
               (-> prom
                   (p/await 30000)
                   (p/then #(-> % :choices first :text))
                   (p/then #(cond-> %
                              true               read-string
-                             (:value-only? opt) (get :found)))))
+                             (:value-only? opt) (get :found)))
+                  (p/catch #(log/info "Failed call to OpenAI:" %))))
             (catch Throwable e
               (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
        (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))

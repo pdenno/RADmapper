@@ -3,6 +3,36 @@
   (:require
    [rad-mapper.builtin :as bi]))
 
+(def schema1 {"ProcessInvoice"
+              {"ApplicationArea"
+               {"CreationDateTime" "2023-07-10"},
+               "DataArea"  {"Invoice"
+                            {"InvoiceHeader"  {"PurchaseOrderReference"  {"ID"  "PO-1234"}},
+                             "InvoiceLine"    {"BuyerParty"  {"Location"  {"Address"
+                                                                           {"AddressLine"  "123 Mockingbird Lane, Gaithersburg MD, 20878"}},
+                                                              "TaxIDSet"  {"ID"  "tax-id-999"}},
+                                               "Item"        {"ManufacturingParty"  {"Name"  "Acme Widget"}}}},
+                            "Process"  "Hey new stuff!"}}})
+
+(def schema2  {"ProcessInvoice"
+               {"ApplicationArea"
+                {"CreationDateTime"  "2023-07-10"},
+                "DataArea"
+                {"Invoice"
+                 {"InvoiceLine"
+                  {"BuyerParty"
+                   {"Location"
+                    {"Address"
+                     {"BuildingNumber"  "111",
+                      "CityName"  "South Windsor",
+                      "CountryCode"  "US",
+                      "PostalCode"  "06074",
+                      "StreetName"  "Clinton Drive"}},
+                    "TaxIDSet"             {"ID"  "Tax-id-123"}},
+                   "Item"                     {"ManufacturingParty"  {"Name"  "Acme Widget"}},
+                   "PurchaseOrderReference"  {"ID"  "PO-ref-number-1888"}}},
+                 "Process"  "Some process data"}}})
+
 (def library-code
   [{:fn_name "addOne"
     :fn_src  "function($x){$x + 1}"
@@ -110,11 +140,11 @@ function($data){
 
    {:fn_name "bie-1-data"
     :fn_doc "Example instance data for Elena's July schema 1"
-    :fn_src (-> "data/testing/json-for-bie/schema1.json" (bi/read-local  {}) bi/pprint-obj)}
+    :fn_src (bi/pprint-obj schema1)}
 
    {:fn_name "bie-2-data"
     :fn_doc "Example instance data for Elena's July schema 2"
-    :fn_src (-> "data/testing/json-for-bie/schema2.json" (bi/read-local  {}) bi/pprint-obj)}
+    :fn_src (bi/pprint-obj schema2)}
 
    {:fn_name "1->2results"
     :fn_doc "In case of networking problems, etc."
