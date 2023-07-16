@@ -68,16 +68,15 @@
 (defn llm-match
   "Use an LLM to match maps (bi/$llmMatch) and return result. Request was a POST."
   [{{{:keys [src tar]} :body} :parameters}]
-  (log/info "llm-match: src =" src "tar =" tar)
+  (log/info "rad-mapper: llm-match: src =" src "tar =" tar)
   (if (and src tar)
-    (let [p (p/deferred)]
-      (future (p/resolve! p (bi/$llmMatch src tar)))
-      (let [res (p/await p 45000)]
-        (if (nil? res)
-          (do
-            (log/error "$llmMatch timeouted out. (LLM call)")
-            (response/ok {:status :failure :cause "Call to LLM timed out."}))
-          (response/ok res))))
+    (let [prom (bi/$llmMatch src tar)]
+      (log/info "rad-mapper: res = " prom)
+      (p/then prom #(if (nil? %)
+                     (do
+                       (log/error "$llmMatch timeouted out. (LLM call)")
+                       (response/ok {:status :failure :cause "Call to LLM timed out (45 secs)."}))
+                     (response/ok %))))
     (response/bad-request "src or tar not provided.")))
 
 (defn llm-extract
@@ -86,14 +85,12 @@
   (let [{:keys [source seek]} (-> request :query-params keywordize-keys)]
     (log/info "llm-extract: source =" source "seek =" seek)
     (if (and source seek)
-      (let [p (p/deferred)]
-        (future (p/resolve! p (bi/$llmExtract source seek)))
-        (let [res (p/await p 20000)]
-          (if (nil? res)
-            (do
-              (log/error "$llmExtract timeouted out. (LLM call)")
-              (response/ok {:status :failure :cause "Call to LLM timed out."}))
-            (response/ok res))))
+      (let [prom (bi/$llmExtract source seek)]
+        (p/then prom #(if (nil? %)
+                        (do
+                          (log/error "$llmExtract timeouted out. (LLM call)")
+                          (response/ok {:status :failure :cause "Call to LLM timed out."}))
+                        (response/ok %))))
       (response/bad-request "extract-src or extract-seek not provided."))))
 
 ;;; (->> '[[?e :schema/name ?name]] (m/encode "application/transit+json") (m/decode "application/transit+json"))

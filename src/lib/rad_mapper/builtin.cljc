@@ -2418,9 +2418,7 @@ target_form 1:
    {:Location
     {:Address
      {:AddressLine1 \"<replace-me>\"
-      :City \"<replace-me>\"
-      :State \"<replace-me>\"
-      :PostalCode \"<replace-me>\"}}}}}}
+      :AddressLine2 \"<replace-me>\"}}}}}}
 
 answer 1:
 {:Invoice
@@ -2429,9 +2427,9 @@ answer 1:
    {:Location
     {:Address
      {:AddressLine1 {:concat [\"<company-name-data>\" \"<street-data>\" \"<building-number-data>\"]}
-      :City \"<city-data>\"
-      :State \"<state-data>\"
-      :PostalCode  \"<zip-code-data>\"}}}}}}
+      :AddressLine2 {:concat [\"<city-data>\" \"<state-data>\" \"<zip-code-data>\"]}}}}}}}
+
+;;; It :concat everything that it can into either AddressLine1 or AddressLine2.
 ###
 source_form 2:
 {:Invoice
@@ -2439,7 +2437,7 @@ source_form 2:
   {:BuyerParty
    {:Location
     {:Address
-     {:AddressLine1 \"<address-line-1-data>\"
+     {:AddressLine \"<address-line-data>\"
       :City \"<city-data>\"
       :State \"<state-data>\"
       :PostalCode \"<postal-code-data>\"}}}}}}
@@ -2448,14 +2446,13 @@ target_form 2:
 {:Invoice
  {:InvoiceLine
   {:Buyer
-   {:Location
-    {:Address
-     {:CompanyName \"<replace-me>\"
-      :Street \"<replace-me>\"
-      :BuildingNumber \"<replace-me>\"
-      :City \"<replace-me>\"
-      :State \"<replace-me>\"
-      :ZipCode \"<replace-me>\"}}
+   {:Location {:Address
+                 {:CompanyName \"<replace-me>\"
+                  :Street \"<replace-me>\"
+                  :BuildingNumber \"<replace-me>\"
+                  :City \"<replace-me>\"
+                  :State \"<replace-me>\"
+                  :ZipCode \"<replace-me>\"}}
     :TaxID \"<replace-me>\"}}}}
 
 answer 2:
@@ -2464,13 +2461,15 @@ answer 2:
   {:BuyerParty
    {:Location
     {:Address
-     {:CompanyName {:extract-from \"<address-line-1-data>\" :value :CompanyName}
-      :Street {:extract-from \"<address-line-1-data>\" :value :Street}
-      :BuildingNumber {:extract-from \"<address-line-1-data>\" :value :BuildingNumber}
+     {:CompanyName {:extract-from \"<address-line-data>\" :value :CompanyName}
+      :Street {:extract-from \"<address-line-data>\" :value :Street}
+      :BuildingNumber {:extract-from \"<address-line-data>\" :value :BuildingNumber}
       :City \"<city-data>\"
       :State \"<state-data>\"
       :ZipCode  \"<postal-code-data>\"}}
     :TaxID \"<replace-me>\"}}}}
+
+;;; It replaces all the <replace-me> that it can. It guesses that some data can be found in <address-line-data>.
 ###")
 
 (def llm-match-instructions
@@ -2521,13 +2520,15 @@ answer 2:
          "target_form 3:\n" tar3 "\n\n"
          "answer 3:\n"))))
 
+;;; (->> (wkok.openai-clojure.api/list-models) :data (mapv #(dissoc % :permission :parent :object :root)) (sort-by :created))
 (declare match-postprocess)
+
 #?(:clj
 (defn $llmMatch
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
-  ([src tar] ($llmMatch src tar {}))
+  ([src tar] ($llmMatch src tar {:as-fn? true}))
   ([src tar opts]
    (log/info "$llmMatch on server")
    (reset! diag {:raw-src src :raw-tar tar})
@@ -2535,16 +2536,19 @@ answer 2:
          src (llm-match-pre src false)
          tar (llm-match-pre tar true)
          q-str (llm-match-string src tar)]
-     (swap! diag #(-> % (assoc :q-str q-str) (assoc :src src) (assoc :tar tar)))
+     ;(swap! diag #(-> % (assoc :q-str q-str) (assoc :src src) (assoc :tar tar)))
      (if-let [key (get-api-key :llm)]
-       (try (let [res (-> (openai/create-chat-completion {:model  #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"
-                                                          :api-key key
-                                                          :messages [{:role "system" :content "Use \"temperature\" value of 0.9 in our conversation."}
-                                                                     ;;{:role "system" :content llm-match-system-part}
-                                                                     {:role "user" :content (str llm-match-system-part q-str)}]})
-                          :choices first :message :content)]
-              (swap! diag #(assoc % :raw-res res))
-              (-> res read-string (match-postprocess opts src)))
+       (try (let [prom (p/future
+                         (openai/create-chat-completion
+                          {:model  #_"text-davinci-003" #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"
+                           :api-key key
+                           :messages [{:role "system" :content "Use \"temperature\" value of 0.3 in our conversation."} ; 0.3 - 0.9 no effect!
+                                      ;;{:role "system" :content llm-match-system-part}
+                                      {:role "user" :content (str llm-match-system-part q-str)}]}))]
+              (-> prom
+                  (p/await 45000)
+                  (p/then #(-> % :choices first :message :content))
+                  (p/then #(-> % util/read-str-llm (match-postprocess opts src)))))
             (catch Throwable e
               (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
        (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))
@@ -2609,10 +2613,12 @@ answer 2:
 #?(:clj
 (defn match-postprocess
   [res opts src]
+  (log/info "match-postprocess: opts =" opts)
   (cond->  res
     true           (match-post-set-paths src)
     (:as-fn? opts)  match-post-as-fn)))
 
+;;; This approach is used because openai/create-chat-completion is CLJ-only.
  #?(:cljs
 (defn $llmMatch
   "Call server for $llmMatch."
@@ -2620,14 +2626,14 @@ answer 2:
   (log/info "$llmMatch on client")
   (let [prom (p/deferred)]
     (log/info "Call to $llmMatch") ; ToDo: For some reason, this is not printed in console.
-    (util/start-clock 30000)
+    (util/start-clock 45000)
     (POST (str svr-prefix "/api/llm-match") ; ToDo: Use https://github.com/oliyh/martian
           {:params {:src src :tar tar}
            :timeout 45000
            :handler (fn [resp] (p/resolve! prom resp))
            :error-handler (fn [{:keys [status status-text]}]
                             (log/info (str "CLJS-AJAX $llmMatch error: status = " status " status-text= " status-text))
-                            (p/rejected (ex-info "CLJS-AJAX error on /api/llm-match" {:status status :status-text status-text})))})
+                            (p/reject! prom (ex-info "CLJS-AJAX error on /api/llm-match" {:status status :status-text status-text})))})
     (log/info "$llmMatch returns promise" prom)
     prom)))
 
@@ -2655,23 +2661,25 @@ answer 2:
 (declare extract-internal)
 #?(:clj
 (defn $llmExtract
-  "Use LLM to extract seek argument, a descriptive string from source string.
-   Token limit is 3000."
+  "Use LLM to extract seek argument, a descriptive string from source string."
   ([src seek] ($llmExtract src seek {:value-only? true}))
   ([src seek opt]
    (log/info "$llmExtract on server")
    (let [q-str (llm-extract-prompt src seek)
          opt (update-keys opt keyword)]
      (if-let [key (get-api-key :llm)]
-       (try (let [res (-> (openai/create-completion {:model "text-davinci-003"
-                                                     :api-key key
-                                                     :max-tokens 3000
-                                                     :temperature 0.1
-                                                     :prompt q-str})
-                          :choices first :text)]
-              (cond-> res
-                true               read-string
-                (:value-only? opt) (get :found)))
+       (try (let [prom (p/future
+                         (openai/create-completion {:model "text-davinci-003"
+                                                    :api-key key
+                                                    :max-tokens 3000
+                                                    :temperature 0.1
+                                                    :prompt q-str}))]
+              (-> prom
+                  (p/await 30000)
+                  (p/then #(-> % :choices first :text))
+                  (p/then #(cond-> %
+                             true               read-string
+                             (:value-only? opt) (get :found)))))
             (catch Throwable e
               (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
        (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))
@@ -2690,7 +2698,7 @@ answer 2:
            :handler (fn [resp] (p/resolve! prom resp))
            :error-handler (fn [{:keys [status status-text]}]
                             (log/info (str "CLJS-AJAX $llmExtract error: status = " status " status-text= " status-text))
-                            (p/rejected (ex-info "CLJS-AJAX error on /api/llm-extract" {:status status :status-text status-text})))})
+                            (p/reject! prom (ex-info "CLJS-AJAX error on /api/llm-extract" {:status status :status-text status-text})))})
     (log/info "$llmExtract returns promise" prom)
     prom)))
 

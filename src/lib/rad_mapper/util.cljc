@@ -25,6 +25,18 @@
   #?(:clj  (read-string s)
      :cljs (cljs.reader/read-string s)))
 
+;;; ToDo: Review use of this; it is probably a waste of time.
+(defn read-str-llm
+  "Hope beyond hope? LLM occassionally has too many or too few parentheses."
+  [s]
+  (or (try (read-str s)
+           (catch #?(:clj Exception :cljs :default) _e nil))
+      (try (let [res (read-str (str s "}"))]
+             (log/info "llm returns unbalanced (under-closed).")
+             res)
+           (catch #?(:clj Exception :cljs :default) _e nil))
+      (ex-info "String cannot be read:" {:s s})))
+
 ;;; ToDo: Useless; use .indexOf
 (defn has-index [v elem]
   (let [len (count v)]
