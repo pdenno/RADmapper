@@ -1,0 +1,11 @@
+{"ProcessInvoice":
+ {"ApplicationArea":
+  {"CreationDateTime": "2023-07-10"},
+  "DataArea"       :
+  {"Invoice":
+   {"InvoiceHeader": {"PurchaseOrderReference": {"ID": "PO-1234"}},
+    "InvoiceLine"  : {"BuyerParty": {"Location": {"Address":
+						  {"AddressLine": "123 Mockingbird Lane, Gaithersburg MD, 20878"}},
+				     "TaxIDSet": {"ID": "tax-id-999"}},
+		      "Item"      : {"ManufacturingParty": {"Name": "Acme Widget"}}}},
+   "Process": "Hey new stuff!"}}}

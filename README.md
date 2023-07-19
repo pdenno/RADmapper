@@ -1,5 +1,5 @@
 # RADmapper
-Exploratory implementation of an interoperable exchange form for mapping
+Exploratory implementation of an interoperable exchange form for mapping, and a web-based exerciser for the language.
 
 This library is an implementation of a language designed to serve as an *interoperable exchange form* for expressing the intent of many mapping and data restructuring needs.
 As an interoperable exchange form, it is intended that the language can be translated (by humans and machine) into mapping specification in other languages.
@@ -25,13 +25,21 @@ The engine/library in this repository is an implementation of whatever it is we 
 To support networks of data, the mapping language borrows ideas from the Object Management Group's Queries, Views and Transformation relational (QVT-r)
 mapping language, and Datalog.
 
-## Status
+## Maturity 
+The software is currently undergoing active development. 
+At points were is is most stable, Docker images of the exerciser are created: [here](https://hub.docker.com/repository/docker/podenno/rm-exerciser).
 The code is a Clojure library. Currently it implements 
   - nearly all of the JSONata syntax and built-in functions,
   - constructs for datalog-like query of multiple data sources,
   - higher-order functions for templating queries and expression,
+  - LLM calls for structure matching and text extraction. 
   - mapping from JSON, XML, and Excel spreadsheets.
+
+## Contacts
+  * Peter Denno (peter.denno@nist.gov)
+
+## Learn More
   - 
 A draft of the [user guide](https://github.com/pdenno/interop-mapping/blob/main/interop-mapping.pdf) is updated occassionally.
 
-A Dockerized [exerciser](https://github.com/pdenno/RADmapperExerciser) will be available shortly.
+The Dockerized [exerciser](https://hub.docker.com/repository/docker/podenno/rm-exerciser).

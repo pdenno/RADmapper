@@ -44,3 +44,8 @@ data/testing/old
 data/testing/messages
 data/testing/spreadsheets
 graphs/
+Dockerfile.keep
+data/key-pairs.edn
+data/secret-keys.edn
+data/secret-keys.edn
+etc

@@ -1,0 +1,18 @@
+ {"ProcessInvoice":
+    {"ApplicationArea":
+      {"CreationDateTime": "2023-07-10"},
+      "DataArea"       :
+      {"Invoice":
+	{"InvoiceLine":
+	  {"BuyerParty":
+	    {"Location":
+	      {"Address":
+	       {"BuildingNumber": "111",
+		"CityName": "South Windsor",
+		"CountryCode": "US",
+		"PostalCode": "06074",
+		"StreetName": "Clinton Drive"}},
+	     "TaxIDSet":            {"ID": "Tax-id-123"}},
+	    "Item"                  :  {"ManufacturingParty": {"Name": "Acme Widget"}},
+	    "PurchaseOrderReference": {"ID": "PO-ref-number-1888"}}},
+	"Process": "Some process data"}}}
