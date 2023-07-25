@@ -2,7 +2,7 @@
   "Test the rewrite of parse trees. rew/processRM is a toplevel function"
   (:require
    [clojure.test :refer [deftest is testing]]
-   [rad-mapper.evaluate :as ev]
+   [rad-mapper.builtin :as bi]
    [rad-mapper.rewrite  :as rew]
    [develop.dutil-util :refer [run remove-meta]]
   #?(:clj [develop.dutil-macros :as dm :refer [run-test unquote-body]]))
@@ -16,7 +16,7 @@
 (deftest value-map-rewrite
   (testing "that things like ['a','b','c'].[1] translate correctly."
     (is (= '[{:typ :Array, :exprs ["a" "b" "c"]}
-             bi/value-step
+             rad-mapper.builtin/value-step
              {:typ :ValueStep, :body 1}]
            (rew/rewrite-value-step [{:typ :Array, :exprs ["a" "b" "c"]}
                                     :op/get-step
@@ -33,8 +33,9 @@
       ;(run-rew "$A[1]" '(bi/run-steps (bi/init-step $A) (bi/filter-step (fn [_x1] (bi/with-context _x1 1))))) ; I think I got rid of bi/w-c.
       (run-rew "$sum($v.field)" '(bi/$sum (bi/run-steps (bi/init-step $v) (bi/get-step "field"))))
       (run-rew "$sum(a.b)"      '(bi/$sum (bi/run-steps (bi/get-step "a") (bi/get-step "b"))))
-      (run-rew "(A * B)"        '(bi/primary (bi/multiply (bi/get-scoped "A") (bi/get-scoped "B"))))
-      (run-rew "4 ~> $f()"      '(bi/thread 4 (fn [_x1] (bi/fncall _x1 {:args [], :func $f}))))
+      (run-rew "(A * B)"        '(do (bi/multiply (bi/get-step "A") (bi/get-step "B"))))
+      (run-rew "4 ~> $f()"      '(try (reset! bim/threading? true)
+                                      (bi/thread 4 bi/fncall) (finally (reset! bim/threading? false))))
       (run-rew "$" '(bi/deref$))
       (run-rew "$foo" '$foo))
 
@@ -126,8 +127,10 @@
                    #:bi{:type :bi/user-fn, :params '[$v $i $a]}))
 
       (run-rew "($inc := function($v) { $v + 1}; $map([1, 2, 3], $inc))"
-               `(letfn [($inc [$v] (bi/add $v 1))]
-                  (bi/$map [1 2 3] $inc)))
+               '(letfn [($inc [$v] (bi/add $v 1))]
+                  (let [$inc (with-meta $inc #:bi{:type :bi/user-fn,
+                                                  :params (quote [$v])})]
+                    (bi/$map [1 2 3] $inc))))
 
       (run-rew "$reduce([1..5], function($x,$y){$x + $y}, 100)"
                 '(bi/$reduce (-> (range 1 (inc 5)) vec)
@@ -162,7 +165,10 @@
   (testing "Testing that code blocks handle binding, letfn, and special jvars correctly"
 
     (run-rew "( $a := 1; $b := 2; $f := function($x){$x+1}; $c := 3 )"
-             '(let [$a 1 $b 2] (letfn [($f [$x] (bi/add $x 1))] (let [$c 3] $c))))
+             '(deref (p/let [$a 1 $b 2]
+                       (letfn [($f [$x] (bi/add $x 1))]
+                         (let [$f (with-meta $f #:bi{:type :bi/user-fn, :params (quote [$x])})]
+                           (deref (p/let [$c 3] $c)))))))
 
     ;; ToDo: There are no side-effects, so I think this should signal an error when rewriting.
     #_(run-rew  "( $x := 1; $f($x); $g($x) )"
@@ -178,16 +184,13 @@
                  $y   := 'bat';
                  $yy  := 'ybat';
                  $f($x, $y) )"
-              '(let [$x "foo"
-                     _x1 (bim/set-context! {"a" 1})
-                     $y "bat"
-                     $yy "ybat"]
-                 (bi/fncall {:args [$x $y], :func $f})))))
+              '(deref (p/let [$x "foo" _x1 (bim/set-context! {"a" 1}) $y "bat" $yy "ybat"]
+                        (bi/fncall {:args [$x $y], :func $f}))))))
 
 (deftest options-map
   (testing "rewriting an options map"
     (is (= '{:keepDBid true, :otherStuff true}
-           (ev/processRM :ptag/options-map "<|keepDBid   : true,
+           (bi/processRM :ptag/options-map "<|keepDBid   : true,
                                               otherStuff : true|>"
                          {:rewrite? true})))))
 
@@ -206,7 +209,7 @@
                                    (cljs.core/assoc '?idKeyref "KeyrefVal")
                                    (cljs.core/assoc '?instruct "some instruction")
                                    (cljs.core/assoc '?method "some method"))
-                    (ev/processRM :ptag/exp
+                    (bi/processRM :ptag/exp
                                   "{?idKey    : 'KeyVal',
                            ?idKeyref : 'KeyrefVal',
                            ?instruct : 'some instruction',
@@ -337,7 +340,7 @@
                 "owner/systems" [{"t/type" "SYSTEM", "system/id" (:rm/express-key ?systemName), "system/devices" [{"t/type" "DEVICE", "device/id" (:rm/express-key ?deviceName), "device/status" ?status}]}]}}})
 
 
-           (ev/processRM :ptag/express-def
+           (bi/processRM :ptag/express-def
                          "express{{'owners': {'t/type'       : 'OWNER',
                                               'owner/id'     : key(?ownerName),
                                               'owner/systems': [{'t/type'         : 'SYSTEM',

@@ -4,7 +4,7 @@
    #?(:clj [clojure.java.io :as io])
    [clojure.spec.alpha  :as s]
    [clojure.test        :refer [deftest is testing]]
-   [rad-mapper.evaluate :as ev]
+   [rad-mapper.builtin  :as bi]
    [rad-mapper.parse    :as par]))
 
 ;;; ToDo: JSONata uses either quote or backquote for field names with spaces and funky stuff
@@ -126,7 +126,7 @@
               {:typ :Field, :field-name "d"}
               :op/get-step
               {:typ :Field, :field-name "e"}]}
-           (ev/processRM :ptag/exp "a.b.c.d.e")))))
+           (bi/processRM :ptag/exp "a.b.c.d.e")))))
 
 (deftest options-map
   (testing "Parsing an options map"
@@ -137,8 +137,8 @@
             {:tkn "|>", :line 1, :col 20}
             {:tkn ::par/eof}]
            (test-tokenize "<| entities : true |>")))
-    (is (= {:typ :OptionsMap, :kv-pairs [{:typ :OptionKeywordPair, :key 'entities, :val :tk/true}]}
-           (ev/processRM :ptag/options-map "<| entities : true |>")))))
+    (is (= {:typ :OptionsMap, :kv-pairs [{:typ :kv-pair, :key 'entities, :val :tk/true}]}
+           (bi/processRM :ptag/options-map "<| entities : true |>")))))
 
 (def q1
 "query(){[?class :rdf/type            'owl/Class']
@@ -161,7 +161,7 @@
             :rel {:typ :PatternRole, :role-name :rdf/type},
             :val "owl/Class"
             :db nil}
-           (ev/processRM :ptag/q-pattern-tuple "[?x :rdf/type 'owl/Class']")))
+           (bi/processRM :ptag/q-pattern-tuple "[?x :rdf/type 'owl/Class']")))
     (is (= [{:typ :QueryPattern,
              :ent {:typ :Qvar, :qvar-name "?x"},
              :rel {:typ :PatternRole, :role-name :a},
@@ -172,7 +172,7 @@
              :rel {:typ :PatternRole, :role-name :b},
              :val "two"
              :db nil}]
-           (ev/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
+           (bi/processRM :ptag/query-patterns "[?x :a 'one'] [?y :b 'two']")))
     (is (= {:typ :QueryDef,
             :params [],
             :options nil,
@@ -187,7 +187,7 @@
               :rel {:typ :PatternRole, :role-name :resource/iri},
               :val {:typ :Qvar, :qvar-name "?class-iri"}
               :db nil}]}
-           (ev/processRM :ptag/exp q1)))))
+           (bi/processRM :ptag/exp q1)))))
 
 (deftest query-immediate-use
   (testing "Testing expressions that start by defining an in-line, anonymous function or query."
@@ -201,7 +201,7 @@
                                  :jvar-name "$x"}
                                 :op/add 1]}},
              :args [3]}
-           (ev/processRM :ptag/exp "function($x){$x+1}(3)")))
+           (bi/processRM :ptag/exp "function($x){$x+1}(3)")))
 
     ;; This tests parsing query as an immediate-use expression.
     (is (= '{:typ :ImmediateUse,
@@ -217,7 +217,7 @@
                      :exprs [{:typ :ObjExp, :kv-pairs [{:typ :KVPair,
                                                         :key "name",
                                                         :val "Bob"}]}]} "Bob"]}
-           (ev/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")))))
+           (bi/processRM :ptag/exp "query($name){[?e :name $name]}([{'name' : 'Bob'}], 'Bob')")))))
 
 ;;;=================== parse-ok? tests (doesn't study returned structure) ====================
 (s/def ::parse-structure
@@ -227,7 +227,7 @@
         :keyword keyword?))
 
 (defn parse-ok? [exp]
-  (try (let [res (ev/processRM :ptag/exp exp)]
+  (try (let [res (bi/processRM :ptag/exp exp)]
           (s/valid? ::parse-structure res))
        #?(:clj  (catch Exception _ false)
           :cljs (catch :default  _ false))))

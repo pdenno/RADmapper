@@ -90,55 +90,50 @@
 (deftest query-basics
   (testing "Testing query parsing, rewriting and execution."
     (testing "simple"
-      (is (= (run-rew
-              "query(){[?class :rdf/type     'owl/Class']
-                       [?class :resource/iri  ?class-iri]}")
-             '(bi/query
-               {:params '[],
-                :options nil,
-                :pred-args '[],
-                :body '[[?class :rdf/type "owl/Class"] [?class :resource/iri ?class-iri]],
-                :in '[$]})))))
+      (is  (= '(rad-mapper.builtin/query
+                {:params '[],
+                 :options nil,
+                 :pred-args '[],
+                 :body '[[?class :rdf_type "owl_Class"] [?class :resource_iri ?class-iri]],
+                 :in '[$]})
+               (bi/processRM :ptag/exp
+                             "query(){[?class :rdf_type     'owl_Class']
+                       [?class :resource_iri  ?class-iri]}" {:rewrite? true}))))
 
-  (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
-    (is (= (-> (run
-                 "( $data := [{'person/fname' : 'Peter', 'person/lname' : 'Dee'}];
+    (testing "the attr of a triple (middle item) can be queried and results do not include db/schema content."
+      (is (= #{{'?attr :person_lname, '?val "Dee"}
+               {'?attr :person_fname, '?val "Peter"}}
+             (-> (run
+                   "( $data := [{'person_fname' : 'Peter', 'person_lname' : 'Dee'}];
                     $q := query(){[?ent ?attr ?val]};
                     $q($data))")
-               set)
-           #{{'?attr :person/lname, '?val "Dee"}
-             {'?attr :person/fname, '?val "Peter"}})))
+                 set))))
 
-  (testing "rewriting of an in-line query"
-    (is (= (run-rew "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])")
-           '((bi/query {:params '[],
-                        :options nil,
-                        :pred-args '[],
-                        :body '[[?ent ?attr ?val]],
-                        :in '[$]})
-             [{"person/fname" "Peter"
-               "person/lname" "Dee"}]))))
+    (testing "rewriting of an in-line query"
+      (is (= '((bi/query {:params '[], :options nil, :pred-args '[], :body '[[?ent ?attr ?val]], :in '[$]})
+               [{"person_fname" "Peter", "person_lname" "Dee"}])
+             (run-rew "query(){[?ent ?attr ?val]}([{'person_fname' : 'Peter', 'person_lname' : 'Dee'}])"))))
+
+    (testing "rewriting of an in-line query with a parameter."
+      (is (= '(clojure.core/deref (promesa.core/let
+                                      [$qBob ((rad-mapper.builtin/query {:params '[$name],
+                                                                         :options nil,
+                                                                         :pred-args '[],
+                                                                         :body '[[?e :name $name]],
+                                                                         :in '[$]}) "Bob")]
+                                    (rad-mapper.builtin/fncall {:args [[{"name" "Bob"}]], :func $qBob})))
+             (bi/processRM :ptag/exp "($qBob := query($name){[?e :name $name]}('Bob'); $qBob([{'name' : 'Bob'}]))" {:rewrite? true}))))
+
+    (testing "execution of an in-line query"
+      (is (= #{'{?attr :person_lname, ?val "Dee"} '{?attr :person_fname, ?val "Peter"}}
+             (-> (run "query(){[?ent ?attr ?val]}([{'person_fname' : 'Peter', 'person_lname' : 'Dee'}])") set))))
 
 
-  (testing "rewriting of an in-line query with a parameter."
-    (is (= (run-rew "($qBob := query($name){[?e :name $name]}('Bob');
-                      $qBob([{'name' : 'Bob'}]))")
-           '(bi/primary (let [$qBob ((bi/query {:params '[$name],
-                                                :options nil,
-                                                :pred-args '[],
-                                                :body '[[?e :name $name]],
-                                                :in '[$]}) "Bob")]
-                          (bi/fncall {:args [[{"name" "Bob"}]], :func $qBob}))))))
-
-  (testing "execution of an in-line query"
-    (is (= (-> (run "query(){[?ent ?attr ?val]}([{'person/fname' : 'Peter', 'person/lname' : 'Dee'}])") set)
-           #{'{?attr :person/lname, ?val "Dee"} '{?attr :person/fname, ?val "Peter"}})))
-
-  (testing "In-line parametric"
-    (run-test
-     "($qBob := query($name){[?e :name $name]}('Bob');
+    (testing "In-line parametric"
+      (run-test
+       "($qBob := query($name){[?e :name $name]}('Bob');
          $qBob([{'name' : 'Bob'}]))"
-     [{}]))
+       [{}]))
 
   ;; ToDo: I think the following should work. I get a "Parse ended prematurely."
     #_(testing "Simple parameteric in-lined (double in-line)"
@@ -147,62 +142,60 @@
        [{}]))
 
 
-  (testing "rewriting a query using a mapping context with the default name 'source-data-1'"
-    (is (= (run-rew "( $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
-                       $q := query(){[?person :person/fname ?fname]
-                                     [?person :person/lname ?lname]};
+    (testing "rewriting a query using a mapping context with the default name 'source-data-1'"
+      (is (= '(deref
+               (p/let
+                   [$data
+                    (with-meta [{"person_fname" "Bob", "person_lname" "Clark"}] #:bi{:json-array? true})
+                    $q
+                    (bi/query
+                     {:params '[], :options nil, :pred-args '[], :body '[[?person :person_fname ?fname] [?person :person_lname ?lname]], :in '[$]})]
+                 (bi/fncall {:args [$data], :func $q})))
+           (run-rew "( $data := [{'person_fname' : 'Bob', 'person_lname' : 'Clark'}];
+                       $q := query(){[?person :person_fname ?fname]
+                                     [?person :person_lname ?lname]};
                        $q($data)
-                     )")
-           '(bi/primary
-             (let [$data (with-meta [{"person/fname" "Bob"
-                                      "person/lname" "Clark"}]
-                           #:bi{:json-array? true})
-                   $q (bi/query {:params '[],
-                                 :options nil,
-                                 :pred-args '[],
-                                 :body '[[?person :person/fname ?fname] [?person :person/lname ?lname]],
-                                 :in '[$]})]
-               (bi/fncall {:args [$data], :func $q}))))))
+                     )"))))
 
-  (testing "execution of a query using a mapping context with the default name 'source-data-1'."
-    (run-test
-     "(  $data := [{'person/fname' : 'Bob', 'person/lname' : 'Clark'}];
-         $q := query(){[?person :person/fname ?fname]
-                       [?person :person/lname ?lname]};
+    (testing "execution of a query using a mapping context with the default name 'source-data-1'."
+      (run-test
+       "(  $data := [{'person_fname' : 'Bob', 'person_lname' : 'Clark'}];
+         $q := query(){[?person :person_fname ?fname]
+                       [?person :person_lname ?lname]};
          $q($data) )"
-     '[{?fname "Bob", ?lname "Clark"}]))
+       '[{?fname "Bob", ?lname "Clark"}]))
 
-  (testing "tests execution of a query using a mapping context with the default name 'source-data-1' (in spec)"
-    (is (= (-> (run "( $data := [{'Person/firstname' : 'Bob'  , 'Person/lastname' : 'Clark'},
-                                 {'Person/firstname' : 'Peter', 'Person/lastname' : 'Dee'}];
-                       $q := query(){[?person :Person/firstname ?fname]
-                                     [?person :Person/lastname  ?lname]};
+    (testing "tests execution of a query using a mapping context with the default name 'source-data-1' (in spec)"
+      (is (= #{{'?fname "Peter", '?lname "Dee"} {'?fname "Bob",  '?lname "Clark"}}
+             (-> (run "( $data := [{'Person_firstname' : 'Bob'  , 'Person_lastname' : 'Clark'},
+                                 {'Person_firstname' : 'Peter', 'Person_lastname' : 'Dee'}];
+                       $q := query(){[?person :Person_firstname ?fname]
+                                     [?person :Person_lastname  ?lname]};
                        $q($data) )")
-               set)
-           #{{'?fname "Peter", '?lname "Dee"} {'?fname "Bob",  '?lname "Clark"}})))
+                 set))))
 
   ;; This tests query on data (rather than directly on a DB).
   #_(:clj
-  (is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
-           :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
-           :dol/feature :dol/time-interval}
-         (->> ((bi/query [] '[[?class :rdf/type :owl/Class] [?class :resource/iri  ?class-iri]]) dolce-test-data)
+  (is (= #{:dol_endurant :dol_spatio-temporal-region :dol_abstract-region :dol_physical-region :dol_non-physical-endurant
+           :dol_region :dol_quality :dol_physical-quality :dol_quale :dol_particular :dol_physical-endurant :dol_perdurant
+           :dol_feature :dol_time-interval}
+         (->> ((bi/query [] '[[?class :rdf_type :owl_Class] [?class :resource_iri  ?class-iri]]) dolce-test-data)
               (map #(get % '?class-iri))
               (map keyword)
               set))))
 
   ;; This one is the same as db-for-tests-2 but mostly in RADmapper language.
-  #_(is (= #{:dol/endurant :dol/spatio-temporal-region :dol/abstract-region :dol/physical-region :dol/non-physical-endurant
-           :dol/region :dol/quality :dol/physical-quality :dol/quale :dol/particular :dol/physical-endurant :dol/perdurant
-           :dol/feature :dol/time-interval}
+  #_(is (= #{:dol_endurant :dol_spatio-temporal-region :dol_abstract-region :dol_physical-region :dol_non-physical-endurant
+           :dol_region :dol_quality :dol_physical-quality :dol_quale :dol_particular :dol_physical-endurant :dol_perdurant
+           :dol_feature :dol_time-interval}
          (->> (run-rew ; ToDo: This can use dolce-1.edn once heterogeneous data is handled.
                "( $read('data/testing/dolce-2.edn');
-                  $q := query(){[?class :rdf/type     'owl/Class']
-                                [?class :resource/iri  ?class-iri]};
+                  $q := query(){[?class :rdf_type     'owl_Class']
+                                [?class :resource_iri  ?class-iri]};
                   $q($) )")
               (map #(get % '?class-iri))
               (map keyword)
-              set))))
+              set)))))
 
 (deftest query-$match
   (testing "Testing that query can do $match (especially in SCI/DS)."
@@ -310,12 +303,12 @@
   (reduce (fn [res obj]
             (conj res (as-> (pull-resource obj conn) ?o
                         (cond-> ?o
-                          (contains? ?o :rdfs/comment)    (update :rdfs/comment (fn [c] (mapv #(str (subs % 0 40) "...") c)))
-                          (contains? ?o :rdfs/domain)     (update :rdfs/domain first)
-                          (contains? ?o :rdfs/range)      (update :rdfs/range first)
-                          (contains? ?o :rdfs/subClassOf) (update :rdfs/subClassOf first)))))
+                          (contains? ?o :rdfs_comment)    (update :rdfs_comment (fn [c] (mapv #(str (subs % 0 40) "...") c)))
+                          (contains? ?o :rdfs_domain)     (update :rdfs_domain first)
+                          (contains? ?o :rdfs_range)      (update :rdfs_range first)
+                          (contains? ?o :rdfs_subClassOf) (update :rdfs_subClassOf first)))))
           []
-          [:dol/endurant :dol/participant :dol/participant-in])))
+          [:dol_endurant :dol_participant :dol_participant-in])))
 
 #_(defn write-pretty-file
   "Transform/filter and sort objects; write them to fname."
@@ -323,7 +316,7 @@
   (spit fname
         (with-out-str
           (println "[")
-          (doseq [obj (->> objs transform (sort-by :resource/iri))]
+          (doseq [obj (->> objs transform (sort-by :resource_iri))]
             (println "\n")
             (pprint obj))
           (println "]"))))
@@ -336,10 +329,10 @@
   (   $read('data/testing/owl-example.edn');
 
       $qClass := query()
-                   { [?class :rdf/type            'owl/Class']
-                     [?class :resource/iri        ?class-iri]
-                     [?class :resource/namespace  ?class-ns]
-                     [?class :resource/name       ?class-name]
+                   { [?class :rdf_type            'owl_Class']
+                     [?class :resource_iri        ?class-iri]
+                     [?class :resource_namespace  ?class-ns]
+                     [?class :resource_name       ?class-name]
                    };  /* Defines a higher-order function */
 
       $bsets := $qClass($getSource($, 'owl-source'));
@@ -360,13 +353,13 @@
   (   $read('data/testing/owl-example.edn');
 
       $qtype  := query($type)
-                   { [?class :rdf/type            $type]
-                     [?class :resource/iri        ?class-iri]
-                     [?class :resource/namespace  ?class-ns]
-                     [?class :resource/name       ?class-name]
+                   { [?class :rdf_type            $type]
+                     [?class :resource_iri        ?class-iri]
+                     [?class :resource_namespace  ?class-ns]
+                     [?class :resource_name       ?class-name]
                    };  /* Defines a higher-order function */
-      $qClass := $qtype('owl/Class');
-      $qProp  := $qtype('owl/ObjectProperty');
+      $qClass := $qtype('owl_Class');
+      $qProp  := $qtype('owl_ObjectProperty');
       $bsets := $qClass($);                             /* Run query; return a collection of binding sets. */
                                                         /* Could use ~> here; instead, I'm passing $bsets. */
       $reduce($bsets,
@@ -395,9 +388,9 @@
 #_(deftest owl-example-rewrite
   (testing "OWL example in the spec"
     (testing "rewriting a query expression. Note quotes; bi/query isn't a macro"
-      (is (= (run-rew "query($type){[?class :rdf/type $type]
-                                    [?class :resource/iri ?class-iri]}")
-             '(bi/query '[$type] '[[?class :rdf/type $type] [?class :resource/iri ?class-iri]]))))
+      (is (= (run-rew "query($type){[?class :rdf_type $type]
+                                    [?class :resource_iri ?class-iri]}")
+             '(bi/query '[$type] '[[?class :rdf_type $type] [?class :resource_iri ?class-iri]]))))
 
     (testing "rewriting an express"
       (run-rew  owl-immediate-e1 :nyi))))
@@ -407,10 +400,10 @@
   (   $read('data/testing/owl-example.edn');
 
       $qClass := query()
-                   { [?class :rdf/type            'owl/Class']
-                     [?class :resource/iri        ?class-iri]
-                     [?class :resource/namespace  ?class-ns]
-                     [?class :resource/name       ?class-name]
+                   { [?class :rdf_type            'owl_Class']
+                     [?class :resource_iri        ?class-iri]
+                     [?class :resource_namespace  ?class-ns]
+                     [?class :resource_name       ?class-name]
                    };  /* Defines a higher-order function */
 
       $qClass($)  /* Run query; return a collection of binding sets. */
@@ -421,13 +414,13 @@
   (   $read('data/testing/owl-example.edn');
 
       $qtype  := query($type)
-                   { [?class :rdf/type            'owl/Class']
-                     [?class :resource/iri        ?class-iri]
-                     [?class :resource/namespace  ?class-ns]
-                     [?class :resource/name       ?class-name]
+                   { [?class :rdf_type            'owl_Class']
+                     [?class :resource_iri        ?class-iri]
+                     [?class :resource_namespace  ?class-ns]
+                     [?class :resource_name       ?class-name]
                    };  /* Defines a function that returns a higher-order function. */
 
-      $qClass := $qtype('owl/Class'); /* Make a query function by specifying parameter values. */
+      $qClass := $qtype('owl_Class'); /* Make a query function by specifying parameter values. */
 
       $qClass($)  /* Run query; return a collection of binding sets. */
   )")
@@ -455,17 +448,17 @@
     (testing "executing owl-query-immediate"
       (run-test
        owl-query-immediate
-       [{'?class 12, '?class-iri "dol/endurant", '?class-ns "dol", '?class-name "endurant"}]))
+       [{'?class 12, '?class-iri "dol_endurant", '?class-ns "dol", '?class-name "endurant"}]))
 
     (testing "executing owl-query-parametric"
       (run-test owl-query-parametric
-                [{'?class 12, '?class-iri "dol/endurant", '?class-ns "dol", '?class-name "endurant"}]))
+                [{'?class 12, '?class-iri "dol_endurant", '?class-ns "dol", '?class-name "endurant"}]))
 
     (testing "executing owl-full-immediate"
       (run-test owl-full-immediate
                 [{:instance-of "insert-row",
                   :table "ObjectDefinition",
-                  :content {:resourceIRI "dol/endurant"
+                  :content {:resourceIRI "dol_endurant"
                             :resourceNamespace "dol"
                             :resourceLabel "endurant"}}]))
 
@@ -473,7 +466,7 @@
       (run-test owl-full-parametric
                 '[{:instance-of "insert-row",
                    :table "ObjectDefinition",
-                   :content {:resourceIRI "dol/endurant"
+                   :content {:resourceIRI "dol_endurant"
                              :resourceNamespace "dol"
                              :resourceLabel "endurant"}}]))))
 
@@ -483,24 +476,24 @@
 (deftest use-of-owl-db-tools-query
   (testing "owl-db-tools/pull-resource"
     (is (=
-         {:resource/iri :dol/perdurant,
-          :resource/name "perdurant",
-          :resource/namespace "dol",
-          :owl/disjointWith [:dol/endurant :dol/abstract :dol/quality],
-          :rdf/type :owl/Class,
-          :rdfs/subClassOf
-          #{{:owl/onProperty :dol/participant, :owl/someValuesFrom [:dol/endurant], :rdf/type :owl/Restriction}
-            {:owl/onProperty :dol/has-quality, :owl/someValuesFrom [:dol/temporal-location_q], :rdf/type :owl/Restriction}
-            {:owl/onProperty :dol/specific-constant-constituent, :owl/allValuesFrom [:dol/perdurant], :rdf/type :owl/Restriction}
-            :dol/spatio-temporal-particular
-            {:owl/onProperty :dol/part, :owl/allValuesFrom [:dol/perdurant], :rdf/type :owl/Restriction}
-            {:owl/onProperty :dol/has-quality, :owl/allValuesFrom [:dol/temporal-quality], :rdf/type :owl/Restriction}}}
+         {:resource_iri :dol_perdurant,
+          :resource_name "perdurant",
+          :resource_namespace "dol",
+          :owl_disjointWith [:dol_endurant :dol_abstract :dol_quality],
+          :rdf_type :owl_Class,
+          :rdfs_subClassOf
+          #{{:owl_onProperty :dol_participant, :owl_someValuesFrom [:dol_endurant], :rdf_type :owl_Restriction}
+            {:owl_onProperty :dol_has-quality, :owl_someValuesFrom [:dol_temporal-location_q], :rdf_type :owl_Restriction}
+            {:owl_onProperty :dol_specific-constant-constituent, :owl_allValuesFrom [:dol_perdurant], :rdf_type :owl_Restriction}
+            :dol_spatio-temporal-particular
+            {:owl_onProperty :dol_part, :owl_allValuesFrom [:dol_perdurant], :rdf_type :owl_Restriction}
+            {:owl_onProperty :dol_has-quality, :owl_allValuesFrom [:dol_temporal-quality], :rdf_type :owl_Restriction}}}
          ;; Returns a sorted-map, thus str and read-string.
-         (-> (pull-resource :dol/perdurant conn)
-             (dissoc :rdfs/comment)
+         (-> (pull-resource :dol_perdurant conn)
+             (dissoc :rdfs_comment)
              str
              read-str
-             (update :rdfs/subClassOf set)))))))
+             (update :rdfs_subClassOf set)))))))
 
 (def owl-full-express-extra
   "In this one, which is what I think should be in the spec, I'm not bothering with MCs."
@@ -508,10 +501,10 @@
 ( $data := $read('data/testing/owl-example.edn');
 
   $qtype  := query($rdfType, $extraTrips)
-               { [?class :rdf/type            $rdfType]
-                 [?class :resource/iri        ?class-iri]
-                 [?class :resource/namespace  ?class-ns]
-                 [?class :resource/name       ?class-name]
+               { [?class :rdf_type            $rdfType]
+                 [?class :resource_iri        ?class-iri]
+                 [?class :resource_namespace  ?class-ns]
+                 [?class :resource_name       ?class-name]
                  /* ToDo: $extraTrips */
                };  /* Defines a higher-order function, a template of sorts. */
 
@@ -524,10 +517,10 @@
                            }; /* Likewise, for an express template. */
                               /* The target tables for objects and relations a very similar. */
 
-  $quClass := $qtype('owl/Class');     /* Use the template, here and the next three assignments. */
+  $quClass := $qtype('owl_Class');     /* Use the template, here and the next three assignments. */
 
   /* This one doesn't just specify a value for $rdfType, but for $extraTrips. */
-  $quProp       := $qtype('owl/ObjectProperty'); /* ToDo: ,queryTriples{[?class :rdfs/domain ?domain] [?class :rdfs/range ?range]}); */
+  $quProp       := $qtype('owl_ObjectProperty'); /* ToDo: ,queryTriples{[?class :rdfs_domain ?domain] [?class :rdfs_range ?range]}); */
   $enClassTable := $etype('ClassDefinition');
   $enPropTable  := $etype('PropertyDefinition');
 
@@ -553,10 +546,10 @@
      '(bi/primary
        (let [$data (bi/$read "data/testing/owl-example.edn")
              $qtype (bi/query '[$rdfType $extraTrips]
-                              '[[?class :rdf/type $rdfType]
-                                [?class :resource/iri ?class-iri]
-                                [?class :resource/namespace ?class-ns]
-                                [?class :resource/name ?class-name]])
+                              '[[?class :rdf_type $rdfType]
+                                [?class :resource_iri ?class-iri]
+                                [?class :resource_namespace ?class-ns]
+                                [?class :resource_name ?class-name]])
              $etype (bi/express {:params [$tableType],
                                  :body
                                  (->
@@ -569,8 +562,8 @@
                                        (assoc "resourceIRI" (bi/get-from-b-set b-set '?class-iri))
                                        (assoc "resourceNamespace" (bi/get-from-b-set b-set '?class-ns))
                                        (assoc "resourceLabel" (bi/get-from-b-set b-set '?class-name)))))})
-             $quClass ($qtype "owl/Class")
-             $quProp  ($qtype "owl/ObjectProperty")
+             $quClass ($qtype "owl_Class")
+             $quProp  ($qtype "owl_ObjectProperty")
              $enClassTable ($etype "ClassDefinition")
              $enPropTable ($etype "PropertyDefinition")
              $clasBsets ($quClass $data)
@@ -691,52 +684,52 @@
                       ?method   : 'some method'};
 
             $eFn := express(){ {'QIFPlan/WorkInstructions' :
-                                  {'QIFPlan.WorkInstructions/IdKey': ?idKey,
-                                   'QIFPlan.WorkInstructions/IdKeyref': {'RefKey/id' : ?idKeyref},
-                                   'QIFPlan.WorkInstructions/Instruction' :
-                                      {'QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction' : {'Instruction' : ?instruct}}
+                                  {'QIFPlan.WorkInstructions_IdKey': ?idKey,
+                                   'QIFPlan.WorkInstructions_IdKeyref': {'RefKey_id' : ?idKeyref},
+                                   'QIFPlan.WorkInstructions_Instruction' :
+                                      {'QIFPlan.WorkInstructions.Instruction_DocumentFileInstruction' : {'Instruction' : ?instruct}}
                                    },
-                                'QIFPlan/ActionMethods' : {'QIFPlan/ActionMethods/ActionMethod' : {'Method' : ?method}}}};
+                                'QIFPlan_ActionMethods' : {'QIFPlan_ActionMethods_ActionMethod' : {'Method' : ?method}}}};
 
           $eFn($bset)
         )"
 
          {"QIFPlan/WorkInstructions"
-          {"QIFPlan.WorkInstructions/IdKey" "KeyVal",
-           "QIFPlan.WorkInstructions/IdKeyref" {"RefKey/id" "KeyrefVal"},
-           "QIFPlan.WorkInstructions/Instruction"
-             {"QIFPlan.WorkInstructions.Instruction/DocumentFileInstruction" {"Instruction" "some instruction"}}},
-          "QIFPlan/ActionMethods" {"QIFPlan/ActionMethods/ActionMethod" {"Method" "some method"}}}))))
+          {"QIFPlan.WorkInstructions_IdKey" "KeyVal",
+           "QIFPlan.WorkInstructions_IdKeyref" {"RefKey_id" "KeyrefVal"},
+           "QIFPlan.WorkInstructions_Instruction"
+             {"QIFPlan.WorkInstructions.Instruction_DocumentFileInstruction" {"Instruction" "some instruction"}}},
+          "QIFPlan_ActionMethods" {"QIFPlan_ActionMethods_ActionMethod" {"Method" "some method"}}}))))
 
 (deftest express-body-map
   (testing "Testing mapping over an express body"
     (is (=
-         [{"owners" [{"t/type" "OWNER", "owner/id" "owner1",
-                      "owner/systems"
-                      [{"t/type" "SYSTEM", "system/id" "system1",
-                        "system/devices" [{"t/type" "DEVICE", "device/id" 100, "device/name" "device1", "device/status" "Ok"}]}]}]}
-          {"owners" [{"t/type" "OWNER", "owner/id" "owner1",
-                      "owner/systems"
-                      [{"t/type" "SYSTEM", "system/id" "system1",
-                        "system/devices" [{"t/type" "DEVICE", "device/id" 200, "device/name" "device2", "device/status" "Ok"}]}]}]}
-          {"owners" [{"t/type" "OWNER", "owner/id" "owner2",
-                      "owner/systems"
-                      [{"t/type" "SYSTEM", "system/id" "system2",
-                        "system/devices" [{"t/type" "DEVICE", "device/id" 800, "device/name" "device8", "device/status" "Ok"}]}]}]}]
+         [{"owners" [{"t_type" "OWNER", "owner_id" "owner1",
+                      "owner_systems"
+                      [{"t_type" "SYSTEM", "system_id" "system1",
+                        "system_devices" [{"t_type" "DEVICE", "device_id" 100, "device_name" "device1", "device_status" "Ok"}]}]}]}
+          {"owners" [{"t_type" "OWNER", "owner_id" "owner1",
+                      "owner_systems"
+                      [{"t_type" "SYSTEM", "system_id" "system1",
+                        "system_devices" [{"t_type" "DEVICE", "device_id" 200, "device_name" "device2", "device_status" "Ok"}]}]}]}
+          {"owners" [{"t_type" "OWNER", "owner_id" "owner2",
+                      "owner_systems"
+                      [{"t_type" "SYSTEM", "system_id" "system2",
+                        "system_devices" [{"t_type" "DEVICE", "device_id" 800, "device_name" "device8", "device_status" "Ok"}]}]}]}]
          (run
            "($bsets := [{?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status  : 'Ok', ?ownerName : 'owner1'},
                         {?systemName : 'system1', ?deviceName : 'device2', ?id : 200, ?status  : 'Ok', ?ownerName : 'owner1'},
                         {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status  : 'Ok', ?ownerName : 'owner2'}];
 
                   $map($bsets,
-                       express{{'owners': [{'t/type'       : 'OWNER',
-                                            'owner/id'     : key(?ownerName),
-                                            'owner/systems': [{'t/type'         : 'SYSTEM',
-                                                               'system/id'      : key(?systemName),
-                                                               'system/devices' : [{'t/type'         : 'DEVICE',
-                                                                                    'device/id'      : ?id,
-                                                                                    'device/name'    : key(?deviceName),
-                                                                                    'device/status'  : ?status}]}]}]}
+                       express{{'owners': [{'t_type'       : 'OWNER',
+                                            'owner_id'     : key(?ownerName),
+                                            'owner_systems': [{'t_type'         : 'SYSTEM',
+                                                               'system_id'      : key(?systemName),
+                                                               'system_devices' : [{'t_type'         : 'DEVICE',
+                                                                                    'device_id'      : ?id,
+                                                                                    'device_name'    : key(?deviceName),
+                                                                                    'device_status'  : ?status}]}]}]}
                               }  )
                   )")))))
 
@@ -745,9 +738,9 @@
     (testing "Testing Type 1 (express keys) -- vector."
       (run-test "$map([{?deviceName : 'device1', ?id : 100},
                        {?deviceName : 'device2', ?id : 200}],
-                      express{{'device/id' : key(?id)}})"
+                      express{{'device_id' : key(?id)}})"
 
-                [{"device/id" 100} {"device/id" 200}]))
+                [{"device_id" 100} {"device_id" 200}]))
 
     (testing "Testing Type 2 (qvar-in-key-pos) -- vector."
        (run-test "$map([{?deviceName : 'device1', ?id : 100},
@@ -766,9 +759,9 @@
     (testing "Testing Type 1 (express keys) -- map."
       (run-test "$reduce([{?deviceName : 'device1', ?id : 100},
                           {?deviceName : 'device2', ?id : 200}],
-                         express{{'devices' : [{'device/id' : key(?id)}]}})"
+                         express{{'devices' : [{'device_id' : key(?id)}]}})"
 
-                {"devices" [{"device/id" 100} {"device/id" 200}]}))
+                {"devices" [{"device_id" 100} {"device_id" 200}]}))
 
     (testing "Testing Type 2 (qvar-in-key-pos) -- map."
       (run-test "$reduce([{?deviceName : 'device1', ?id : 100},
@@ -783,18 +776,18 @@
       (run-test "$reduce([{?systemName : 'system1', ?deviceName : 'device1', ?id : 100, ?status : 'Ok', ?ownerName : 'owner1'},
                           {?systemName : 'system2', ?deviceName : 'device8', ?id : 800, ?status : 'Ok', ?ownerName : 'owner2'}],
 
-                         express(){{'owners': [{'owner/id' : key(?ownerName),
-                                                'systems'  : [{'system/id'  : key(?systemName),
-                                                               'devices'    : [{'device/id'     : key(?id),
-                                                                                'device/name'   : ?deviceName,
-                                                                                'device/status' : ?status}]}]}]}})"
+                         express(){{'owners': [{'owner_id' : key(?ownerName),
+                                                'systems'  : [{'system_id'  : key(?systemName),
+                                                               'devices'    : [{'device_id'     : key(?id),
+                                                                                'device_name'   : ?deviceName,
+                                                                                'device_status' : ?status}]}]}]}})"
                 {"owners"
-                 #{{"owner/id" "owner1",
-                   "systems" #{{"system/id" "system1",
-                               "devices" #{{"device/id" 100, "device/name" "device1", "device/status" "Ok"}}}}}
-                  {"owner/id" "owner2",
-                   "systems" #{{"system/id" "system2",
-                               "devices" #{{"device/id" 800, "device/name" "device8", "device/status" "Ok"}}}}}}}
+                 #{{"owner_id" "owner1",
+                   "systems" #{{"system_id" "system1",
+                               "devices" #{{"device_id" 100, "device_name" "device1", "device_status" "Ok"}}}}}
+                  {"owner_id" "owner2",
+                   "systems" #{{"system_id" "system2",
+                               "devices" #{{"device_id" 800, "device_name" "device8", "device_status" "Ok"}}}}}}}
                 :sets? true))))
 
 (deftest express-body-reduce-medium-type2
@@ -818,11 +811,11 @@
     (run-test "$reduce([{?systemName : 'system1', ?id : 100, ?ownerName : 'owner1'},
                         {?systemName : 'system2', ?id : 800, ?ownerName : 'owner2'}],
 
-                       express{ {?ownerName : {'systems'  : [{'system/id'  : key(?systemName),
-                                                              'devices'    : [{'device/id'     : key(?id)}]}]}} })"
+                       express{ {?ownerName : {'systems'  : [{'system_id'  : key(?systemName),
+                                                              'devices'    : [{'device_id'     : key(?id)}]}]}} })"
 
-              {"owner1" {"systems" [{"system/id" "system1", "devices" [{"device/id" 100}]}]}
-               "owner2" {"systems" [{"system/id" "system2", "devices" [{"device/id" 800}]}]}})))
+              {"owner1" {"systems" [{"system_id" "system1", "devices" [{"device_id" 100}]}]}
+               "owner2" {"systems" [{"system_id" "system2", "devices" [{"device_id" 800}]}]}})))
 
 (deftest express-body-reduce-type1
   (testing "Testing express body type 1 reduction (use of express keys)"
@@ -836,26 +829,26 @@
                            {?systemName : 'system1', ?deviceName : 'device2', ?id : 200, ?status : 'Ok', ?ownerName : 'owner1'}];
 
                 $reduce($bsets,
-                        express(){{'owners': [{'owner/id' : key(?ownerName),
-                                               'systems'  : [{'system/id'  : key(?systemName),
-                                                              'devices'    : [{'device/id'     : key(?id),
-                                                                               'device/name'   : ?deviceName,
-                                                                               'device/status' : ?status}]}]}]}}))"
+                        express(){{'owners': [{'owner_id' : key(?ownerName),
+                                               'systems'  : [{'system_id'  : key(?systemName),
+                                                              'devices'    : [{'device_id'     : key(?id),
+                                                                               'device_name'   : ?deviceName,
+                                                                               'device_status' : ?status}]}]}]}}))"
 
-             {"owners" [{"owner/id" "owner1",
-                         "systems" [{"system/id" "system1",
-                                     "devices" [{"device/id" 100, "device/name" "device1", "device/status" "Ok"}
-                                                {"device/id" 200, "device/name" "device2", "device/status" "Ok"}]}
-                                    {"system/id" "system2",
-                                     "devices" [{"device/id" 500, "device/name" "device5", "device/status" "Ok"}
-                                                {"device/id" 600, "device/name" "device6", "device/status" "Ok"}]}]}
-                        {"owner/id" "owner2",
-                         "systems" [{"system/id" "system1",
-                                     "devices" [{"device/id" 300, "device/name" "device3", "device/status" "Ok"}
-                                                {"device/id" 400, "device/name" "device4", "device/status" "Ok"}]}
-                                    {"system/id" "system2",
-                                     "devices" [{"device/id" 700, "device/name" "device7", "device/status" "Ok"}
-                                                {"device/id" 800, "device/name" "device8", "device/status" "Ok"}]}]}]})))
+             {"owners" [{"owner_id" "owner1",
+                         "systems" [{"system_id" "system1",
+                                     "devices" [{"device_id" 100, "device_name" "device1", "device_status" "Ok"}
+                                                {"device_id" 200, "device_name" "device2", "device_status" "Ok"}]}
+                                    {"system_id" "system2",
+                                     "devices" [{"device_id" 500, "device_name" "device5", "device_status" "Ok"}
+                                                {"device_id" 600, "device_name" "device6", "device_status" "Ok"}]}]}
+                        {"owner_id" "owner2",
+                         "systems" [{"system_id" "system1",
+                                     "devices" [{"device_id" 300, "device_name" "device3", "device_status" "Ok"}
+                                                {"device_id" 400, "device_name" "device4", "device_status" "Ok"}]}
+                                    {"system_id" "system2",
+                                     "devices" [{"device_id" 700, "device_name" "device7", "device_status" "Ok"}
+                                                {"device_id" 800, "device_name" "device8", "device_status" "Ok"}]}]}]})))
 
 (deftest express-body-reduce-type2
   (testing "Testing express body type 1 reduction (use of express keys)"
@@ -1104,12 +1097,12 @@
                       :obj [#:redex{:user-key "value", :value--?v1|value [:redex/express-key ?v1 "value"], :val ?v2}]}
              (-> (qu/schematic-express-body '{?v1 {"value" ?v2}}) :reduce-body))))
 
-    (testing "keyed obj, for example, {'owner/id' : key(?owner), 'owner/name' : ?name}; base-body has a e-k in it."
-      (is (= '{:owner/id [:redex/express-key ?owner],
-               :redex/user-key "owner/id",
+    (testing "keyed obj, for example, {'owner_id' : key(?owner), 'owner_name' : ?name}; base-body has a e-k in it."
+      (is (= '{:owner_id [:redex/express-key ?owner],
+               :redex/user-key "owner_id",
                :redex/ek-val ?owner,
-               :redex/more [#:redex{:owner*name--?owner|owner*name [:redex/express-key ?owner "owner/name"], :user-key "owner/name", :val ?name}]}
-             (-> (qu/schematic-express-body '{"owner/id" [:redex/express-key ?owner], "owner/name" ?name}) :reduce-body))))
+               :redex/more [#:redex{:user-key "owner_name", :owner_name--?owner|owner_name [:redex/express-key ?owner "owner_name"], :val ?name}]}
+             (-> (qu/schematic-express-body '{"owner_id" [:redex/express-key ?owner], "owner_name" ?name}) :reduce-body))))
 
     (testing "nested obj"
       (is (= '#:redex{:user-key ?systemName,
@@ -1147,4 +1140,4 @@
 (defn tryme []
   (bi/processRM :ptag/exp
                 "rule{(twitter? ?c)
-                      [?c :community/type :community.type/twitter]}"))
+                      [?c :community_type :community.type_twitter]}"))
