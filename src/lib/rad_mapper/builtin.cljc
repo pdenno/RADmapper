@@ -2553,7 +2553,7 @@ answer 2:
                   (p/then #(-> % util/read-str-llm (match-postprocess opts src)))))
             (catch Throwable e
               (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
-       (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))
+       (throw (ex-info "No key for use of LLM API found." {})))))))
 
 (declare pprint-obj)
 ;;; ToDo: This currently assumes every string but '<replace-me>' is a source path.
