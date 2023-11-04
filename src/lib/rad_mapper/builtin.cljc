@@ -16,6 +16,7 @@
   (:require
    #?@(:clj  [[clojure.data.json            :as json]
               [clojure.data.codec.base64    :as b64]
+              [clojure.edn                  :as edn]
               [dk.ative.docjure.spreadsheet :as ss]
               [datahike.api                 :as d]
               [datahike.pull-api            :as dp]
@@ -2493,7 +2494,7 @@ answer 2:
     (letfn [(next-unused [s]
               (if (some #(= % s) @used-data)
                 (let [[_ root num] (re-matches #"^<([^_]+)(_\d)?>$" s)
-                      next-num (if num (-> num (subs 1) read-string inc) 1)
+                      next-num (if num (-> num (subs 1) edn/read-string inc) 1)
                       new-name (str "<" root "_" next-num ">")]
                   (swap! used-data conj new-name)
                   new-name)
@@ -2680,7 +2681,7 @@ answer 2:
                   (p/await 30000)
                   (p/then #(-> % :choices first :text))
                   (p/then #(cond-> %
-                             true               read-string
+                             true               edn/read-string
                              (:value-only? opt) (get :found)))
                   (p/catch #(log/info "Failed call to OpenAI:" %))))
             (catch Throwable e

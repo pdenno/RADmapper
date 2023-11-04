@@ -7,6 +7,7 @@
    [taoensso.timbre           :as log]
    #?@(:clj
        [[clojure.data.json    :as json]
+        [clojure.edn          :as edn]
         [clojure.java.io]
         [datahike.db.utils    :refer [db?]]
         [datahike.pull-api    :as dp]
@@ -22,7 +23,7 @@
      :cljs (instance? js/RegExp o)))
 
 (defn read-str [s]
-  #?(:clj  (read-string s)
+  #?(:clj  (edn/read-string s)
      :cljs (cljs.reader/read-string s)))
 
 ;;; ToDo: Review use of this; it is probably a waste of time.

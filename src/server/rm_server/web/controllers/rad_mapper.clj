@@ -1,5 +1,6 @@
 (ns rm-server.web.controllers.rad-mapper
   (:require
+   [clojure.edn           :as edn]
    [clojure.string        :refer [split]]
    [clojure.walk          :as walk :refer [keywordize-keys]]
    [promesa.core          :as p]
@@ -110,7 +111,7 @@
   [{{{:keys [qforms]} :body} :parameters}]
   (log/info "Datalog query: qforms (string) = " qforms)
   (if (not-empty qforms)
-    (try (let [qforms (read-string qforms)
+    (try (let [qforms (edn/read-string qforms)
                res (bi/query-fn-aux [(connect-atm :schema)] qforms '[$] nil nil nil)]
            ;;(log/info "Datalog query returns: " res)
            (response/ok res))

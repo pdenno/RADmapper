@@ -1,5 +1,6 @@
 (ns rm-server.web.handler
   (:require
+   [clojure.edn     :as edn]
    [clojure.java.io :as io]
    [clojure.spec.alpha :as s]
    [mount.core :as mount :refer [defstate]]
@@ -266,7 +267,7 @@
    (ring/create-default-handler)))
 
 (defn handler-init []
-  (let [site-config (-> "system.edn" io/resource slurp read-string :dev :handler/ring)
+  (let [site-config (-> "system.edn" io/resource slurp edn/read-string :dev :handler/ring)
         s ^String (:cookie-secret site-config)
         cookie-store (cookie/cookie-store {:key (.getBytes s)})
         app (-> (http/ring-handler
