@@ -90,6 +90,8 @@
 ;;; AFAICS, I don't see how I can allow port to be one thing when this file is used in a library,
 ;;; and another when I'm testing RM in isolation.
 (def svr-prefix "http://localhost:3000")
+(def cheap-llm "davinci-002")
+(def expensive-llm "gpt-3.5-turbo-16k-0613")
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -1588,7 +1590,7 @@
                                                      (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-get"
                                                                               {:status status :status-text status-text})))
                                     :timeout 5000}]
-                      (GET (str svr-prefix "/api/graph-get") req-data) ; ToDo: use Martian.
+                      (GET (str svr-prefix "/api/graph-get") req-data) ; ToDo: use Martian?
                       (-> prom
                           (p/then #(if (and lib-fn? wants-exe?) (assoc % "fn_exe" (compile-rm (get % "fn_src"))) %))
                           (p/then #(if (not wants-src?) (dissoc % "fn_src") %)))))))))
@@ -1618,7 +1620,7 @@
                                    (p/reject! prom (ex-info "CLJS-AJAX error on /api/graph-put"
                                                             {:status status :status-text status-text})))
                   :timeout 5000}]
-    (POST (str svr-prefix "/api/graph-put") req-data) ; ToDo: use Martian.
+    (POST (str svr-prefix "/api/graph-put") req-data)
     prom)))
 
 (defn rewrite-sheet-for-mapper
@@ -2543,7 +2545,7 @@ answer 2:
      (if-let [key (get-api-key :llm)]
        (try (let [prom (p/future
                          (openai/create-chat-completion
-                          {:model  #_"text-davinci-003" #_"gpt-3.5-turbo-0301" #_"gpt-3.5-turbo-0613" "gpt-3.5-turbo-16k-0613"
+                          {:model  expensive-llm
                            :messages [{:role "system" :content "Use \"temperature\" value of 0.3 in our conversation."} ; 0.3 - 0.9 no effect!
                                       ;;{:role "system" :content llm-match-system-part}
                                       {:role "user" :content (str llm-match-system-part q-str)}]}
@@ -2672,7 +2674,7 @@ answer 2:
          opt (update-keys opt keyword)]
      (if-let [key (get-api-key :llm)]
        (try (let [prom (p/future
-                         (openai/create-completion {:model "text-davinci-003"
+                         (openai/create-completion {:model cheap-llm
                                                     :max-tokens 3000
                                                     :temperature 0.1
                                                     :prompt q-str}
@@ -2687,6 +2689,7 @@ answer 2:
             (catch Throwable e
               (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
        (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))
+
 
  #?(:cljs
 (defn $llmExtract
