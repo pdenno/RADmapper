@@ -18,4 +18,6 @@
            rad-mapper.data-util.macros/defparse              clojure.core/defn
            rad-mapper.parse/defparse                         clojure.core/defmethod
            rad-mapper.rewrite/defrewrite                     clojure.core/defn
-           rad-mapper.rwast-macros/defrwast                  clojure.core/defn}}
+           rad-mapper.rwast-macros/defrwast                  clojure.core/defn}
+ :clojure-lsp/unused-public-var {:level :warning
+                                 :exclude-when-contains-meta #{:diag}}}

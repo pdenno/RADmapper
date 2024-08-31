@@ -6,10 +6,9 @@
    [clojure.java.io      :as io]
    [clojure.walk         :as walk :refer [postwalk]]
    [datahike.api         :as d]
-   [rm-server.paillier   :refer [api-key]]
    [taoensso.timbre      :as log]))
 
-(defn get-api-key [_] api-key)
+(defn get-api-key [_] (System/getenv "OPENAI_API_KEY"))
 
 (defonce databases-atm (atom {}))
 

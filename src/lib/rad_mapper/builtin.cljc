@@ -90,8 +90,8 @@
 ;;; AFAICS, I don't see how I can allow port to be one thing when this file is used in a library,
 ;;; and another when I'm testing RM in isolation.
 (def svr-prefix "http://localhost:3000")
-(def cheap-llm "davinci-002")
-(def expensive-llm "gpt-3.5-turbo-16k-0613")
+(def cheap-llm "gpt-4o-mini")
+(def expensive-llm "gpt-4o-2024-08-06") ; big context and structured output (see https://openai.com/index/introducing-structured-outputs-in-the-api/)
 
 (defn handle-builtin
   "Generic handling of errors for built-ins"
@@ -2091,7 +2091,7 @@
                        lookup-refs)))
 
 (defn create-lookup-refs
-  "Return a vector of datahike:    {:db/add -1 attr val}
+  "Return a vector of datahike:    [:db/add -1 attr val]
                       datascript:  {:db/id   n attr val}, where n={1,2,3...}
    corresponding to entities to establish before sending data.
    From datahike api.cljc:
@@ -2528,32 +2528,28 @@ answer 2:
 ;;; (->> (wkok.openai-clojure.api/list-models) :data (mapv #(dissoc % :permission :parent :object :root)) (sort-by :created))
 (declare match-postprocess)
 
+;;; ToDo: This could be rewritten to use the context (system message) better.
 #?(:clj
 (defn $llmMatch
   "Find closes match of terminology of keys in two 'object shapes' and thereby produce a mapping
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
   ([src tar] ($llmMatch src tar {:asFn? true}))
-  ([src tar opts]
+  ([src tar _opts]
    (log/info "$llmMatch on server")
-   (reset! diag {:raw-src src :raw-tar tar})
-   (let [opts (update-keys opts keyword)
-         src (llm-match-pre src false)
+   (let [src (llm-match-pre src false)
          tar (llm-match-pre tar true)
          q-str (llm-match-string src tar)]
-     ;(swap! diag #(-> % (assoc :q-str q-str) (assoc :src src) (assoc :tar tar)))
      (if-let [key (get-api-key :llm)]
-       (try (let [prom (p/future
-                         (openai/create-chat-completion
-                          {:model  expensive-llm
-                           :messages [{:role "system" :content "Use \"temperature\" value of 0.3 in our conversation."} ; 0.3 - 0.9 no effect!
-                                      ;;{:role "system" :content llm-match-system-part}
-                                      {:role "user" :content (str llm-match-system-part q-str)}]}
-                          {:api-key key}))]
-              (-> prom
-                  (p/await 45000)
-                  (p/then #(-> % :choices first :message :content))
-                  (p/then #(-> % util/read-str-llm (match-postprocess opts src)))))
+       (try (-> (openai/create-chat-completion
+                 {:model  expensive-llm
+                  :messages [{:role "system" :content "Use \"temperature\" value of 0.3 in our conversation."} ; 0.3 - 0.9 no effect!
+                             {:role "user" :content (str llm-match-system-part q-str)}]}
+                 {:api-key key})
+                :choices
+                first
+                :message
+                :content)
             (catch Throwable e
               (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
        (throw (ex-info "No key for use of LLM API found." {})))))))
@@ -2644,7 +2640,7 @@ answer 2:
 
 ;;;===========================================================================================================
 
-(defn llm-extract-prompt
+#_(defn llm-extract-prompt
   "Create a few-shot prompt for extracting particular information from a text field."
   [src seek]
   (cl-format nil
@@ -2663,33 +2659,62 @@ answer 2:
    {:source ~S :seek ~S}"
   src seek))
 
+;;; ToDo: Use OpenAI schema!
+#_(def extract-prompt-partial-draft
+  [{:role "system"
+    :content
+    (str "You are a helpful assistant that extracts text.\n"
+         "You are provided a Clojure map containing two keys:\n"
+         "  (1) The :source key provides unstructured user text.\n"
+         "  (2) The :seek key describes a type of information to extract from :source. \n"
+         "You return the provided Clojure map with two additional keys:\n"
+         "  (a) The :found key contains the extracted text.\n"
+         "  (b) The :probability key is an estimate of the certainty that you found what we sought.")}
+   {:role "user"
+    :content "{:source \"South Windsor, CT, 06074\" :seek \"city\"}"}
+   {:role "assistant"
+    :content "{:source \"South Windsor, CT, 06074\" :seek \"city\", :found \"South Windsor\" :probability 0.98}"}
+   {:role "user"
+    :content "{:source \"NIST Bldg 220\" :seek \"building\"}"}
+   {:role "assistant"
+    :content "{:source \"NIST Bldg 220\" :seek \"building\" :found \"Bldg 220\" :probability 0.95}"}])
+
+(def extract-prompt-partial
+  [{:role "system"
+    :content (str "You are a helpful assistant that extracts information from unstructured text.\n"
+                  "The substring you search is the input string truncated at the word EXTRACT.\n"
+                  "The type of information sought is described after the word EXTRACT in the input.\n"
+                  "For example, we might send you \"100 Main Street, Baltimore, Maryland EXTRACT state\"\n"
+                  "In which case you would return the \"Maryland\"")}
+   {:role "user"       :content "151 Fester Lane, South Windsor, CT, 06074 EXTRACT city"}
+   {:role "assistant"  :content "South Windsor"}
+   {:role "user"       :content "151 Fester Lane, South Windsor, CT, 06074 EXTRACT street address"}
+   {:role "assistant"  :content "151 Fester Lane"}
+   {:role "user"       :content "NIST, 100 Bureau Drive, Bldg 220, Gaithersburg, MD 20899 EXTRACT building"}
+   {:role "assistant"  :content "Bldg 220"}
+   {:role "user"       :content "NIST, 100 Bureau Drive, Bldg 220, Gaithersburg, MD 20899 EXTRACT zipcode"}
+   {:role "assistant"  :content "Bldg 20899"}])
+
 (declare extract-internal)
 #?(:clj
 (defn $llmExtract
   "Use LLM to extract seek argument, a descriptive string from source string."
-  ([src seek] ($llmExtract src seek {:value-only? true}))
-  ([src seek opt]
-   (log/info "$llmExtract on server")
-   (let [q-str (llm-extract-prompt src seek)
-         opt (update-keys opt keyword)]
-     (if-let [key (get-api-key :llm)]
-       (try (let [prom (p/future
-                         (openai/create-completion {:model cheap-llm
-                                                    :max-tokens 3000
-                                                    :temperature 0.1
-                                                    :prompt q-str}
-                                                   {:api-key key}))]
-              (-> prom
-                  (p/await 30000)
-                  (p/then #(-> % :choices first :text))
-                  (p/then #(cond-> %
-                             true               edn/read-string
-                             (:value-only? opt) (get :found)))
-                  (p/catch #(log/info "Failed call to OpenAI:" %))))
-            (catch Throwable e
-              (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
-       (throw (ex-info "OPENAI_API_KEY environment variable value not found." {})))))))
-
+  [src seek]
+  (log/info "$llmExtract on server")
+  (if-let [key (get-api-key :llm)]
+    (try
+      (-> (openai/create-chat-completion
+           {:model expensive-llm
+            :messages (conj extract-prompt-partial
+                            {:role "user" :content (str src " EXTRACT " seek)})}
+           {:api-key key})
+          :choices
+          first
+          :message
+          :content)
+      (catch Throwable e
+        (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
+    (throw (ex-info "No key for use of LLM API found." {})))))
 
  #?(:cljs
 (defn $llmExtract

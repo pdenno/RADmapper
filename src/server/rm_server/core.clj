@@ -9,7 +9,6 @@
    [rad-mapper.util :refer [logging]]                       ; for mount
    [rm-server.codelib         :refer [codelib-cfg]]         ; for mount
    [rm-server.exerciser-saves :refer [exerciser-saves-cfg]] ; for mount
-   [rm-server.paillier  :refer [api-key]]                   ; for mount
    [rm-server.resolvers  :refer [schema-cfg]]               ; for mount
    [rm-server.web.handler :refer [app]]                     ; for mount
    [ring.adapter.jetty :as jetty]
