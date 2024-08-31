@@ -1,11 +1,41 @@
 (ns rad-mapper.rwast-test
   (:require
    [clojure.test                 :refer [deftest testing is]]
-   [rad-mapper.evaluate  :as ev  :refer [processRM]]
+   [rad-mapper.builtin   :as bi]
    [rad-mapper.rwast     :as rwa :refer [rwast]]))
 
+;;; ===============================================================================================
+;;; Currently, owing to ns-setup! defined below, this is the namespace you should set your REPL to.
+;;; ===============================================================================================
+#?(:clj (def alias? (atom (-> (ns-aliases *ns*) keys set))))
+
+#?(:clj (defn safe-alias
+          [al ns-sym]
+          (when (and (not (@alias? al))
+                     (find-ns ns-sym))
+            (alias al ns-sym))))
+
+#?(:clj (defn ^:diag ns-setup!
+          "Use this to setup useful aliases for working in this NS."
+          []
+          (reset! alias? (-> (ns-aliases *ns*) keys set))
+          (safe-alias 'io     'clojure.java.io)
+          (safe-alias 's      'clojure.spec.alpha)
+          (safe-alias 'uni    'clojure.core.unify)
+          (safe-alias 'edn    'clojure.edn)
+          (safe-alias 'io     'clojure.java.io)
+          (safe-alias 'str    'clojure.string)
+          (safe-alias 'd      'datahike.api)
+          (safe-alias 'dp     'datahike.pull-api)
+          (safe-alias 'mount  'mount.core)
+          (safe-alias 'p      'promesa.core)
+          (safe-alias 'px     'promesa.exec)
+          (safe-alias 'bi     'rad-mapper.builtin)
+          (safe-alias 'openai 'wkok.openai-clojure.api)))
+
+
 (def example-reduceKV
-  (processRM :ptag/exp
+  (bi/processRM :ptag/exp
    "( $order := {'name'            : 'Example Customer',
                  'shippingAddress' : '123 Mockingbird Lane...',
                  'item part no.'   : 'p12345',
@@ -17,8 +47,8 @@
       $reduceKV($name2CustomerFn, {}, $order)
     )"))
 
-(def example-map-reduceKV
-  (processRM :ptag/exp
+(def ^:diag example-map-reduceKV
+  (bi/processRM :ptag/exp
    "( $order := {'name'            : 'Example Customer',
                  'shippingAddress' : '123 Mockingbird Lane...',
                  'item part no.'   : 'p12345',
