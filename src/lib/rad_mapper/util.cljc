@@ -10,8 +10,7 @@
         [clojure.edn          :as edn]
         [clojure.java.io]
         [datahike.db.utils    :refer [db?]]
-        [datahike.pull-api    :as dp]
-        [promesa.core         :as p]])
+        [datahike.pull-api    :as dp]])
    #?@(:cljs
        [[cljs.reader]                       ; ToDo: Investigate. Not cljs version?
         [datascript.core      :refer [db?]]
@@ -26,17 +25,29 @@
   #?(:clj  (edn/read-string s)
      :cljs (cljs.reader/read-string s)))
 
-;;; ToDo: Review use of this; it is probably a waste of time.
+(defn remove-preamble
+  "The LLM might put text and markup around the answer, return the answer without this crap."
+  [response]
+  (let [response (str/replace response #"\s" " ")]
+    (if (re-matches #".*```clojure.*" response)
+      (let [pos (str/index-of response "```clojure")
+            response (subs response (+ pos 10))
+            pos (str/index-of response "```")]
+        (subs response 0 pos))
+      response)))
+
 (defn read-str-llm
-  "Hope beyond hope? LLM occassionally has too many or too few parentheses."
+  "(1) remove-preamble (which is ```clojure...)
+   (2) Hope beyond hope? LLM occassionally has too many or too few parentheses."
   [s]
-  (or (try (read-str s)
-           (catch #?(:clj Exception :cljs :default) _e nil))
-      (try (let [res (read-str (str s "}"))]
-             (log/info "llm returns unbalanced (under-closed).")
-             res)
-           (catch #?(:clj Exception :cljs :default) _e nil))
-      (ex-info "String cannot be read:" {:s s})))
+  (let [s (remove-preamble s)]
+    (or (try (read-str s)
+             (catch #?(:clj Exception :cljs :default) _e nil))
+        (try (let [res (read-str (str s "}"))]
+               (log/info "llm returns unbalanced (under-closed).")
+               res)
+             (catch #?(:clj Exception :cljs :default) _e nil))
+        (ex-info "String cannot be read:" {:s s}))))
 
 ;;; ToDo: Useless; use .indexOf
 (defn has-index [v elem]

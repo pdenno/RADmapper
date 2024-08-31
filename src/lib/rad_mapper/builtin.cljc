@@ -2535,9 +2535,10 @@ answer 2:
    of the data at those keys. The prompt instructs how to indicate extraction and aggregation
    of source object fields to target object fields."
   ([src tar] ($llmMatch src tar {:asFn? true}))
-  ([src tar _opts]
+  ([src tar opts]
    (log/info "$llmMatch on server")
-   (let [src (llm-match-pre src false)
+   (let [opts (update-keys opts keyword)
+         src (llm-match-pre src false)
          tar (llm-match-pre tar true)
          q-str (llm-match-string src tar)]
      (if-let [key (get-api-key :llm)]
@@ -2549,7 +2550,9 @@ answer 2:
                 :choices
                 first
                 :message
-                :content)
+                :content
+                util/read-str-llm
+                (match-postprocess opts src))
             (catch Throwable e
               (throw (ex-info "OpenAI API call failed." {:message (.getMessage e)}))))
        (throw (ex-info "No key for use of LLM API found." {})))))))
