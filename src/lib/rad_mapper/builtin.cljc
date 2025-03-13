@@ -43,6 +43,7 @@
    [rad-mapper.query                :as qu]
    [rad-mapper.rewrite              :as rew]
    [rad-mapper.rewrite-macros       :as rewm]
+   [rad-mapper.rwast                :as rwast]
    [rad-mapper.util                 :as util :refer [qvar? box unbox start-clock exception?]]
    [sci.core                        :as sci]
    [taoensso.timbre                 :as log :refer-macros[error debug info log!]]
@@ -3153,3 +3154,9 @@ answer 2:
         (-> (p/all @proms)
             (p/then (fn [_] (-> obj resolved-obj pprint-top)))
             (p/catch #(str "<<Error: "(ex-message %) " " (ex-data %) ">>")))))))
+
+#?(:clj (defn $toAST "Return the AST string JSON corresponding to the argument RADmapper language expression."
+          [s] (->> s  (processRM :ptag/exp) rwast/rwast json/json-str))
+   :cljs (defn $toAST "Return the AST string JSON corresponding to the argument RADmapper language expression."
+           [s] (->> s  (processRM :ptag/exp) rwast/rwast clj->js str)))
+

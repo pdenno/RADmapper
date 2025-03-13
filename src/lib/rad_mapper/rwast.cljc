@@ -5,7 +5,8 @@
    [clojure.pprint         :refer [cl-format]]    ; CLJS needs this because it is used in rwast_macros.
    [rad-mapper.parse       :refer [builtin-fns]]  ; Yeah, this is crazy! ; Read about it in javascript.org, 2023-01-25.
    [rad-mapper.util        :as util #_#_:refer [rwast-meth *debugging-rwast?* tags locals]] ; This is especially crazy!
-   [rad-mapper.rwast-macros :refer [defrwast rwast-meth]])
+   [rad-mapper.rwast-macros :refer [defrwast rwast-meth]]
+   [taoensso.timbre         :as log])
   #?(:cljs (:require-macros [rad-mapper.rwast-macros :refer [defrwast rwast-meth]])))
 
 (def diag (atom nil))
@@ -74,6 +75,10 @@
         (vector? o)               (mapv rwast o),
         :else                      o))
 
+(defrwast :CodeBlock|Primary
+  [m]
+  {:rm/Block (->> m :exps rwast)})
+
 (defrwast :Primary
   [m]
   {:rm/Block (->> m :exps rwast)})
@@ -109,6 +114,11 @@
                         (assoc m (rwast key) (rwast val)))
                       {}
                       (:kv-pairs m))})
+
+(defrwast :Array [m] {:rm/Array (->> m :exprs (mapv rwast))})
+
+(defrwast :Field [m] (:field-name m))
+  
 
 (defn set-indexes
   "A few object types, such as function calls and arrays, hold an ordered collection of elements.

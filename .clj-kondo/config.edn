@@ -17,7 +17,14 @@
            rad-mapper.builtin-macros/primary-m               clojure.core/defmacro
            rad-mapper.data-util.macros/defparse              clojure.core/defn
            rad-mapper.parse/defparse                         clojure.core/defmethod
-           rad-mapper.rewrite/defrewrite                     clojure.core/defn
-           rad-mapper.rwast-macros/defrwast                  clojure.core/defn}
+           rad-mapper.rewrite/defrewrite                     clojure.core/defn} ; This needs treatment like defwrast below.
+ ;; For an example use of hooks see:
+ ;;   1) Configuration like below:             https://github.com/clj-kondo/clj-kondo/blob/master/.clj-kondo/config.edn
+ ;;      It has this line:  :hooks {:analyze-call {clj-kondo.impl.utils/one-of hooks.one-of/one-of}}
+ ;;   2) The macro on which the call is made:  https://github.com/clj-kondo/clj-kondo/blob/master/src/clj_kondo/impl/utils.clj
+ ;;   3) The implementation of the hook:       https://github.com/clj-kondo/clj-kondo/blob/master/.clj-kondo/hooks/one_of.clj
+ ;;      and another:                          https://github.com/lread/rewrite-cljc-playground/blob/master/.clj-kondo/hooks/rewrite_cljc/potemkin/import_vars_with_mods.clj
+ ;;;     and another:                          https://github.com/lilactown/helix/blob/master/resources/clj-kondo.exports/lilactown/helix/clj_kondo/lilactown/helix.clj
+;; :hooks {:analyze-call {rad-mapper.rwast-macros/defwrast hooks.defwrast/defwrast}} ; LATER!
  :clojure-lsp/unused-public-var {:level :warning
                                  :exclude-when-contains-meta #{:diag}}}

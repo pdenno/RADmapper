@@ -203,8 +203,8 @@
            :noWrap false
            :height banner-height}
           ($ Stack {:direction "row"}
-             "RADmapper"
-             ($ Box {:minWidth (- width 320)}) ; I'm amazed this sorta works! The 320 depends on the width of "RADmapper".
+             "RADmapper Exerciser"
+             ($ Box {:minWidth (- width 420)}) ; I'm amazed this sorta works! The 420 depends on the width of "RADmapper Exerciser".
              ($ ButtonGroup
                 ($ SaveModal {:code-fn #(get-user-code)
                               :data-fn #(get-user-data)}))))
